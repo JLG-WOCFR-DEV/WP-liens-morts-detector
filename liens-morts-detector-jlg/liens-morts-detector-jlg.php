@@ -96,13 +96,26 @@ function blc_ajax_edit_link_callback() {
         wp_send_json_error(['message' => 'Article non trouvé.']);
     }
 
-    // Remplacement de l'URL dans le contenu
-    $new_content = str_replace('href="' . $old_url . '"', 'href="' . $new_url . '"', $post->post_content);
-    
-    if ($new_content === $post->post_content) {
+    // Chargement du contenu dans DOMDocument
+    libxml_use_internal_errors(true);
+    $dom = new DOMDocument();
+    $dom->loadHTML(mb_convert_encoding($post->post_content, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+    libxml_clear_errors();
+
+    // Recherche et modification de la balise <a> ciblée
+    $xpath = new DOMXPath($dom);
+    $anchors = $xpath->query('//a[@href="' . $old_url . '"]');
+
+    if ($anchors->length === 0) {
         wp_send_json_error(['message' => 'Le lien n\'a pas été trouvé dans le contenu de l\'article.']);
     }
 
+    foreach ($anchors as $a) {
+        $a->setAttribute('href', $new_url);
+    }
+
+    // Enregistrement du contenu mis à jour
+    $new_content = $dom->saveHTML();
     wp_update_post(['ID' => $post_id, 'post_content' => $new_content]);
 
     // Supprimer le lien de la table dédiée
@@ -129,14 +142,30 @@ function blc_ajax_unlink_callback() {
         wp_send_json_error(['message' => 'Article non trouvé.']);
     }
 
-    // Remplacement du lien complet par son texte
-    $pattern = '/<a\s[^>]*href\s*=\s*["\']' . preg_quote($url_to_unlink, '/') . '["\'][^>]*>(.*?)<\/a>/i';
-    $new_content = preg_replace($pattern, '$1', $post->post_content);
+    // Chargement du contenu dans DOMDocument
+    libxml_use_internal_errors(true);
+    $dom = new DOMDocument();
+    $dom->loadHTML(mb_convert_encoding($post->post_content, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+    libxml_clear_errors();
 
-    if ($new_content === $post->post_content) {
+    // Recherche de la balise <a> à retirer
+    $xpath = new DOMXPath($dom);
+    $anchors = $xpath->query('//a[@href="' . $url_to_unlink . '"]');
+
+    if ($anchors->length === 0) {
         wp_send_json_error(['message' => 'Le lien n\'a pas été trouvé dans le contenu de l\'article.']);
     }
 
+    foreach ($anchors as $a) {
+        $fragment = $dom->createDocumentFragment();
+        while ($a->childNodes->length > 0) {
+            $fragment->appendChild($a->childNodes->item(0));
+        }
+        $a->parentNode->replaceChild($fragment, $a);
+    }
+
+    // Enregistrement du contenu mis à jour
+    $new_content = $dom->saveHTML();
     wp_update_post(['ID' => $post_id, 'post_content' => $new_content]);
 
     // Supprimer le lien de la table dédiée
