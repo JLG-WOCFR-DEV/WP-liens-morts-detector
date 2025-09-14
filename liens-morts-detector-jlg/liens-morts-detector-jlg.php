@@ -105,12 +105,10 @@ function blc_ajax_edit_link_callback() {
 
     wp_update_post(['ID' => $post_id, 'post_content' => $new_content]);
 
-    // Supprimer le lien de la liste des liens morts
-    $broken_links = get_option('blc_broken_links', []);
-    $updated_links = array_filter($broken_links, function($link) use ($post_id, $old_url) {
-        return !($link['post_id'] == $post_id && $link['url'] == $old_url);
-    });
-    update_option('blc_broken_links', array_values($updated_links));
+    // Supprimer le lien de la table dédiée
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'blc_broken_links';
+    $wpdb->delete($table_name, ['post_id' => $post_id, 'url' => $old_url, 'type' => 'link'], ['%d', '%s', '%s']);
 
     wp_send_json_success();
 }
@@ -141,12 +139,10 @@ function blc_ajax_unlink_callback() {
 
     wp_update_post(['ID' => $post_id, 'post_content' => $new_content]);
 
-    // Supprimer le lien de la liste des liens morts
-    $broken_links = get_option('blc_broken_links', []);
-    $updated_links = array_filter($broken_links, function($link) use ($post_id, $url_to_unlink) {
-        return !($link['post_id'] == $post_id && $link['url'] == $url_to_unlink);
-    });
-    update_option('blc_broken_links', array_values($updated_links));
+    // Supprimer le lien de la table dédiée
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'blc_broken_links';
+    $wpdb->delete($table_name, ['post_id' => $post_id, 'url' => $url_to_unlink, 'type' => 'link'], ['%d', '%s', '%s']);
 
     wp_send_json_success();
 }

@@ -72,9 +72,11 @@ class BLC_Images_List_Table extends WP_List_Table {
      */
     public function prepare_items() {
         $this->_column_headers = [$this->get_columns(), [], []];
-        
-        // On récupère uniquement les données des images depuis l'option dédiée
-        $data = get_option('blc_broken_images', []);
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'blc_broken_links';
+
+        // On récupère uniquement les données des images depuis la table dédiée
+        $data = $wpdb->get_results("SELECT url, anchor, post_id, post_title FROM $table_name WHERE type = 'image'", ARRAY_A);
         
         $per_page     = 20;
         $current_page = $this->get_pagenum();

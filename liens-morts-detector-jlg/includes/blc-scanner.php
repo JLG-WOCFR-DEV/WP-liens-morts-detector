@@ -7,6 +7,8 @@ if (!defined('ABSPATH')) exit;
  * Déclenchée par la planification et le bouton principal.
  */
 function blc_perform_check($batch = 0, $is_full_scan = false) {
+    global $wpdb;
+
     // --- 1. Récupération des réglages ---
     $debug_mode = get_option('blc_debug_mode', false);
     if ($debug_mode) { error_log("--- Début du scan LIENS (Lot #$batch) ---"); }
@@ -42,7 +44,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
     // --- 3. Récupération des données et préparation ---
     $batch_size      = 20;
     $last_check_time = get_option('blc_last_check_time', 0);
-    $broken_links    = get_option('blc_broken_links', array());
+    $table_name      = $wpdb->prefix . 'blc_broken_links';
 
     $args = ['post_type' => 'any', 'post_status' => 'publish', 'posts_per_page' => $batch_size, 'paged' => $batch + 1];
     if (!$is_full_scan && $last_check_time) {
@@ -54,7 +56,8 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
 
     $post_ids_in_batch = wp_list_pluck($posts, 'ID');
     if (!empty($post_ids_in_batch)) {
-        $broken_links = array_filter($broken_links, function($link) use ($post_ids_in_batch) { return !in_array($link['post_id'], $post_ids_in_batch); });
+        $ids = implode(',', array_map('intval', $post_ids_in_batch));
+        $wpdb->query("DELETE FROM $table_name WHERE post_id IN ($ids) AND type = 'link'");
     }
 
     // --- 4. Boucle d'analyse des LIENS <a> ---
@@ -85,7 +88,17 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
                 $response = ($scan_method === 'precise') ? wp_remote_get($url, ['timeout' => 10, 'user-agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0', 'method' => 'GET']) : wp_remote_head($url, ['timeout' => 5]);
                 
                 if (is_wp_error($response) || wp_remote_retrieve_response_code($response) >= 400) {
-                    $broken_links[] = ['url' => $url, 'anchor' => $anchor_text, 'post_id' => $post->ID, 'post_title' => $post->post_title];
+                    $wpdb->insert(
+                        $table_name,
+                        [
+                            'url'        => $url,
+                            'anchor'     => $anchor_text,
+                            'post_id'    => $post->ID,
+                            'post_title' => $post->post_title,
+                            'type'       => 'link',
+                        ],
+                        ['%s', '%s', '%d', '%s', '%s']
+                    );
                 }
                 usleep($link_delay_ms * 1000);
             }
@@ -93,8 +106,6 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
     }
 
     // --- 5. Sauvegarde et planification ---
-    update_option('blc_broken_links', array_values($broken_links));
-
     if ($query->max_num_pages > ($batch + 1)) {
         wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan));
     } else {
@@ -110,14 +121,16 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
  * Déclenchée uniquement par le bouton sur la page des images.
  */
 function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une analyse d'images est toujours complète
+    global $wpdb;
     $debug_mode = get_option('blc_debug_mode', false);
     if ($debug_mode) { error_log("--- Début du scan IMAGES (Lot #$batch) ---"); }
 
+    $table_name = $wpdb->prefix . 'blc_broken_links';
+
     // Si c'est le premier lot, on nettoie les anciens résultats
     if ($batch === 0) {
-        delete_option('blc_broken_images');
+        $wpdb->query("DELETE FROM $table_name WHERE type = 'image'");
     }
-    $broken_images = get_option('blc_broken_images', array());
 
     $batch_size = 20;
     $args = ['post_type' => 'any', 'post_status' => 'publish', 'posts_per_page' => $batch_size, 'paged' => $batch + 1];
@@ -136,13 +149,21 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                 $file_path = str_replace($upload_dir_info['baseurl'], $upload_dir_info['basedir'], $image_url);
                 if (!file_exists($file_path)) {
                     if ($debug_mode) { error_log("  -> Image Cassée Trouvée : " . $image_url); }
-                    $broken_images[] = ['url' => $image_url, 'anchor' => basename($image_url), 'post_id' => $post->ID, 'post_title' => $post->post_title];
+                    $wpdb->insert(
+                        $table_name,
+                        [
+                            'url'        => $image_url,
+                            'anchor'     => basename($image_url),
+                            'post_id'    => $post->ID,
+                            'post_title' => $post->post_title,
+                            'type'       => 'image',
+                        ],
+                        ['%s', '%s', '%d', '%s', '%s']
+                    );
                 }
             }
         }
     }
-
-    update_option('blc_broken_images', array_values($broken_images));
 
     if ($query->max_num_pages > ($batch + 1)) {
         // On utilise un hook de batch différent pour ne pas interférer
