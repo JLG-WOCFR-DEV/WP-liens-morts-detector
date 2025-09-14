@@ -25,6 +25,11 @@ foreach ($options_to_delete as $option_name) {
     delete_option($option_name);
 }
 
+// Suppression de la table personnalisée
+global $wpdb;
+$table_name = $wpdb->prefix . 'blc_broken_links';
+$wpdb->query("DROP TABLE IF EXISTS $table_name");
+
 // Nettoyage final des tâches planifiées (par sécurité, même si la désactivation le fait déjà)
 wp_clear_scheduled_hook('blc_check_links');
 wp_clear_scheduled_hook('blc_check_batch');

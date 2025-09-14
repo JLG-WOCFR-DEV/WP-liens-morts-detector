@@ -29,11 +29,13 @@ function blc_dashboard_links_page() {
     }
 
     // Préparation des données et des statistiques pour les liens
-    $broken_links = get_option('blc_broken_links', array());
+    global $wpdb;
+    $table_name      = $wpdb->prefix . 'blc_broken_links';
+    $broken_links    = $wpdb->get_results("SELECT url, anchor, post_id, post_title FROM $table_name WHERE type = 'link'", ARRAY_A);
     $last_check_time = get_option('blc_last_check_time', 0);
     $option_size_bytes = strlen(serialize($broken_links));
-    $option_size_kb = $option_size_bytes / 1024;
-    $size_display = ($option_size_kb < 1024) ? number_format_i18n($option_size_kb, 2) . ' Ko' : number_format_i18n($option_size_kb / 1024, 2) . ' Mo';
+    $option_size_kb    = $option_size_bytes / 1024;
+    $size_display      = ($option_size_kb < 1024) ? number_format_i18n($option_size_kb, 2) . ' Ko' : number_format_i18n($option_size_kb / 1024, 2) . ' Mo';
 
     $list_table = new BLC_Links_List_Table();
     $list_table->prepare_items();
@@ -77,11 +79,13 @@ function blc_dashboard_images_page() {
         echo '<div class="notice notice-success is-dismissible"><p>La vérification des images a démarré ! Les résultats apparaîtront progressivement.</p></div>';
     }
 
-    $broken_images = get_option('blc_broken_images', array());
+    global $wpdb;
+    $table_name      = $wpdb->prefix . 'blc_broken_links';
+    $broken_images   = $wpdb->get_results("SELECT url, anchor, post_id, post_title FROM $table_name WHERE type = 'image'", ARRAY_A);
     $last_check_time = get_option('blc_last_check_time', 0);
     $option_size_bytes = strlen(serialize($broken_images));
-    $option_size_kb = $option_size_bytes / 1024;
-    $size_display = ($option_size_kb < 1024) ? number_format_i18n($option_size_kb, 2) . ' Ko' : number_format_i18n($option_size_kb / 1024, 2) . ' Mo';
+    $option_size_kb    = $option_size_bytes / 1024;
+    $size_display      = ($option_size_kb < 1024) ? number_format_i18n($option_size_kb, 2) . ' Ko' : number_format_i18n($option_size_kb / 1024, 2) . ' Mo';
 
     $list_table = new BLC_Images_List_Table();
     $list_table->prepare_items();

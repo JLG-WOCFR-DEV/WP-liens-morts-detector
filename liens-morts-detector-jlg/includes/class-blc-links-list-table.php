@@ -36,19 +36,19 @@ class BLC_Links_List_Table extends WP_List_Table {
     protected function get_views() {
         $views = [];
         $current = (!empty($_GET['link_type'])) ? $_GET['link_type'] : 'all';
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'blc_broken_links';
 
-        $all_links = get_option('blc_broken_links', []);
-        $total_count = count($all_links);
+        $all_links = $wpdb->get_results("SELECT url FROM $table_name WHERE type = 'link'", ARRAY_A);
+        $total_count    = count($all_links);
         $internal_count = 0;
         $external_count = 0;
 
-        if ($total_count > 0) {
-            foreach ($all_links as $link) {
-                if (strpos($link['url'], $this->site_url) === 0) {
-                    $internal_count++;
-                } else {
-                    $external_count++;
-                }
+        foreach ($all_links as $link) {
+            if (strpos($link['url'], $this->site_url) === 0) {
+                $internal_count++;
+            } else {
+                $external_count++;
             }
         }
 
@@ -142,10 +142,13 @@ class BLC_Links_List_Table extends WP_List_Table {
     public function prepare_items() {
         $this->_column_headers = [$this->get_columns(), [], []];
         $current_view = (!empty($_GET['link_type'])) ? $_GET['link_type'] : 'all';
-        $all_data = get_option('blc_broken_links', []);
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'blc_broken_links';
+
+        $all_data = $wpdb->get_results("SELECT url, anchor, post_id, post_title FROM $table_name WHERE type = 'link'", ARRAY_A);
         $filtered_data = [];
 
-        if ($current_view === 'all' || empty($all_data)) {
+        if ($current_view === 'all') {
             $filtered_data = $all_data;
         } else {
             foreach ($all_data as $link) {

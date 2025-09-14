@@ -10,9 +10,29 @@ if (!defined('ABSPATH')) {
  * Met en place la tâche planifiée (cron) pour les liens si elle n'existe pas déjà.
  */
 function blc_activation() {
+    global $wpdb;
+
+    // Création de la table dédiée aux liens et images cassés
+    $table_name      = $wpdb->prefix . 'blc_broken_links';
+    $charset_collate = $wpdb->get_charset_collate();
+    $sql             = "CREATE TABLE $table_name (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        url text NOT NULL,
+        anchor text NULL,
+        post_id bigint(20) unsigned NOT NULL,
+        post_title text NULL,
+        type varchar(20) NOT NULL,
+        PRIMARY KEY  (id),
+        KEY type (type),
+        KEY post_id (post_id)
+    ) $charset_collate;";
+
+    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+    dbDelta($sql);
+
     // On récupère la fréquence de scan enregistrée, ou 'daily' par défaut
     $frequency = get_option('blc_frequency', 'daily');
-    
+
     // On vérifie si une tâche est déjà planifiée pour éviter les doublons
     if (!wp_next_scheduled('blc_check_links')) {
         // Planifie l'événement : quand commencer (maintenant), à quelle fréquence, et quelle action exécuter
