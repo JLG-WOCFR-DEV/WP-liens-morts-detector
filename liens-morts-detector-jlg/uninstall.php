@@ -1,0 +1,32 @@
+<?php
+
+// Sécurité : ne rien faire si ce fichier est appelé directement
+if (!defined('WP_UNINSTALL_PLUGIN')) {
+    exit;
+}
+
+// Liste de toutes les options que notre plugin a créées dans la base de données
+$options_to_delete = [
+    'blc_broken_links',
+    'blc_broken_images',
+    'blc_last_check_time',
+    'blc_frequency',
+    'blc_rest_start_hour',
+    'blc_rest_end_hour',
+    'blc_link_delay',
+    'blc_batch_delay',
+    'blc_scan_method',
+    'blc_excluded_domains',
+    'blc_debug_mode'
+];
+
+// Boucle sur chaque option pour la supprimer
+foreach ($options_to_delete as $option_name) {
+    delete_option($option_name);
+}
+
+// Nettoyage final des tâches planifiées (par sécurité, même si la désactivation le fait déjà)
+wp_clear_scheduled_hook('blc_check_links');
+wp_clear_scheduled_hook('blc_check_batch');
+wp_clear_scheduled_hook('blc_check_image_batch');
+

@@ -1,0 +1,54 @@
+/* Styles pour le plugin Liens morts detector - JLG */
+
+/* Amélioration de la lisibilité des descriptions dans les formulaires */
+.wrap form p small {
+    color: #666;
+}
+.form-table th label {
+    font-size: 1.1em;
+}
+
+/* Styles pour l'encadré des statistiques */
+.blc-stats-box {
+    display: flex;
+    gap: 20px;
+    background-color: #fff;
+    border: 1px solid #c3c4c7;
+    padding: 20px;
+    margin-bottom: 20px;
+    border-left: 4px solid #72aee6; /* Couleur bleue standard de WordPress */
+}
+.blc-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex-grow: 1;
+    text-align: center;
+}
+.blc-stat-value {
+    font-size: 2.5em;
+    font-weight: 600;
+    line-height: 1.2;
+    color: #1d2327;
+}
+.blc-stat-label {
+    font-size: 1em;
+    color: #50575e;
+}
+
+/* Style pour les icônes dans le tableau */
+.wp-list-table .dashicons {
+    vertical-align: middle;
+    margin-right: 4px;
+}
+
+/*
+ * MODIFIÉ : Style pour le texte de l'ancre du lien
+ * On utilise un sélecteur plus spécifique pour forcer la couleur noire
+ * et s'assurer qu'il est toujours visible, même sans survol.
+ */
+.wp-list-table .row-actions .blc-anchor-text {
+    color: #1d2327; /* Couleur noire par défaut de l'admin WP */
+    visibility: visible; /* S'assurer que le texte est toujours visible */
+}
