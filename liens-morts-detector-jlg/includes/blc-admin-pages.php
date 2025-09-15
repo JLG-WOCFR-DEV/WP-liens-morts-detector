@@ -30,12 +30,15 @@ function blc_dashboard_links_page() {
 
     // Préparation des données et des statistiques pour les liens
     global $wpdb;
-    $table_name      = $wpdb->prefix . 'blc_broken_links';
-    $broken_links    = $wpdb->get_results("SELECT url, anchor, post_id, post_title FROM $table_name WHERE type = 'link'", ARRAY_A);
-    $last_check_time = get_option('blc_last_check_time', 0);
-    $option_size_bytes = strlen(serialize($broken_links));
-    $option_size_kb    = $option_size_bytes / 1024;
-    $size_display      = ($option_size_kb < 1024) ? number_format_i18n($option_size_kb, 2) . ' Ko' : number_format_i18n($option_size_kb / 1024, 2) . ' Mo';
+    $table_name = $wpdb->prefix . 'blc_broken_links';
+    $link_stats = $wpdb->get_row(
+        "SELECT COUNT(*) AS cnt, SUM(COALESCE(LENGTH(url),0) + COALESCE(LENGTH(anchor),0) + COALESCE(LENGTH(post_title),0)) AS size_bytes FROM $table_name WHERE type = 'link'"
+    );
+    $broken_links_count = intval($link_stats->cnt);
+    $option_size_bytes  = intval($link_stats->size_bytes);
+    $last_check_time    = get_option('blc_last_check_time', 0);
+    $option_size_kb     = $option_size_bytes / 1024;
+    $size_display       = ($option_size_kb < 1024) ? number_format_i18n($option_size_kb, 2) . ' Ko' : number_format_i18n($option_size_kb / 1024, 2) . ' Mo';
 
     $list_table = new BLC_Links_List_Table();
     $list_table->prepare_items();
@@ -43,7 +46,7 @@ function blc_dashboard_links_page() {
     <div class="wrap">
         <h1>Rapport des Liens Cassés</h1>
         <div class="blc-stats-box">
-            <div class="blc-stat"><span class="blc-stat-value"><?php echo count($broken_links); ?></span><span class="blc-stat-label">Liens morts trouvés</span></div>
+            <div class="blc-stat"><span class="blc-stat-value"><?php echo $broken_links_count; ?></span><span class="blc-stat-label">Liens morts trouvés</span></div>
             <div class="blc-stat"><span class="blc-stat-value"><?php echo $size_display; ?></span><span class="blc-stat-label">Poids des données</span></div>
             <div class="blc-stat"><span class="blc-stat-value"><?php echo $last_check_time ? date_i18n('j M Y', $last_check_time) : 'Jamais'; ?></span><span class="blc-stat-label">Dernière analyse</span></div>
         </div>
@@ -56,7 +59,7 @@ function blc_dashboard_links_page() {
             </p>
             <input type="submit" class="button button-primary" value="Lancer la vérification des liens">
         </form>
-        <?php if (empty($broken_links)): ?>
+        <?php if ($broken_links_count === 0): ?>
              <p>✅ Aucun lien mort trouvé. Bravo !</p>
         <?php else: ?>
             <form method="post">
@@ -80,12 +83,15 @@ function blc_dashboard_images_page() {
     }
 
     global $wpdb;
-    $table_name      = $wpdb->prefix . 'blc_broken_links';
-    $broken_images   = $wpdb->get_results("SELECT url, anchor, post_id, post_title FROM $table_name WHERE type = 'image'", ARRAY_A);
-    $last_check_time = get_option('blc_last_check_time', 0);
-    $option_size_bytes = strlen(serialize($broken_images));
-    $option_size_kb    = $option_size_bytes / 1024;
-    $size_display      = ($option_size_kb < 1024) ? number_format_i18n($option_size_kb, 2) . ' Ko' : number_format_i18n($option_size_kb / 1024, 2) . ' Mo';
+    $table_name = $wpdb->prefix . 'blc_broken_links';
+    $image_stats = $wpdb->get_row(
+        "SELECT COUNT(*) AS cnt, SUM(COALESCE(LENGTH(url),0) + COALESCE(LENGTH(anchor),0) + COALESCE(LENGTH(post_title),0)) AS size_bytes FROM $table_name WHERE type = 'image'"
+    );
+    $broken_images_count = intval($image_stats->cnt);
+    $option_size_bytes   = intval($image_stats->size_bytes);
+    $last_check_time     = get_option('blc_last_check_time', 0);
+    $option_size_kb      = $option_size_bytes / 1024;
+    $size_display        = ($option_size_kb < 1024) ? number_format_i18n($option_size_kb, 2) . ' Ko' : number_format_i18n($option_size_kb / 1024, 2) . ' Mo';
 
     $list_table = new BLC_Images_List_Table();
     $list_table->prepare_items();
@@ -93,7 +99,7 @@ function blc_dashboard_images_page() {
     <div class="wrap">
         <h1>Rapport des Images Cassées</h1>
         <div class="blc-stats-box">
-             <div class="blc-stat"><span class="blc-stat-value"><?php echo count($broken_images); ?></span><span class="blc-stat-label">Images cassées trouvées</span></div>
+             <div class="blc-stat"><span class="blc-stat-value"><?php echo $broken_images_count; ?></span><span class="blc-stat-label">Images cassées trouvées</span></div>
              <div class="blc-stat"><span class="blc-stat-value"><?php echo $size_display; ?></span><span class="blc-stat-label">Poids des données</span></div>
              <div class="blc-stat"><span class="blc-stat-value"><?php echo $last_check_time ? date_i18n('j M Y', $last_check_time) : 'Jamais'; ?></span><span class="blc-stat-label">Dernière analyse de liens</span></div>
         </div>
@@ -103,7 +109,7 @@ function blc_dashboard_images_page() {
             <p>L'analyse des images peut être longue et consommer des ressources. Elle s'exécute en arrière-plan sur l'ensemble du site.</p>
             <input type="submit" class="button button-primary" value="Lancer l'analyse des images">
         </form>
-        <?php if (empty($broken_images)): ?>
+        <?php if ($broken_images_count === 0): ?>
              <p>✅ Aucune image cassée trouvée. Bravo !</p>
         <?php else: ?>
             <form method="post">
