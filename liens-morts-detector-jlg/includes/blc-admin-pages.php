@@ -75,8 +75,8 @@ function blc_dashboard_images_page() {
     if (isset($_POST['blc_manual_image_check'])) {
         check_admin_referer('blc_manual_image_check_nonce');
         wp_clear_scheduled_hook('blc_check_image_batch');
-        blc_perform_image_check(0);
-        echo '<div class="notice notice-success is-dismissible"><p>La vérification des images a démarré ! Les résultats apparaîtront progressivement.</p></div>';
+        wp_schedule_single_event(time(), 'blc_check_image_batch', array(0, true));
+        echo '<div class="notice notice-success is-dismissible"><p>La vérification des images a été programmée et s\'exécute en arrière-plan.</p></div>';
     }
 
     global $wpdb;
