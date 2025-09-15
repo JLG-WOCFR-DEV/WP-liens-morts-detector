@@ -91,8 +91,10 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
 
     $post_ids_in_batch = wp_list_pluck($posts, 'ID');
     if (!empty($post_ids_in_batch)) {
-        $ids = implode(',', array_map('intval', $post_ids_in_batch));
-        $wpdb->query("DELETE FROM $table_name WHERE post_id IN ($ids) AND type = 'link'");
+        $post_ids_in_batch = array_map('intval', $post_ids_in_batch);
+        $placeholders = implode(',', array_fill(0, count($post_ids_in_batch), '%d'));
+        $query = "DELETE FROM $table_name WHERE post_id IN ($placeholders) AND type = %s";
+        $wpdb->query($wpdb->prepare($query, array_merge($post_ids_in_batch, ['link'])));
     }
 
     // --- 4. Boucle d'analyse des LIENS <a> ---
