@@ -78,10 +78,46 @@ function blc_enqueue_admin_assets($hook) {
 
 // --- Fonctions de rappel AJAX pour les actions rapides ---
 
+/**
+ * Valide la présence et le contenu des paramètres requis pour une requête AJAX.
+ *
+ * @param array $required_params Liste des clés attendues dans $_POST.
+ * @return bool True si tous les paramètres sont présents et non vides.
+ */
+function blc_validate_required_post_params(array $required_params) {
+    foreach ($required_params as $param) {
+        if (!isset($_POST[$param])) {
+            wp_send_json_error(['message' => sprintf('Le paramètre requis "%s" est manquant ou vide.', $param)]);
+            return false;
+        }
+
+        $value = $_POST[$param];
+
+        if (is_string($value)) {
+            $value_to_check = trim($value);
+        } elseif (is_scalar($value)) {
+            $value_to_check = trim((string) $value);
+        } else {
+            $value_to_check = '';
+        }
+
+        if ($value_to_check === '') {
+            wp_send_json_error(['message' => sprintf('Le paramètre requis "%s" est manquant ou vide.', $param)]);
+            return false;
+        }
+    }
+
+    return true;
+}
+
 // Gère la modification d'une URL
 add_action('wp_ajax_blc_edit_link', 'blc_ajax_edit_link_callback');
 function blc_ajax_edit_link_callback() {
     check_ajax_referer('blc_edit_link_nonce');
+
+    if (!blc_validate_required_post_params(['post_id', 'old_url', 'new_url'])) {
+        return;
+    }
 
     $post_id = intval(wp_unslash($_POST['post_id']));
 
@@ -132,6 +168,10 @@ function blc_ajax_edit_link_callback() {
 add_action('wp_ajax_blc_unlink', 'blc_ajax_unlink_callback');
 function blc_ajax_unlink_callback() {
     check_ajax_referer('blc_unlink_nonce');
+
+    if (!blc_validate_required_post_params(['post_id', 'url_to_unlink'])) {
+        return;
+    }
 
     $post_id = intval(wp_unslash($_POST['post_id']));
 
