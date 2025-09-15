@@ -88,7 +88,9 @@ function blc_enqueue_admin_assets($hook) {
  * des slashes et trim) ne doit pas être vide.
  *
  * @param string[] $required_params Liste des clés attendues dans $_POST.
- * @return array|null Tableau associatif des valeurs nettoyées, ou null si une erreur a été renvoyée.
+ * @return array Tableau associatif des valeurs nettoyées.
+ *               Cette fonction envoie une réponse JSON d'erreur et interrompt l'exécution
+ *               via wp_send_json_error() si une validation échoue.
  */
 function blc_require_post_params(array $required_params) {
     $values = [];
@@ -96,7 +98,6 @@ function blc_require_post_params(array $required_params) {
     foreach ($required_params as $param) {
         if (!isset($_POST[$param])) {
             wp_send_json_error(['message' => sprintf('Le paramètre requis "%s" est manquant ou vide.', $param)]);
-            return null;
         }
 
         $raw_value = wp_unslash($_POST[$param]);
@@ -111,7 +112,6 @@ function blc_require_post_params(array $required_params) {
 
         if ($value === '') {
             wp_send_json_error(['message' => sprintf('Le paramètre requis "%s" est manquant ou vide.', $param)]);
-            return null;
         }
 
         $values[$param] = $value;
@@ -126,9 +126,6 @@ function blc_ajax_edit_link_callback() {
     check_ajax_referer('blc_edit_link_nonce');
 
     $params = blc_require_post_params(['post_id', 'old_url', 'new_url']);
-    if ($params === null) {
-        return;
-    }
 
     $post_id = intval($params['post_id']);
 
@@ -184,9 +181,6 @@ function blc_ajax_unlink_callback() {
     check_ajax_referer('blc_unlink_nonce');
 
     $params = blc_require_post_params(['post_id', 'url_to_unlink']);
-    if ($params === null) {
-        return;
-    }
 
     $post_id = intval($params['post_id']);
 
