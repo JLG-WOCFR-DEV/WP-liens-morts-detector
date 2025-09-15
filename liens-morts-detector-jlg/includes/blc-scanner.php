@@ -3,6 +3,41 @@
 if (!defined('ABSPATH')) exit;
 
 /**
+ * Helper to build a DOMDocument instance from raw post content.
+ *
+ * @param string $content Raw HTML content from the post.
+ * @param string $charset Charset used by the blog.
+ *
+ * @return DOMDocument|null
+ */
+function blc_create_dom_from_content($content, $charset = 'UTF-8') {
+    if (!class_exists('DOMDocument')) {
+        return null;
+    }
+
+    $content = (string) $content;
+    if (trim($content) === '') {
+        return null;
+    }
+
+    $dom = new DOMDocument('1.0', 'UTF-8');
+    $previous_state = libxml_use_internal_errors(true);
+
+    if (function_exists('mb_convert_encoding')) {
+        $content_for_dom = mb_convert_encoding($content, 'HTML-ENTITIES', $charset);
+    } else {
+        $content_for_dom = $content;
+    }
+
+    $loaded = $dom->loadHTML('<?xml encoding="utf-8" ?>' . $content_for_dom);
+
+    libxml_clear_errors();
+    libxml_use_internal_errors($previous_state);
+
+    return $loaded ? $dom : null;
+}
+
+/**
  * Fonction de scan DÉDIÉE AUX LIENS <a>.
  * Déclenchée par la planification et le bouton principal.
  */
@@ -66,57 +101,38 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
     $upload_basedir  = isset($upload_dir_info['basedir']) ? trailingslashit($upload_dir_info['basedir']) : '';
     $site_url        = trailingslashit(home_url());
 
+    $blog_charset = get_bloginfo('charset');
+    if (empty($blog_charset)) { $blog_charset = 'UTF-8'; }
+
     foreach ($posts as $post) {
         if ($debug_mode) { error_log("Analyse LIENS pour : '" . $post->post_title . "'"); }
 
-        preg_match_all('/<a\s[^>]*href\s*=\s*["\']([^"\']+)["\'][^>]*>(.*?)<\/a>/i', $post->post_content, $matches_a, PREG_SET_ORDER);
-        if (!empty($matches_a)) {
-            foreach ($matches_a as $match) {
-                $url = $match[1];
-                $anchor_text = wp_strip_all_tags($match[2]);
-                if (empty(trim($anchor_text))) { $anchor_text = '[Lien sans texte]'; }
+        $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
+        if (!$dom instanceof DOMDocument) {
+            continue;
+        }
 
+        foreach ($dom->getElementsByTagName('a') as $link_node) {
+            $url = trim(wp_kses_decode_entities($link_node->getAttribute('href')));
+            if ($url === '') { continue; }
+
+            $anchor_text = wp_strip_all_tags($link_node->textContent);
+            $anchor_text = trim(preg_replace('/\s+/u', ' ', $anchor_text));
+            if ($anchor_text === '') { $anchor_text = '[Lien sans texte]'; }
+
+            $parsed_url = parse_url($url);
+            if (empty($parsed_url['scheme'])) {
+                $url = $site_url . ltrim($url, '/');
                 $parsed_url = parse_url($url);
-                if (empty($parsed_url['scheme'])) {
-                    $url = $site_url . ltrim($url, '/');
-                    $parsed_url = parse_url($url);
-                }
-                elseif (!in_array($parsed_url['scheme'], ['http', 'https'])) { continue; }
+            }
+            elseif (!in_array($parsed_url['scheme'], ['http', 'https'])) { continue; }
 
-                if ($upload_baseurl && $upload_basedir && strpos($url, $upload_baseurl) === 0) {
-                    $relative_path = ltrim(substr($url, strlen($upload_baseurl)), '/');
-                    $file_path = wp_normalize_path($upload_basedir . $relative_path);
+            if ($upload_baseurl && $upload_basedir && strpos($url, $upload_baseurl) === 0) {
+                $relative_path = ltrim(substr($url, strlen($upload_baseurl)), '/');
+                $file_path = wp_normalize_path($upload_basedir . $relative_path);
 
-                    if (!file_exists($file_path)) {
-                        if ($debug_mode) { error_log("  -> Ressource locale introuvable : " . $url); }
-                        $wpdb->insert(
-                            $table_name,
-                            [
-                                'url'        => $url,
-                                'anchor'     => $anchor_text,
-                                'post_id'    => $post->ID,
-                                'post_title' => $post->post_title,
-                                'type'       => 'link',
-                            ],
-                            ['%s', '%s', '%d', '%s', '%s']
-                        );
-                        continue;
-                    }
-                }
-
-                $host = parse_url($url, PHP_URL_HOST);
-                $is_excluded = false;
-                if (!empty($excluded_domains) && !empty($host)) {
-                    foreach ($excluded_domains as $domain_to_exclude) {
-                        if (substr($host, -strlen($domain_to_exclude)) === $domain_to_exclude) { $is_excluded = true; break; }
-                    }
-                }
-
-                if ($is_excluded) { continue; }
-
-                $response = ($scan_method === 'precise') ? wp_remote_get($url, ['timeout' => 10, 'user-agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0', 'method' => 'GET']) : wp_remote_head($url, ['timeout' => 5]);
-                
-                if (is_wp_error($response) || wp_remote_retrieve_response_code($response) >= 400) {
+                if (!file_exists($file_path)) {
+                    if ($debug_mode) { error_log("  -> Ressource locale introuvable : " . $url); }
                     $wpdb->insert(
                         $table_name,
                         [
@@ -128,9 +144,36 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
                         ],
                         ['%s', '%s', '%d', '%s', '%s']
                     );
+                    continue;
                 }
-                usleep($link_delay_ms * 1000);
             }
+
+            $host = parse_url($url, PHP_URL_HOST);
+            $is_excluded = false;
+            if (!empty($excluded_domains) && !empty($host)) {
+                foreach ($excluded_domains as $domain_to_exclude) {
+                    if (substr($host, -strlen($domain_to_exclude)) === $domain_to_exclude) { $is_excluded = true; break; }
+                }
+            }
+
+            if ($is_excluded) { continue; }
+
+            $response = ($scan_method === 'precise') ? wp_remote_get($url, ['timeout' => 10, 'user-agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0', 'method' => 'GET']) : wp_remote_head($url, ['timeout' => 5]);
+
+            if (is_wp_error($response) || wp_remote_retrieve_response_code($response) >= 400) {
+                $wpdb->insert(
+                    $table_name,
+                    [
+                        'url'        => $url,
+                        'anchor'     => $anchor_text,
+                        'post_id'    => $post->ID,
+                        'post_title' => $post->post_title,
+                        'type'       => 'link',
+                    ],
+                    ['%s', '%s', '%d', '%s', '%s']
+                );
+            }
+            usleep($link_delay_ms * 1000);
         }
     }
 
@@ -169,28 +212,36 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     $upload_dir_info = wp_upload_dir();
     $site_url = home_url();
 
+    $blog_charset = get_bloginfo('charset');
+    if (empty($blog_charset)) { $blog_charset = 'UTF-8'; }
+
     foreach ($posts as $post) {
         if ($debug_mode) { error_log("Analyse IMAGES pour : '" . $post->post_title . "'"); }
 
-        preg_match_all('/<img\s[^>]*src\s*=\s*["\']([^"\']+)["\']/i', $post->post_content, $matches_img);
-        if (!empty($matches_img[1])) {
-            foreach ($matches_img[1] as $image_url) {
-                if (strpos($image_url, $site_url) === false) { continue; }
-                $file_path = str_replace($upload_dir_info['baseurl'], $upload_dir_info['basedir'], $image_url);
-                if (!file_exists($file_path)) {
-                    if ($debug_mode) { error_log("  -> Image Cassée Trouvée : " . $image_url); }
-                    $wpdb->insert(
-                        $table_name,
-                        [
-                            'url'        => $image_url,
-                            'anchor'     => basename($image_url),
-                            'post_id'    => $post->ID,
-                            'post_title' => $post->post_title,
-                            'type'       => 'image',
-                        ],
-                        ['%s', '%s', '%d', '%s', '%s']
-                    );
-                }
+        $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
+        if (!$dom instanceof DOMDocument) {
+            continue;
+        }
+
+        foreach ($dom->getElementsByTagName('img') as $image_node) {
+            $image_url = trim(wp_kses_decode_entities($image_node->getAttribute('src')));
+            if ($image_url === '') { continue; }
+
+            if (strpos($image_url, $site_url) === false) { continue; }
+            $file_path = str_replace($upload_dir_info['baseurl'], $upload_dir_info['basedir'], $image_url);
+            if (!file_exists($file_path)) {
+                if ($debug_mode) { error_log("  -> Image Cassée Trouvée : " . $image_url); }
+                $wpdb->insert(
+                    $table_name,
+                    [
+                        'url'        => $image_url,
+                        'anchor'     => basename($image_url),
+                        'post_id'    => $post->ID,
+                        'post_title' => $post->post_title,
+                        'type'       => 'image',
+                    ],
+                    ['%s', '%s', '%d', '%s', '%s']
+                );
             }
         }
     }
