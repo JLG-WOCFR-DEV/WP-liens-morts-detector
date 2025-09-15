@@ -210,7 +210,10 @@ function blc_ajax_unlink_callback() {
 
     // Recherche de la balise <a> à retirer
     $xpath = new DOMXPath($dom);
-    $anchors = $xpath->query('//a[@href="' . $url_to_unlink . '"]');
+    $escaped_url_to_unlink = function_exists('esc_attr')
+        ? esc_attr($url_to_unlink)
+        : htmlspecialchars($url_to_unlink, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $anchors = $xpath->query(sprintf('//a[@href="%s"]', $escaped_url_to_unlink));
 
     if ($anchors->length === 0) {
         wp_send_json_error(['message' => 'Le lien n\'a pas été trouvé dans le contenu de l\'article.']);
