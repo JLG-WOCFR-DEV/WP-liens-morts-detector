@@ -31,7 +31,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
         $load = sys_getloadavg();
         if ($load[0] > 2.0) {
             if ($debug_mode) { error_log("Scan reporté : charge serveur trop élevée (" . $load[0] . ")."); }
-            wp_schedule_single_event(time() + 300, 'blc_check_batch', array($batch, $is_full_scan));
+            wp_schedule_single_event(current_time('timestamp') + 300, 'blc_check_batch', array($batch, $is_full_scan));
             return;
         }
     }
@@ -136,9 +136,9 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
 
     // --- 5. Sauvegarde et planification ---
     if ($query->max_num_pages > ($batch + 1)) {
-        wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan));
+        wp_schedule_single_event(current_time('timestamp') + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan));
     } else {
-        update_option('blc_last_check_time', time());
+        update_option('blc_last_check_time', current_time('timestamp'));
     }
 
     if ($debug_mode) { error_log("--- Fin du scan LIENS (Lot #$batch) ---"); }
@@ -197,7 +197,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
 
     if ($query->max_num_pages > ($batch + 1)) {
         // On utilise un hook de batch différent pour ne pas interférer
-        wp_schedule_single_event(time() + 60, 'blc_check_image_batch', array($batch + 1, true));
+        wp_schedule_single_event(current_time('timestamp') + 60, 'blc_check_image_batch', array($batch + 1, true));
     } else {
         if ($debug_mode) { error_log("--- Scan IMAGES terminé ---"); }
     }

@@ -24,7 +24,7 @@ function blc_dashboard_links_page() {
         check_admin_referer('blc_manual_check_nonce');
         $is_full = isset($_POST['blc_full_scan']);
         wp_clear_scheduled_hook('blc_check_batch');
-        wp_schedule_single_event(time(), 'blc_check_batch', array(0, $is_full));
+        wp_schedule_single_event(current_time('timestamp'), 'blc_check_batch', array(0, $is_full));
         echo '<div class="notice notice-success is-dismissible"><p>La vérification des liens a été programmée et s\'exécute en arrière-plan.</p></div>';
     }
 
@@ -87,7 +87,7 @@ function blc_dashboard_images_page() {
     if (isset($_POST['blc_manual_image_check'])) {
         check_admin_referer('blc_manual_image_check_nonce');
         wp_clear_scheduled_hook('blc_check_image_batch');
-        wp_schedule_single_event(time(), 'blc_check_image_batch', array(0, true));
+        wp_schedule_single_event(current_time('timestamp'), 'blc_check_image_batch', array(0, true));
         echo '<div class="notice notice-success is-dismissible"><p>La vérification des images a été programmée et s\'exécute en arrière-plan.</p></div>';
     }
 
@@ -154,7 +154,7 @@ function blc_settings_page() {
         update_option('blc_debug_mode', isset($_POST['blc_debug_mode']));
         $frequency = sanitize_text_field($_POST['blc_frequency']);
         wp_clear_scheduled_hook('blc_check_links');
-        wp_schedule_event(time(), $frequency, 'blc_check_links');
+        wp_schedule_event(current_time('timestamp'), $frequency, 'blc_check_links');
         echo '<div class="notice notice-success is-dismissible"><p>Réglages enregistrés !</p></div>';
     }
 
