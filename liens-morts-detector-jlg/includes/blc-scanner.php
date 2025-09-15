@@ -61,6 +61,11 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
     }
 
     // --- 4. Boucle d'analyse des LIENS <a> ---
+    $upload_dir_info = wp_upload_dir();
+    $upload_baseurl  = isset($upload_dir_info['baseurl']) ? trailingslashit($upload_dir_info['baseurl']) : '';
+    $upload_basedir  = isset($upload_dir_info['basedir']) ? trailingslashit($upload_dir_info['basedir']) : '';
+    $site_url        = trailingslashit(home_url());
+
     foreach ($posts as $post) {
         if ($debug_mode) { error_log("Analyse LIENS pour : '" . $post->post_title . "'"); }
 
@@ -70,10 +75,34 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
                 $url = $match[1];
                 $anchor_text = wp_strip_all_tags($match[2]);
                 if (empty(trim($anchor_text))) { $anchor_text = '[Lien sans texte]'; }
-                
+
                 $parsed_url = parse_url($url);
-                if (empty($parsed_url['scheme'])) { $url = home_url($url); } 
+                if (empty($parsed_url['scheme'])) {
+                    $url = $site_url . ltrim($url, '/');
+                    $parsed_url = parse_url($url);
+                }
                 elseif (!in_array($parsed_url['scheme'], ['http', 'https'])) { continue; }
+
+                if ($upload_baseurl && $upload_basedir && strpos($url, $upload_baseurl) === 0) {
+                    $relative_path = ltrim(substr($url, strlen($upload_baseurl)), '/');
+                    $file_path = wp_normalize_path($upload_basedir . $relative_path);
+
+                    if (!file_exists($file_path)) {
+                        if ($debug_mode) { error_log("  -> Ressource locale introuvable : " . $url); }
+                        $wpdb->insert(
+                            $table_name,
+                            [
+                                'url'        => $url,
+                                'anchor'     => $anchor_text,
+                                'post_id'    => $post->ID,
+                                'post_title' => $post->post_title,
+                                'type'       => 'link',
+                            ],
+                            ['%s', '%s', '%d', '%s', '%s']
+                        );
+                        continue;
+                    }
+                }
 
                 $host = parse_url($url, PHP_URL_HOST);
                 $is_excluded = false;
