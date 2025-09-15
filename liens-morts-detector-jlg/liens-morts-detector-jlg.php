@@ -21,6 +21,7 @@ define('BLC_PLUGIN_PATH', plugin_dir_path(__FILE__));
 require_once BLC_PLUGIN_PATH . 'includes/blc-activation.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-cron.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-scanner.php';
+require_once BLC_PLUGIN_PATH . 'includes/blc-utils.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-admin-pages.php';
 require_once BLC_PLUGIN_PATH . 'includes/class-blc-links-list-table.php';
 require_once BLC_PLUGIN_PATH . 'includes/class-blc-images-list-table.php';
@@ -144,15 +145,18 @@ function blc_ajax_edit_link_callback() {
         wp_send_json_error(['message' => 'Article non trouvé.']);
     }
 
-    // Chargement du contenu dans DOMDocument
-    $previous = libxml_use_internal_errors(true);
-    $dom = new DOMDocument();
-    $dom->loadHTML(mb_convert_encoding($post->post_content, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
-    libxml_clear_errors();
-    libxml_use_internal_errors($previous);
+    $dom_data = blc_load_dom_from_post($post->post_content);
+    if (isset($dom_data['error'])) {
+        wp_send_json_error(['message' => $dom_data['error']]);
+        return;
+    }
+
+    /** @var DOMDocument $dom */
+    $dom = $dom_data['dom'];
+    /** @var DOMXPath $xpath */
+    $xpath = $dom_data['xpath'];
 
     // Recherche et modification de la balise <a> ciblée
-    $xpath = new DOMXPath($dom);
     $escaped_old_url = function_exists('esc_attr')
         ? esc_attr($old_url)
         : htmlspecialchars($old_url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -201,15 +205,18 @@ function blc_ajax_unlink_callback() {
         wp_send_json_error(['message' => 'Article non trouvé.']);
     }
 
-    // Chargement du contenu dans DOMDocument
-    $previous = libxml_use_internal_errors(true);
-    $dom = new DOMDocument();
-    $dom->loadHTML(mb_convert_encoding($post->post_content, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
-    libxml_clear_errors();
-    libxml_use_internal_errors($previous);
+    $dom_data = blc_load_dom_from_post($post->post_content);
+    if (isset($dom_data['error'])) {
+        wp_send_json_error(['message' => $dom_data['error']]);
+        return;
+    }
+
+    /** @var DOMDocument $dom */
+    $dom = $dom_data['dom'];
+    /** @var DOMXPath $xpath */
+    $xpath = $dom_data['xpath'];
 
     // Recherche de la balise <a> à retirer
-    $xpath = new DOMXPath($dom);
     $escaped_url_to_unlink = function_exists('esc_attr')
         ? esc_attr($url_to_unlink)
         : htmlspecialchars($url_to_unlink, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
