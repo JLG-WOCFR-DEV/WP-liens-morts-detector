@@ -6,11 +6,11 @@ if (!defined('ABSPATH')) {
 }
 
 if (!defined('BLC_DB_VERSION')) {
-    define('BLC_DB_VERSION', '1.1.0');
+    define('BLC_DB_VERSION', '1.2.0');
 }
 
 if (!defined('BLC_URL_MAX_LENGTH')) {
-    define('BLC_URL_MAX_LENGTH', 2083);
+    define('BLC_URL_MAX_LENGTH', 255);
 }
 
 if (!defined('BLC_TEXT_FIELD_LENGTH')) {
@@ -36,22 +36,22 @@ function blc_maybe_upgrade_database() {
         return;
     }
 
-    blc_upgrade_column_if_text($table_name, 'url', sprintf('varchar(%d)', BLC_URL_MAX_LENGTH), false);
-    blc_upgrade_column_if_text($table_name, 'anchor', sprintf('varchar(%d)', BLC_TEXT_FIELD_LENGTH), true);
-    blc_upgrade_column_if_text($table_name, 'post_title', sprintf('varchar(%d)', BLC_TEXT_FIELD_LENGTH), true);
+    blc_migrate_column_to_varchar($table_name, 'url', BLC_URL_MAX_LENGTH, false);
+    blc_migrate_column_to_varchar($table_name, 'anchor', BLC_TEXT_FIELD_LENGTH, true);
+    blc_migrate_column_to_varchar($table_name, 'post_title', BLC_TEXT_FIELD_LENGTH, true);
 
     update_option('blc_plugin_db_version', BLC_DB_VERSION);
 }
 
 /**
- * Convertit une colonne TEXT en VARCHAR si nécessaire.
+ * Convertit ou ajuste une colonne en VARCHAR avec la longueur souhaitée.
  *
- * @param string $table_name  Nom de la table.
- * @param string $column_name Nom de la colonne à mettre à jour.
- * @param string $new_type    Nouveau type de colonne (ex. varchar(255)).
- * @param bool   $is_nullable Indique si la colonne peut être NULL.
+ * @param string $table_name    Nom de la table.
+ * @param string $column_name   Nom de la colonne à mettre à jour.
+ * @param int    $target_length Longueur maximale souhaitée pour la colonne.
+ * @param bool   $is_nullable   Indique si la colonne peut être NULL.
  */
-function blc_upgrade_column_if_text($table_name, $column_name, $new_type, $is_nullable) {
+function blc_migrate_column_to_varchar($table_name, $column_name, $target_length, $is_nullable) {
     global $wpdb;
 
     $table = esc_sql($table_name);
@@ -61,23 +61,41 @@ function blc_upgrade_column_if_text($table_name, $column_name, $new_type, $is_nu
         $wpdb->prepare("SHOW COLUMNS FROM `$table` LIKE %s", $column)
     );
 
-    if (!$column_definition || stripos($column_definition->Type, 'text') === false) {
+    if (!$column_definition) {
         return;
     }
 
-    if (preg_match('/\\((\\d+)\\)/', $new_type, $matches)) {
-        $max_length = (int) $matches[1];
-        if ($max_length > 0) {
-            $wpdb->query(
-                sprintf(
-                    "UPDATE `%s` SET `%s` = LEFT(`%s`, %d)",
-                    $table,
-                    $column,
-                    $column,
-                    $max_length
-                )
-            );
+    $current_type = strtolower($column_definition->Type);
+    $target_length = (int) $target_length;
+    $target_type   = sprintf('varchar(%d)', $target_length);
+
+    $needs_update = false;
+
+    if (stripos($current_type, 'text') !== false) {
+        $needs_update = true;
+    } elseif (preg_match('/varchar\\((\\d+)\\)/', $current_type, $matches)) {
+        $current_length = (int) $matches[1];
+        if ($current_length !== $target_length) {
+            $needs_update = true;
         }
+    } else {
+        $needs_update = true;
+    }
+
+    if (!$needs_update) {
+        return;
+    }
+
+    if ($target_length > 0) {
+        $wpdb->query(
+            sprintf(
+                "UPDATE `%s` SET `%s` = LEFT(`%s`, %d)",
+                $table,
+                $column,
+                $column,
+                $target_length
+            )
+        );
     }
 
     $null_sql    = $is_nullable ? 'NULL' : 'NOT NULL';
@@ -88,7 +106,7 @@ function blc_upgrade_column_if_text($table_name, $column_name, $new_type, $is_nu
             "ALTER TABLE `%s` MODIFY `%s` %s %s%s",
             $table,
             $column,
-            $new_type,
+            $target_type,
             $null_sql,
             $default_sql
         )
