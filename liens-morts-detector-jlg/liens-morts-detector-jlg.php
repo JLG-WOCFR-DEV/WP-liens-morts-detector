@@ -118,7 +118,7 @@ function blc_ajax_edit_link_callback() {
 
     // Enregistrement du contenu mis à jour
     $new_content = $dom->saveHTML();
-    wp_update_post(['ID' => $post_id, 'post_content' => $new_content]);
+    wp_update_post(['ID' => $post_id, 'post_content' => wp_slash($new_content)]);
 
     // Supprimer le lien de la table dédiée
     global $wpdb;
@@ -171,7 +171,7 @@ function blc_ajax_unlink_callback() {
 
     // Enregistrement du contenu mis à jour
     $new_content = $dom->saveHTML();
-    wp_update_post(['ID' => $post_id, 'post_content' => $new_content]);
+    wp_update_post(['ID' => $post_id, 'post_content' => wp_slash($new_content)]);
 
     // Supprimer le lien de la table dédiée
     global $wpdb;
