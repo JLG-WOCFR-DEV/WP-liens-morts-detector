@@ -26,6 +26,9 @@ class BlcAjaxCallbacksTest extends TestCase
             return dirname($file) . '/';
         });
         Functions\when('plugin_dir_url')->justReturn('http://example.com/');
+        Functions\when('wp_unslash')->alias(function ($value) {
+            return $value;
+        });
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/liens-morts-detector-jlg.php';
     }
