@@ -30,6 +30,9 @@ require_once BLC_PLUGIN_PATH . 'includes/class-blc-images-list-table.php';
 register_activation_hook(__FILE__, 'blc_activation');
 register_deactivation_hook(__FILE__, 'blc_deactivation');
 
+// Vérifie si la base de données doit être migrée après une mise à jour du plugin.
+add_action('plugins_loaded', 'blc_maybe_upgrade_database');
+
 // --- Initialisation des Actions et Filtres ---
 // On connecte les fonctions du plugin au cœur de WordPress.
 

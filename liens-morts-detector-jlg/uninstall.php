@@ -16,7 +16,8 @@ $options_to_delete = [
     'blc_batch_delay',
     'blc_scan_method',
     'blc_excluded_domains',
-    'blc_debug_mode'
+    'blc_debug_mode',
+    'blc_plugin_db_version'
 ];
 
 // Boucle sur chaque option pour la supprimer
