@@ -31,11 +31,20 @@ function blc_dashboard_links_page() {
     // Préparation des données et des statistiques pour les liens
     global $wpdb;
     $table_name = $wpdb->prefix . 'blc_broken_links';
-    $link_stats = $wpdb->get_row(
-        "SELECT COUNT(*) AS cnt, SUM(COALESCE(LENGTH(url),0) + COALESCE(LENGTH(anchor),0) + COALESCE(LENGTH(post_title),0)) AS size_bytes FROM $table_name WHERE type = 'link'"
+    $broken_links_count = (int) $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT COUNT(*) FROM $table_name WHERE type = %s",
+            'link'
+        )
     );
-    $broken_links_count = intval($link_stats->cnt);
-    $option_size_bytes  = intval($link_stats->size_bytes);
+    $option_size_bytes = (int) $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0))
+             FROM $table_name
+             WHERE type = %s",
+            'link'
+        )
+    );
     $last_check_time    = get_option('blc_last_check_time', 0);
     $option_size_kb     = $option_size_bytes / 1024;
     $size_display       = ($option_size_kb < 1024) ? number_format_i18n($option_size_kb, 2) . ' Ko' : number_format_i18n($option_size_kb / 1024, 2) . ' Mo';
@@ -84,11 +93,20 @@ function blc_dashboard_images_page() {
 
     global $wpdb;
     $table_name = $wpdb->prefix . 'blc_broken_links';
-    $image_stats = $wpdb->get_row(
-        "SELECT COUNT(*) AS cnt, SUM(COALESCE(LENGTH(url),0) + COALESCE(LENGTH(anchor),0) + COALESCE(LENGTH(post_title),0)) AS size_bytes FROM $table_name WHERE type = 'image'"
+    $broken_images_count = (int) $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT COUNT(*) FROM $table_name WHERE type = %s",
+            'image'
+        )
     );
-    $broken_images_count = intval($image_stats->cnt);
-    $option_size_bytes   = intval($image_stats->size_bytes);
+    $option_size_bytes = (int) $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0))
+             FROM $table_name
+             WHERE type = %s",
+            'image'
+        )
+    );
     $last_check_time     = get_option('blc_last_check_time', 0);
     $option_size_kb      = $option_size_bytes / 1024;
     $size_display        = ($option_size_kb < 1024) ? number_format_i18n($option_size_kb, 2) . ' Ko' : number_format_i18n($option_size_kb / 1024, 2) . ' Mo';

@@ -1,0 +1,217 @@
+<?php
+
+namespace Tests;
+
+use Brain\Monkey;
+use Brain\Monkey\Functions;
+use PHPUnit\Framework\TestCase;
+
+class AdminListTablesTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+        require_once __DIR__ . '/../vendor/autoload.php';
+        Monkey\setUp();
+
+        if (!defined('ABSPATH')) {
+            define('ABSPATH', __DIR__ . '/../');
+        }
+
+        if (!defined('ARRAY_A')) {
+            define('ARRAY_A', 'ARRAY_A');
+        }
+
+        if (!class_exists('WP_List_Table')) {
+            require_once __DIR__ . '/stubs/WP_List_Table.php';
+        }
+
+        Functions\when('home_url')->justReturn('https://example.com');
+
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/class-blc-links-list-table.php';
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/class-blc-images-list-table.php';
+    }
+
+    protected function tearDown(): void
+    {
+        Monkey\tearDown();
+        $_GET = [];
+        $_REQUEST = [];
+        global $wpdb;
+        $wpdb = null;
+        parent::tearDown();
+    }
+
+    private function createItems(int $count, string $prefix): array
+    {
+        $items = [];
+        for ($i = 0; $i < $count; $i++) {
+            $items[] = [
+                'url'        => sprintf('https://example.com/%s-%d', $prefix, $i),
+                'anchor'     => sprintf('%s-%d', $prefix, $i),
+                'post_id'    => $i + 1,
+                'post_title' => sprintf('Post %d', $i + 1),
+            ];
+        }
+
+        return $items;
+    }
+
+    public function test_links_prepare_items_supports_injected_data_with_pagination(): void
+    {
+        $_REQUEST['paged'] = 2;
+        $table = new \BLC_Links_List_Table();
+
+        $items = $this->createItems(55, 'link');
+        $table->prepare_items($items);
+
+        $this->assertCount(20, $table->items);
+        $this->assertSame('https://example.com/link-20', $table->items[0]['url']);
+        $this->assertSame(55, $table->get_pagination_args()['total_items']);
+    }
+
+    public function test_links_prepare_items_uses_paginated_queries(): void
+    {
+        global $wpdb;
+        $wpdb = new DummyWpdb();
+        $wpdb->get_var_return_values = [45];
+        $expected_items = $this->createItems(20, 'db-link');
+        $wpdb->results_to_return = $expected_items;
+
+        $table = new \BLC_Links_List_Table();
+        $table->prepare_items();
+
+        $this->assertCount(20, $table->items);
+        $this->assertSame($expected_items, $table->items);
+        $this->assertStringContainsString('COUNT(*)', $wpdb->last_get_var_query);
+        $this->assertStringContainsString('LIMIT 20', $wpdb->last_get_results_query);
+        $this->assertStringContainsString('OFFSET 0', $wpdb->last_get_results_query);
+    }
+
+    public function test_links_prepare_items_internal_filter_adds_like_condition(): void
+    {
+        global $wpdb;
+        $wpdb = new DummyWpdb();
+        $wpdb->get_var_return_values = [5];
+        $wpdb->results_to_return = $this->createItems(5, 'internal');
+
+        $_GET['link_type'] = 'internal';
+
+        $table = new \BLC_Links_List_Table();
+        $table->prepare_items();
+
+        $this->assertStringContainsString("url LIKE 'https://example.com%'", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("url LIKE 'https://example.com%'", $wpdb->last_get_results_query);
+    }
+
+    public function test_links_prepare_items_external_filter_adds_not_like_condition(): void
+    {
+        global $wpdb;
+        $wpdb = new DummyWpdb();
+        $wpdb->get_var_return_values = [7];
+        $wpdb->results_to_return = $this->createItems(7, 'external');
+
+        $_GET['link_type'] = 'external';
+
+        $table = new \BLC_Links_List_Table();
+        $table->prepare_items();
+
+        $this->assertStringContainsString("url NOT LIKE 'https://example.com%'", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("url NOT LIKE 'https://example.com%'", $wpdb->last_get_results_query);
+        $this->assertStringContainsString('url IS NULL', $wpdb->last_get_results_query);
+    }
+
+    public function test_images_prepare_items_supports_injected_data_with_pagination(): void
+    {
+        $_REQUEST['paged'] = 3;
+        $table = new \BLC_Images_List_Table();
+
+        $items = $this->createItems(65, 'image');
+        $table->prepare_items($items);
+
+        $this->assertCount(20, $table->items);
+        $this->assertSame('https://example.com/image-40', $table->items[0]['url']);
+        $this->assertSame(65, $table->get_pagination_args()['total_items']);
+    }
+
+    public function test_images_prepare_items_uses_paginated_queries(): void
+    {
+        global $wpdb;
+        $wpdb = new DummyWpdb();
+        $wpdb->get_var_return_values = [88];
+        $expected_items = $this->createItems(20, 'db-image');
+        $wpdb->results_to_return = $expected_items;
+
+        $table = new \BLC_Images_List_Table();
+        $table->prepare_items();
+
+        $this->assertCount(20, $table->items);
+        $this->assertSame($expected_items, $table->items);
+        $this->assertStringContainsString("WHERE type = 'image'", $wpdb->last_get_results_query);
+        $this->assertStringContainsString('LIMIT 20', $wpdb->last_get_results_query);
+        $this->assertStringContainsString('OFFSET 0', $wpdb->last_get_results_query);
+    }
+}
+
+class DummyWpdb
+{
+    public $prefix = 'wp_';
+    public $get_var_return_values = [];
+    public $results_to_return;
+    public $last_get_var_query;
+    public $last_get_results_query;
+    public $prepare_calls = [];
+
+    public function esc_like(string $text): string
+    {
+        return addcslashes($text, "\\%_");
+    }
+
+    public function prepare(string $query, $args = null): string
+    {
+        if ($args === null) {
+            return $query;
+        }
+
+        if (!is_array($args)) {
+            $args = array_slice(func_get_args(), 1);
+        }
+
+        $this->prepare_calls[] = [$query, $args];
+
+        $escaped = array_map(function ($value) {
+            if (is_string($value)) {
+                return addslashes($value);
+            }
+
+            if (is_bool($value)) {
+                return $value ? 1 : 0;
+            }
+
+            return $value;
+        }, $args);
+
+        $query = str_replace('%s', "'%s'", $query);
+        $query = str_replace('%d', '%d', $query);
+        $query = str_replace('%f', '%F', $query);
+
+        return vsprintf($query, $escaped);
+    }
+
+    public function get_var(string $query)
+    {
+        $this->last_get_var_query = $query;
+        return array_shift($this->get_var_return_values);
+    }
+
+    public function get_results(string $query, $output = ARRAY_A)
+    {
+        $this->last_get_results_query = $query;
+
+        if (is_callable($this->results_to_return)) {
+            return call_user_func($this->results_to_return, $query, $output);
+        }
+
+        return $this->results_to_return;
+    }
+}
