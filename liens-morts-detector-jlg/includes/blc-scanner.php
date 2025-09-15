@@ -56,7 +56,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
     $excluded_domains_raw = get_option('blc_excluded_domains', '');
 
     // --- 2. Contrôles pré-analyse ---
-    $current_hour = (new DateTime("now", new DateTimeZone('Europe/Paris')))->format('H');
+    $current_hour = current_time('H');
     if ($current_hour >= $rest_start_hour && $current_hour < $rest_end_hour && !$is_full_scan) {
         if ($debug_mode) { error_log("Scan arrêté : dans la plage horaire de repos."); }
         return;
