@@ -38,19 +38,26 @@ class BLC_Links_List_Table extends WP_List_Table {
         $current = (!empty($_GET['link_type'])) ? $_GET['link_type'] : 'all';
         global $wpdb;
         $table_name = $wpdb->prefix . 'blc_broken_links';
+        $like = $wpdb->esc_like($this->site_url) . '%';
 
-        $all_links = $wpdb->get_results("SELECT url FROM $table_name WHERE type = 'link'", ARRAY_A);
-        $total_count    = count($all_links);
-        $internal_count = 0;
-        $external_count = 0;
+        $counts = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT
+                    COUNT(*) AS total,
+                    COALESCE(SUM(CASE WHEN url LIKE %s THEN 1 ELSE 0 END), 0) AS internal_count,
+                    COALESCE(SUM(CASE WHEN url LIKE %s THEN 0 ELSE 1 END), 0) AS external_count
+                 FROM $table_name
+                 WHERE type = %s",
+                $like,
+                $like,
+                'link'
+            ),
+            ARRAY_A
+        );
 
-        foreach ($all_links as $link) {
-            if (strpos($link['url'], $this->site_url) === 0) {
-                $internal_count++;
-            } else {
-                $external_count++;
-            }
-        }
+        $total_count    = isset($counts['total']) ? (int) $counts['total'] : 0;
+        $internal_count = isset($counts['internal_count']) ? (int) $counts['internal_count'] : 0;
+        $external_count = isset($counts['external_count']) ? (int) $counts['external_count'] : max(0, $total_count - $internal_count);
 
         $all_class = ($current == 'all' ? 'current' : '');
         $views['all'] = "<a href='" . remove_query_arg('link_type') . "' class='$all_class'>Tous <span class='count'>($total_count)</span></a>";
@@ -139,33 +146,55 @@ class BLC_Links_List_Table extends WP_List_Table {
     /**
      * Prépare les données pour l'affichage : récupération, filtrage, et pagination.
      */
-    public function prepare_items() {
+    public function prepare_items($data = null, $total_items_override = null) {
         $this->_column_headers = [$this->get_columns(), [], []];
         $current_view = (!empty($_GET['link_type'])) ? $_GET['link_type'] : 'all';
+        $per_page     = 20;
+        $current_page = max(1, (int) $this->get_pagenum());
+
+        if (is_array($data)) {
+            $total_items = ($total_items_override !== null) ? (int) $total_items_override : count($data);
+            $this->set_pagination_args(['total_items' => $total_items, 'per_page' => $per_page]);
+            $this->items = array_slice($data, (($current_page - 1) * $per_page), $per_page);
+            return;
+        }
+
         global $wpdb;
         $table_name = $wpdb->prefix . 'blc_broken_links';
+        $like       = $wpdb->esc_like($this->site_url) . '%';
 
-        $all_data = $wpdb->get_results("SELECT url, anchor, post_id, post_title FROM $table_name WHERE type = 'link'", ARRAY_A);
-        $filtered_data = [];
+        $where   = ['type = %s'];
+        $params  = ['link'];
 
-        if ($current_view === 'all') {
-            $filtered_data = $all_data;
-        } else {
-            foreach ($all_data as $link) {
-                $is_internal = (strpos($link['url'], $this->site_url) === 0);
-                if ($current_view === 'internal' && $is_internal) {
-                    $filtered_data[] = $link;
-                } elseif ($current_view === 'external' && !$is_internal) {
-                    $filtered_data[] = $link;
-                }
-            }
+        if ($current_view === 'internal') {
+            $where[]  = 'url LIKE %s';
+            $params[] = $like;
+        } elseif ($current_view === 'external') {
+            $where[]  = '(url NOT LIKE %s OR url IS NULL OR url = \'\')';
+            $params[] = $like;
         }
-        
-        $per_page     = 20;
-        $current_page = $this->get_pagenum();
-        $total_items  = count($filtered_data);
+
+        $where_clause = implode(' AND ', $where);
+
+        $total_query = $wpdb->prepare(
+            "SELECT COUNT(*) FROM $table_name WHERE $where_clause",
+            $params
+        );
+        $total_items = (int) $wpdb->get_var($total_query);
+
+        $offset = ($current_page - 1) * $per_page;
+
+        $data_query = $wpdb->prepare(
+            "SELECT url, anchor, post_id, post_title
+             FROM $table_name
+             WHERE $where_clause
+             ORDER BY id DESC
+             LIMIT %d OFFSET %d",
+            array_merge($params, [$per_page, $offset])
+        );
+        $items = $wpdb->get_results($data_query, ARRAY_A);
 
         $this->set_pagination_args(['total_items' => $total_items, 'per_page' => $per_page]);
-        $this->items = array_slice($filtered_data, (($current_page - 1) * $per_page), $per_page);
+        $this->items = $items ? $items : [];
     }
 }

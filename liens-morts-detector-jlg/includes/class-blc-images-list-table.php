@@ -70,19 +70,41 @@ class BLC_Images_List_Table extends WP_List_Table {
     /**
      * Prépare les données pour l'affichage : récupération et pagination.
      */
-    public function prepare_items() {
+    public function prepare_items($data = null, $total_items_override = null) {
         $this->_column_headers = [$this->get_columns(), [], []];
+        $per_page     = 20;
+        $current_page = max(1, (int) $this->get_pagenum());
+
+        if (is_array($data)) {
+            $total_items = ($total_items_override !== null) ? (int) $total_items_override : count($data);
+            $this->set_pagination_args(['total_items' => $total_items, 'per_page' => $per_page]);
+            $this->items = array_slice($data, (($current_page - 1) * $per_page), $per_page);
+            return;
+        }
+
         global $wpdb;
         $table_name = $wpdb->prefix . 'blc_broken_links';
 
-        // On récupère uniquement les données des images depuis la table dédiée
-        $data = $wpdb->get_results("SELECT url, anchor, post_id, post_title FROM $table_name WHERE type = 'image'", ARRAY_A);
-        
-        $per_page     = 20;
-        $current_page = $this->get_pagenum();
-        $total_items  = count($data);
+        $total_items = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(*) FROM $table_name WHERE type = %s",
+                'image'
+            )
+        );
+
+        $offset = ($current_page - 1) * $per_page;
+
+        $data_query = $wpdb->prepare(
+            "SELECT url, anchor, post_id, post_title
+             FROM $table_name
+             WHERE type = %s
+             ORDER BY id DESC
+             LIMIT %d OFFSET %d",
+            ['image', $per_page, $offset]
+        );
+        $items = $wpdb->get_results($data_query, ARRAY_A);
 
         $this->set_pagination_args(['total_items' => $total_items, 'per_page' => $per_page]);
-        $this->items = array_slice($data, (($current_page - 1) * $per_page), $per_page);
+        $this->items = $items ? $items : [];
     }
 }
