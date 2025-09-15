@@ -6,9 +6,8 @@ if (!defined('WP_UNINSTALL_PLUGIN')) {
 }
 
 // Liste de toutes les options que notre plugin a créées dans la base de données
+// (les liens et images brisés sont stockés dans une table dédiée)
 $options_to_delete = [
-    'blc_broken_links',
-    'blc_broken_images',
     'blc_last_check_time',
     'blc_frequency',
     'blc_rest_start_hour',
