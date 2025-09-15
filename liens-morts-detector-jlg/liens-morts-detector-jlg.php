@@ -66,15 +66,15 @@ function blc_enqueue_admin_assets($hook) {
         'blc-admin-css',
         plugin_dir_url(__FILE__) . 'assets/css/blc-admin-styles.css',
         array(),
-        '1.0'
+        filemtime(__DIR__ . '/assets/css/blc-admin-styles.css')
     );
-    
+
     // Chargement du fichier JavaScript
     wp_enqueue_script(
         'blc-admin-js',
         plugin_dir_url(__FILE__) . 'assets/js/blc-admin-scripts.js',
         array('jquery'),
-        '1.0',
+        filemtime(__DIR__ . '/assets/js/blc-admin-scripts.js'),
         true // Charger dans le pied de page pour de meilleures performances
     );
 }
