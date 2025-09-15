@@ -120,6 +120,38 @@ function blc_require_post_params(array $required_params) {
     return $values;
 }
 
+/**
+ * Prépare une valeur pour une utilisation sûre dans une expression XPath.
+ *
+ * XPath ne permet pas d'échapper facilement les guillemets simples. On renvoie donc
+ * la valeur entourée de guillemets simples lorsqu'elle n'en contient pas ou, sinon,
+ * une expression concat() qui recompose la chaîne en intercalant des guillemets.
+ *
+ * @param string $value Valeur à encapsuler dans un littéral XPath.
+ * @return string Littéral XPath sûr à injecter dans une requête.
+ */
+function blc_xpath_escape($value) {
+    $value = (string) $value;
+
+    if ($value === '') {
+        return "''";
+    }
+
+    if (strpos($value, "'") === false) {
+        return "'" . $value . "'";
+    }
+
+    $parts = explode("'", $value);
+    $escaped_parts = array_map(
+        static function ($part) {
+            return "'" . $part . "'";
+        },
+        $parts
+    );
+
+    return 'concat(' . implode(", \"'\", ", $escaped_parts) . ')';
+}
+
 // Gère la modification d'une URL
 add_action('wp_ajax_blc_edit_link', 'blc_ajax_edit_link_callback');
 function blc_ajax_edit_link_callback() {
@@ -153,10 +185,8 @@ function blc_ajax_edit_link_callback() {
 
     // Recherche et modification de la balise <a> ciblée
     $xpath = new DOMXPath($dom);
-    $escaped_old_url = function_exists('esc_attr')
-        ? esc_attr($old_url)
-        : htmlspecialchars($old_url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-    $anchors = $xpath->query(sprintf('//a[@href="%s"]', $escaped_old_url));
+    $escaped_old_url = blc_xpath_escape($old_url);
+    $anchors = $xpath->query(sprintf('//a[@href=%s]', $escaped_old_url));
 
     if ($anchors->length === 0) {
         wp_send_json_error(['message' => 'Le lien n\'a pas été trouvé dans le contenu de l\'article.']);
@@ -210,10 +240,8 @@ function blc_ajax_unlink_callback() {
 
     // Recherche de la balise <a> à retirer
     $xpath = new DOMXPath($dom);
-    $escaped_url_to_unlink = function_exists('esc_attr')
-        ? esc_attr($url_to_unlink)
-        : htmlspecialchars($url_to_unlink, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-    $anchors = $xpath->query(sprintf('//a[@href="%s"]', $escaped_url_to_unlink));
+    $escaped_url_to_unlink = blc_xpath_escape($url_to_unlink);
+    $anchors = $xpath->query(sprintf('//a[@href=%s]', $escaped_url_to_unlink));
 
     if ($anchors->length === 0) {
         wp_send_json_error(['message' => 'Le lien n\'a pas été trouvé dans le contenu de l\'article.']);
