@@ -1,0 +1,6 @@
+{
+    "redefinable-internals": [
+        "sys_getloadavg",
+        "time"
+    ]
+}
