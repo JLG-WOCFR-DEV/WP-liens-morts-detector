@@ -49,6 +49,10 @@ class BlcAjaxCallbacksTest extends TestCase
                 ['old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
                 'post_id',
             ],
+            'null post_id' => [
+                ['post_id' => null, 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
+                'post_id',
+            ],
             'empty post_id' => [
                 ['post_id' => '   ', 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
                 'post_id',
@@ -57,12 +61,20 @@ class BlcAjaxCallbacksTest extends TestCase
                 ['post_id' => 5, 'new_url' => 'http://new.com'],
                 'old_url',
             ],
+            'null old_url' => [
+                ['post_id' => 5, 'old_url' => null, 'new_url' => 'http://new.com'],
+                'old_url',
+            ],
             'empty old_url' => [
                 ['post_id' => 5, 'old_url' => '   ', 'new_url' => 'http://new.com'],
                 'old_url',
             ],
             'missing new_url' => [
                 ['post_id' => 5, 'old_url' => 'http://old.com'],
+                'new_url',
+            ],
+            'null new_url' => [
+                ['post_id' => 5, 'old_url' => 'http://old.com', 'new_url' => null],
                 'new_url',
             ],
             'empty new_url' => [
@@ -97,12 +109,20 @@ class BlcAjaxCallbacksTest extends TestCase
                 ['url_to_unlink' => 'http://old.com'],
                 'post_id',
             ],
+            'null post_id' => [
+                ['post_id' => null, 'url_to_unlink' => 'http://old.com'],
+                'post_id',
+            ],
             'empty post_id' => [
                 ['post_id' => '   ', 'url_to_unlink' => 'http://old.com'],
                 'post_id',
             ],
             'missing url_to_unlink' => [
                 ['post_id' => 6],
+                'url_to_unlink',
+            ],
+            'null url_to_unlink' => [
+                ['post_id' => 6, 'url_to_unlink' => null],
                 'url_to_unlink',
             ],
             'empty url_to_unlink' => [

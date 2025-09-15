@@ -82,35 +82,42 @@ function blc_enqueue_admin_assets($hook) {
 // --- Fonctions de rappel AJAX pour les actions rapides ---
 
 /**
- * Valide la présence et le contenu des paramètres requis pour une requête AJAX.
+ * Récupère et valide la présence des paramètres requis pour une requête AJAX.
  *
- * @param array $required_params Liste des clés attendues dans $_POST.
- * @return bool True si tous les paramètres sont présents et non vides.
+ * Chaque paramètre doit être défini dans $_POST, et sa valeur (après suppression
+ * des slashes et trim) ne doit pas être vide.
+ *
+ * @param string[] $required_params Liste des clés attendues dans $_POST.
+ * @return array|null Tableau associatif des valeurs nettoyées, ou null si une erreur a été renvoyée.
  */
-function blc_validate_required_post_params(array $required_params) {
+function blc_require_post_params(array $required_params) {
+    $values = [];
+
     foreach ($required_params as $param) {
         if (!isset($_POST[$param])) {
             wp_send_json_error(['message' => sprintf('Le paramètre requis "%s" est manquant ou vide.', $param)]);
-            return false;
+            return null;
         }
 
-        $value = $_POST[$param];
+        $raw_value = wp_unslash($_POST[$param]);
 
-        if (is_string($value)) {
-            $value_to_check = trim($value);
-        } elseif (is_scalar($value)) {
-            $value_to_check = trim((string) $value);
+        if (is_string($raw_value)) {
+            $value = trim($raw_value);
+        } elseif (is_scalar($raw_value)) {
+            $value = trim((string) $raw_value);
         } else {
-            $value_to_check = '';
+            $value = '';
         }
 
-        if ($value_to_check === '') {
+        if ($value === '') {
             wp_send_json_error(['message' => sprintf('Le paramètre requis "%s" est manquant ou vide.', $param)]);
-            return false;
+            return null;
         }
+
+        $values[$param] = $value;
     }
 
-    return true;
+    return $values;
 }
 
 // Gère la modification d'une URL
@@ -118,18 +125,19 @@ add_action('wp_ajax_blc_edit_link', 'blc_ajax_edit_link_callback');
 function blc_ajax_edit_link_callback() {
     check_ajax_referer('blc_edit_link_nonce');
 
-    if (!blc_validate_required_post_params(['post_id', 'old_url', 'new_url'])) {
+    $params = blc_require_post_params(['post_id', 'old_url', 'new_url']);
+    if ($params === null) {
         return;
     }
 
-    $post_id = intval(wp_unslash($_POST['post_id']));
+    $post_id = intval($params['post_id']);
 
     if (!current_user_can('edit_post', $post_id)) {
         wp_send_json_error(['message' => 'Permissions insuffisantes.']);
     }
 
-    $old_url = esc_url_raw(wp_unslash($_POST['old_url']));
-    $new_url = esc_url_raw(wp_unslash($_POST['new_url']));
+    $old_url = esc_url_raw($params['old_url']);
+    $new_url = esc_url_raw($params['new_url']);
 
     $post = get_post($post_id);
     if (!$post) {
@@ -172,17 +180,18 @@ add_action('wp_ajax_blc_unlink', 'blc_ajax_unlink_callback');
 function blc_ajax_unlink_callback() {
     check_ajax_referer('blc_unlink_nonce');
 
-    if (!blc_validate_required_post_params(['post_id', 'url_to_unlink'])) {
+    $params = blc_require_post_params(['post_id', 'url_to_unlink']);
+    if ($params === null) {
         return;
     }
 
-    $post_id = intval(wp_unslash($_POST['post_id']));
+    $post_id = intval($params['post_id']);
 
     if (!current_user_can('edit_post', $post_id)) {
         wp_send_json_error(['message' => 'Permissions insuffisantes.']);
     }
 
-    $url_to_unlink = esc_url_raw(wp_unslash($_POST['url_to_unlink']));
+    $url_to_unlink = esc_url_raw($params['url_to_unlink']);
 
     $post = get_post($post_id);
     if (!$post) {
