@@ -153,7 +153,10 @@ function blc_ajax_edit_link_callback() {
 
     // Recherche et modification de la balise <a> ciblée
     $xpath = new DOMXPath($dom);
-    $anchors = $xpath->query('//a[@href="' . $old_url . '"]');
+    $escaped_old_url = function_exists('esc_attr')
+        ? esc_attr($old_url)
+        : htmlspecialchars($old_url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $anchors = $xpath->query(sprintf('//a[@href="%s"]', $escaped_old_url));
 
     if ($anchors->length === 0) {
         wp_send_json_error(['message' => 'Le lien n\'a pas été trouvé dans le contenu de l\'article.']);
