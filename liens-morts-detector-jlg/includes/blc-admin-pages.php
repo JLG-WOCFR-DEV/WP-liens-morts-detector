@@ -24,8 +24,8 @@ function blc_dashboard_links_page() {
         check_admin_referer('blc_manual_check_nonce');
         $is_full = isset($_POST['blc_full_scan']);
         wp_clear_scheduled_hook('blc_check_batch');
-        blc_perform_check(0, $is_full);
-        echo '<div class="notice notice-success is-dismissible"><p>La vérification des liens a démarré ! Le processus s\'exécute en arrière-plan.</p></div>';
+        wp_schedule_single_event(time(), 'blc_check_batch', array(0, $is_full));
+        echo '<div class="notice notice-success is-dismissible"><p>La vérification des liens a été programmée et s\'exécute en arrière-plan.</p></div>';
     }
 
     // Préparation des données et des statistiques pour les liens
