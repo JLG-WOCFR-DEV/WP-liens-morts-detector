@@ -84,8 +84,16 @@ class BlcAjaxCallbacksTest extends TestCase
             throw new \Exception('success');
         });
 
-        $this->expectExceptionMessage('success');
-        blc_ajax_edit_link_callback();
+        $initial = libxml_use_internal_errors();
+
+        try {
+            blc_ajax_edit_link_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $e) {
+            $this->assertSame('success', $e->getMessage());
+        }
+
+        $this->assertSame($initial, libxml_use_internal_errors());
     }
 
     public function test_unlink_denied_for_user_without_permission(): void
@@ -131,7 +139,15 @@ class BlcAjaxCallbacksTest extends TestCase
             throw new \Exception('success');
         });
 
-        $this->expectExceptionMessage('success');
-        blc_ajax_unlink_callback();
+        $initial = libxml_use_internal_errors();
+
+        try {
+            blc_ajax_unlink_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $e) {
+            $this->assertSame('success', $e->getMessage());
+        }
+
+        $this->assertSame($initial, libxml_use_internal_errors());
     }
 }
