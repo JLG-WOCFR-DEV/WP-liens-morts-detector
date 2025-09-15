@@ -83,14 +83,14 @@ add_action('wp_ajax_blc_edit_link', 'blc_ajax_edit_link_callback');
 function blc_ajax_edit_link_callback() {
     check_ajax_referer('blc_edit_link_nonce');
 
-    $post_id = intval($_POST['post_id']);
+    $post_id = intval(wp_unslash($_POST['post_id']));
 
     if (!current_user_can('edit_post', $post_id)) {
         wp_send_json_error(['message' => 'Permissions insuffisantes.']);
     }
 
-    $old_url = esc_url_raw($_POST['old_url']);
-    $new_url = esc_url_raw($_POST['new_url']);
+    $old_url = esc_url_raw(wp_unslash($_POST['old_url']));
+    $new_url = esc_url_raw(wp_unslash($_POST['new_url']));
 
     $post = get_post($post_id);
     if (!$post) {
@@ -133,13 +133,13 @@ add_action('wp_ajax_blc_unlink', 'blc_ajax_unlink_callback');
 function blc_ajax_unlink_callback() {
     check_ajax_referer('blc_unlink_nonce');
 
-    $post_id = intval($_POST['post_id']);
+    $post_id = intval(wp_unslash($_POST['post_id']));
 
     if (!current_user_can('edit_post', $post_id)) {
         wp_send_json_error(['message' => 'Permissions insuffisantes.']);
     }
 
-    $url_to_unlink = esc_url_raw($_POST['url_to_unlink']);
+    $url_to_unlink = esc_url_raw(wp_unslash($_POST['url_to_unlink']));
 
     $post = get_post($post_id);
     if (!$post) {
