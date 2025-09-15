@@ -98,10 +98,11 @@ function blc_ajax_edit_link_callback() {
     }
 
     // Chargement du contenu dans DOMDocument
-    libxml_use_internal_errors(true);
+    $previous = libxml_use_internal_errors(true);
     $dom = new DOMDocument();
     $dom->loadHTML(mb_convert_encoding($post->post_content, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
     libxml_clear_errors();
+    libxml_use_internal_errors($previous);
 
     // Recherche et modification de la balise <a> ciblée
     $xpath = new DOMXPath($dom);
@@ -146,10 +147,11 @@ function blc_ajax_unlink_callback() {
     }
 
     // Chargement du contenu dans DOMDocument
-    libxml_use_internal_errors(true);
+    $previous = libxml_use_internal_errors(true);
     $dom = new DOMDocument();
     $dom->loadHTML(mb_convert_encoding($post->post_content, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
     libxml_clear_errors();
+    libxml_use_internal_errors($previous);
 
     // Recherche de la balise <a> à retirer
     $xpath = new DOMXPath($dom);
