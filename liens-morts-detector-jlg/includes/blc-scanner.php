@@ -137,13 +137,14 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     $query = new WP_Query($args);
     $posts = $query->posts;
 
+    $upload_dir_info = wp_upload_dir();
+    $site_url = home_url();
+
     foreach ($posts as $post) {
         if ($debug_mode) { error_log("Analyse IMAGES pour : '" . $post->post_title . "'"); }
 
         preg_match_all('/<img\s[^>]*src\s*=\s*["\']([^"\']+)["\']/i', $post->post_content, $matches_img);
         if (!empty($matches_img[1])) {
-            $upload_dir_info = wp_upload_dir();
-            $site_url = home_url();
             foreach ($matches_img[1] as $image_url) {
                 if (strpos($image_url, $site_url) === false) { continue; }
                 $file_path = str_replace($upload_dir_info['baseurl'], $upload_dir_info['basedir'], $image_url);
