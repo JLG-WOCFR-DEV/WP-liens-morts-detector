@@ -63,19 +63,25 @@ function blc_enqueue_admin_assets($hook) {
     }
     
     // Chargement du fichier CSS
+    $css_path    = __DIR__ . '/assets/css/blc-admin-styles.css';
+    $css_version = file_exists($css_path) ? filemtime($css_path) : time();
+
     wp_enqueue_style(
         'blc-admin-css',
         plugin_dir_url(__FILE__) . 'assets/css/blc-admin-styles.css',
         array(),
-        filemtime(__DIR__ . '/assets/css/blc-admin-styles.css')
+        $css_version
     );
 
     // Chargement du fichier JavaScript
+    $js_path    = __DIR__ . '/assets/js/blc-admin-scripts.js';
+    $js_version = file_exists($js_path) ? filemtime($js_path) : time();
+
     wp_enqueue_script(
         'blc-admin-js',
         plugin_dir_url(__FILE__) . 'assets/js/blc-admin-scripts.js',
         array('jquery'),
-        filemtime(__DIR__ . '/assets/js/blc-admin-scripts.js'),
+        $js_version,
         true // Charger dans le pied de page pour de meilleures performances
     );
 
