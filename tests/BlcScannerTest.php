@@ -137,6 +137,12 @@ class BlcScannerTest extends TestCase
         Functions\when('wp_remote_retrieve_response_code')->alias(function ($response) {
             return $response['response']['code'] ?? 0;
         });
+        Functions\when('dns_get_record')->alias(function (string $hostname, int $type = 0) {
+            return [['ip' => '93.184.216.34']];
+        });
+        Functions\when('gethostbynamel')->alias(function (string $hostname) {
+            return ['93.184.216.34'];
+        });
         Functions\when('is_wp_error')->alias(function ($thing): bool {
             return $thing instanceof \WP_Error;
         });
@@ -348,6 +354,73 @@ class BlcScannerTest extends TestCase
         $this->assertSame('link', $insert['data']['type']);
         $this->assertSame([], $this->scheduledEvents, 'No follow-up batch should be scheduled.');
         $this->assertSame(1000, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated.');
+    }
+
+    public function test_blc_perform_check_skips_links_pointing_to_private_endpoints(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 128,
+            'post_title' => 'Private Link Post',
+            'post_content' => '<a href="http://intranet.local/secret">Intranet</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        Functions\when('dns_get_record')->alias(function (string $hostname, int $type = 0) {
+            return [['ip' => '10.0.0.5']];
+        });
+        Functions\when('gethostbynamel')->alias(function (string $hostname) {
+            return ['10.0.0.5'];
+        });
+
+        blc_perform_check(0, false);
+
+        $this->assertSame([], $this->httpRequests, 'Private endpoints must not trigger HTTP requests.');
+        $this->assertSame([], $wpdb->inserted, 'Links skipped due to private endpoints should not be stored as broken.');
+    }
+
+    public function test_blc_perform_check_allows_hosts_whitelisted_by_filter(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 256,
+            'post_title' => 'Whitelisted Host Post',
+            'post_content' => '<a href="http://intranet.local/visible">Intranet</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        Functions\when('dns_get_record')->alias(function (string $hostname, int $type = 0) {
+            return [['ip' => '10.0.0.6']];
+        });
+        Functions\when('gethostbynamel')->alias(function (string $hostname) {
+            return ['10.0.0.6'];
+        });
+        Functions\when('apply_filters')->alias(function (string $hook, $value, ...$args) {
+            if ($hook === 'blc_allowed_remote_hosts') {
+                $value[] = 'intranet.local';
+            }
+
+            return $value;
+        });
+
+        $this->setHttpResponse('GET', 'http://intranet.local/visible', ['response' => ['code' => 200]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(1, $this->httpRequests, 'Whitelisted hosts must be checked even if their DNS is private.');
+        $this->assertSame('http://intranet.local/visible', $this->httpRequests[0]['url']);
     }
 
     public function test_blc_perform_check_reschedules_when_server_load_is_high(): void

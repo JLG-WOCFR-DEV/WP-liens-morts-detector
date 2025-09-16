@@ -7,6 +7,110 @@ if (!function_exists('blc_normalize_hour_option')) {
 }
 
 /**
+ * Checks whether a URL points to a public endpoint.
+ *
+ * The function resolves the host and rejects private or reserved IP addresses
+ * for both IPv4 and IPv6.
+ *
+ * @param string      $url  Full URL to validate.
+ * @param string|null $host Optional host override to avoid reparsing the URL.
+ *
+ * @return bool True when the URL resolves only to public IPs, false otherwise.
+ *
+ * @filter blc_allowed_remote_hosts Allows whitelisting hosts (exact domain or suffix) that
+ *                                  bypass the public endpoint validation.
+ */
+function blc_is_public_endpoint($url, $host = null) {
+    $parsed_host = $host;
+
+    if ($parsed_host === null) {
+        $parsed = function_exists('wp_parse_url') ? wp_parse_url($url) : parse_url($url);
+        if (!is_array($parsed) || empty($parsed['host'])) {
+            return false;
+        }
+        $parsed_host = $parsed['host'];
+    }
+
+    $parsed_host = strtolower(trim($parsed_host));
+    if ($parsed_host === '') {
+        return false;
+    }
+
+    $allowed_hosts = apply_filters('blc_allowed_remote_hosts', [], $parsed_host, $url);
+    if (!is_array($allowed_hosts)) {
+        $allowed_hosts = [];
+    }
+
+    foreach ($allowed_hosts as $allowed_host) {
+        $allowed_host = strtolower(trim((string) $allowed_host));
+        if ($allowed_host === '') {
+            continue;
+        }
+
+        if ($allowed_host === $parsed_host) {
+            return true;
+        }
+
+        // Allow subdomain matching (e.g. example.com matches sub.example.com).
+        $host_length    = strlen($parsed_host);
+        $allowed_length = strlen($allowed_host);
+        if ($allowed_length <= $host_length && substr($parsed_host, -$allowed_length) === $allowed_host) {
+            $prefix = substr($parsed_host, 0, -strlen($allowed_host));
+            if ($prefix === '' || substr($prefix, -1) === '.') {
+                return true;
+            }
+        }
+    }
+
+    $ip_addresses = [];
+
+    if (function_exists('dns_get_record') && defined('DNS_A')) {
+        $record_types = DNS_A;
+        if (defined('DNS_AAAA')) {
+            $record_types |= DNS_AAAA;
+        }
+
+        $records = @dns_get_record($parsed_host, $record_types);
+        if (is_array($records)) {
+            foreach ($records as $record) {
+                if (!empty($record['ip'])) {
+                    $ip_addresses[] = $record['ip'];
+                }
+                if (!empty($record['ipv6'])) {
+                    $ip_addresses[] = $record['ipv6'];
+                }
+            }
+        }
+    }
+
+    if (empty($ip_addresses) && function_exists('gethostbynamel')) {
+        $ipv4 = @gethostbynamel($parsed_host);
+        if (is_array($ipv4)) {
+            $ip_addresses = array_merge($ip_addresses, $ipv4);
+        }
+    }
+
+    if (empty($ip_addresses)) {
+        return false;
+    }
+
+    $flags = FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE;
+
+    foreach ($ip_addresses as $ip) {
+        $ip = trim($ip);
+        if ($ip === '') {
+            continue;
+        }
+
+        if (false === filter_var($ip, FILTER_VALIDATE_IP, $flags)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
  * Helper to build a DOMDocument instance from raw post content.
  *
  * @param string $content Raw HTML content from the post.
@@ -192,6 +296,11 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
             }
 
             if ($is_excluded) { continue; }
+
+            if (!blc_is_public_endpoint($url, $host)) {
+                if ($debug_mode) { error_log("  -> Lien ignoré (hôte non public) : " . $url); }
+                continue;
+            }
 
             $response = ($scan_method === 'precise') ? wp_safe_remote_get($url, ['timeout' => 10, 'user-agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0', 'method' => 'GET']) : wp_safe_remote_head($url, ['timeout' => 5]);
 
