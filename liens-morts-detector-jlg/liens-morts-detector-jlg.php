@@ -156,50 +156,18 @@ function blc_ajax_edit_link_callback() {
     $old_url = esc_url_raw($old_url);
     $new_url = esc_url_raw($new_url);
 
-    $post = get_post($post_id);
-    if (!$post) {
-        wp_send_json_error(['message' => 'Article non trouvé.']);
-    }
-
-    $dom_data = blc_load_dom_from_post($post->post_content);
-    if (isset($dom_data['error'])) {
-        wp_send_json_error(['message' => $dom_data['error']]);
-        return;
-    }
-
-    /** @var DOMDocument $dom */
-    $dom = $dom_data['dom'];
-    /** @var DOMXPath $xpath */
-    $xpath = $dom_data['xpath'];
-
-    // Recherche et modification de la balise <a> ciblée
-    $escaped_old_url = function_exists('esc_attr')
-        ? esc_attr($old_url)
-        : htmlspecialchars($old_url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-    $anchors = $xpath->query(sprintf('//a[@href="%s"]', $escaped_old_url));
-
-    if ($anchors->length === 0) {
-        wp_send_json_error(['message' => 'Le lien n\'a pas été trouvé dans le contenu de l\'article.']);
-    }
-
-    foreach ($anchors as $a) {
-        $a->setAttribute('href', $new_url);
-    }
-
-    // Enregistrement du contenu mis à jour
-    $new_content = $dom->saveHTML();
-    $update_result = wp_update_post([
-        'ID' => $post_id,
-        'post_content' => wp_slash($new_content),
-    ], true);
-
-    if (!$update_result || is_wp_error($update_result)) {
-        $error_message = 'La mise à jour de l\'article a échoué.';
-        if (is_wp_error($update_result)) {
-            $error_message .= ' ' . $update_result->get_error_message();
+    $update_result = blc_update_link_in_post(
+        $post_id,
+        $old_url,
+        function (DOMDocument $dom, DOMNodeList $anchors) use ($new_url) {
+            foreach ($anchors as $anchor) {
+                $anchor->setAttribute('href', $new_url);
+            }
         }
+    );
 
-        wp_send_json_error(['message' => $error_message]);
+    if (isset($update_result['error'])) {
+        wp_send_json_error(['message' => $update_result['error']]);
         return;
     }
 
@@ -246,54 +214,24 @@ function blc_ajax_unlink_callback() {
 
     $url_to_unlink = esc_url_raw($url_to_unlink);
 
-    $post = get_post($post_id);
-    if (!$post) {
-        wp_send_json_error(['message' => 'Article non trouvé.']);
-    }
-
-    $dom_data = blc_load_dom_from_post($post->post_content);
-    if (isset($dom_data['error'])) {
-        wp_send_json_error(['message' => $dom_data['error']]);
-        return;
-    }
-
-    /** @var DOMDocument $dom */
-    $dom = $dom_data['dom'];
-    /** @var DOMXPath $xpath */
-    $xpath = $dom_data['xpath'];
-
-    // Recherche de la balise <a> à retirer
-    $escaped_url_to_unlink = function_exists('esc_attr')
-        ? esc_attr($url_to_unlink)
-        : htmlspecialchars($url_to_unlink, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-    $anchors = $xpath->query(sprintf('//a[@href="%s"]', $escaped_url_to_unlink));
-
-    if ($anchors->length === 0) {
-        wp_send_json_error(['message' => 'Le lien n\'a pas été trouvé dans le contenu de l\'article.']);
-    }
-
-    foreach ($anchors as $a) {
-        $fragment = $dom->createDocumentFragment();
-        while ($a->childNodes->length > 0) {
-            $fragment->appendChild($a->childNodes->item(0));
+    $update_result = blc_update_link_in_post(
+        $post_id,
+        $url_to_unlink,
+        function (DOMDocument $dom, DOMNodeList $anchors) {
+            foreach ($anchors as $anchor) {
+                $fragment = $dom->createDocumentFragment();
+                while ($anchor->childNodes->length > 0) {
+                    $fragment->appendChild($anchor->childNodes->item(0));
+                }
+                if ($anchor->parentNode !== null) {
+                    $anchor->parentNode->replaceChild($fragment, $anchor);
+                }
+            }
         }
-        $a->parentNode->replaceChild($fragment, $a);
-    }
+    );
 
-    // Enregistrement du contenu mis à jour
-    $new_content = $dom->saveHTML();
-    $update_result = wp_update_post([
-        'ID' => $post_id,
-        'post_content' => wp_slash($new_content),
-    ], true);
-
-    if (!$update_result || is_wp_error($update_result)) {
-        $error_message = 'La mise à jour de l\'article a échoué.';
-        if (is_wp_error($update_result)) {
-            $error_message .= ' ' . $update_result->get_error_message();
-        }
-
-        wp_send_json_error(['message' => $error_message]);
+    if (isset($update_result['error'])) {
+        wp_send_json_error(['message' => $update_result['error']]);
         return;
     }
 

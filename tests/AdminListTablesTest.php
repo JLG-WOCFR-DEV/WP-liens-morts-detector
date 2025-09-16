@@ -27,6 +27,12 @@ class AdminListTablesTest extends TestCase
         }
 
         Functions\when('home_url')->justReturn('https://example.com');
+        Functions\when('sanitize_text_field')->alias(function ($value) {
+            return is_string($value) ? trim($value) : $value;
+        });
+        Functions\when('wp_unslash')->alias(function ($value) {
+            return $value;
+        });
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/class-blc-links-list-table.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/class-blc-images-list-table.php';

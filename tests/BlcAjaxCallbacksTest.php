@@ -29,6 +29,15 @@ class BlcAjaxCallbacksTest extends TestCase
         Functions\when('wp_unslash')->alias(function ($value) {
             return $value;
         });
+        Functions\when('wp_http_validate_url')->alias(function ($url) {
+            return $url;
+        });
+        Functions\when('esc_url_raw')->alias(function ($url) {
+            return $url;
+        });
+        Functions\when('is_wp_error')->alias(function ($thing): bool {
+            return is_object($thing) && method_exists($thing, 'get_error_message');
+        });
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/liens-morts-detector-jlg.php';
     }
