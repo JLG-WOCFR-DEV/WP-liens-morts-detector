@@ -85,6 +85,17 @@ class BlcScannerTest extends TestCase
 
         Functions\when('get_option')->alias(fn(string $name, $default = false) => $this->options[$name] ?? $default);
         Functions\when('home_url')->justReturn('http://example.com');
+        Functions\when('current_time')->alias(function (string $type) {
+            if ($type === 'timestamp') {
+                return 1000;
+            }
+
+            if ($type === 'mysql') {
+                return '1970-01-01 00:00:00';
+            }
+
+            return '00';
+        });
         Functions\when('trailingslashit')->alias(function ($value) {
             return rtrim((string) $value, "\\/\t\n\r\f ") . '/';
         });
@@ -105,6 +116,7 @@ class BlcScannerTest extends TestCase
             }
             return $values;
         });
+        Functions\when('wp_kses_decode_entities')->alias(fn($value) => $value);
         Functions\when('wp_strip_all_tags')->alias(fn(string $text) => strip_tags($text));
         Functions\when('wp_remote_get')->alias(function (string $url, array $args = []) {
             return $this->mockHttpRequest('GET', $url);
@@ -120,6 +132,13 @@ class BlcScannerTest extends TestCase
         });
         Functions\when('wp_normalize_path')->alias(function ($path) {
             return str_replace('\\', '/', (string) $path);
+        });
+        Functions\when('get_bloginfo')->alias(function (string $show) {
+            if ($show === 'charset') {
+                return 'UTF-8';
+            }
+
+            return '';
         });
         Functions\when('update_option')->alias(function (string $option, $value) {
             $this->updatedOptions[$option] = $value;
@@ -185,6 +204,35 @@ class BlcScannerTest extends TestCase
                 $this->inserted[] = ['table' => $table, 'data' => $data, 'formats' => $formats];
                 return true;
             }
+
+            public function prepare(string $query, $args = null): string
+            {
+                if ($args === null) {
+                    return $query;
+                }
+
+                if (!is_array($args)) {
+                    $args = array_slice(func_get_args(), 1);
+                }
+
+                $escaped = array_map(function ($value) {
+                    if (is_string($value)) {
+                        return addslashes($value);
+                    }
+
+                    if (is_bool($value)) {
+                        return $value ? 1 : 0;
+                    }
+
+                    return $value;
+                }, $args);
+
+                $query = str_replace('%s', "'%s'", $query);
+                $query = str_replace('%d', '%d', $query);
+                $query = str_replace('%f', '%F', $query);
+
+                return vsprintf($query, $escaped);
+            }
         };
     }
 
@@ -239,6 +287,42 @@ class BlcScannerTest extends TestCase
         $this->assertSame([0, false], $event['args']);
         $this->assertSame([], $this->updatedOptions, 'No options should be updated when scan is postponed.');
         $this->assertCount(0, $wpdb->inserted, 'No database insertions should occur when load is high.');
+    }
+
+    public function test_blc_perform_check_skips_malformed_urls_without_warnings(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 100,
+            'post_title' => 'Malformed URL Post',
+            'post_content' => '<a href="http://:foo">Broken Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $errorHandler = function (int $severity, string $message): bool {
+            if ($severity & (E_WARNING | E_NOTICE)) {
+                throw new \ErrorException($message, 0, $severity);
+            }
+
+            return false;
+        };
+
+        set_error_handler($errorHandler);
+
+        try {
+            blc_perform_check(0, false);
+        } finally {
+            restore_error_handler();
+        }
+
+        $this->assertCount(0, $this->httpRequests, 'Malformed URLs should not trigger HTTP requests.');
+        $this->assertCount(0, $wpdb->inserted, 'Malformed URLs should be ignored.');
     }
 
     public function test_blc_perform_check_batches_and_reschedules_next_batch(): void

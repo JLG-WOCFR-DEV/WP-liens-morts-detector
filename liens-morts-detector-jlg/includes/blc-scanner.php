@@ -123,9 +123,16 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
             if ($anchor_text === '') { $anchor_text = '[Lien sans texte]'; }
 
             $parsed_url = parse_url($url);
+            if ($parsed_url === false) {
+                continue;
+            }
+
             if (empty($parsed_url['scheme'])) {
                 $url = $site_url . ltrim($url, '/');
                 $parsed_url = parse_url($url);
+                if ($parsed_url === false) {
+                    continue;
+                }
             }
             elseif (!in_array($parsed_url['scheme'], ['http', 'https'])) { continue; }
 
@@ -151,6 +158,9 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
             }
 
             $host = parse_url($url, PHP_URL_HOST);
+            if ($host === false) {
+                continue;
+            }
             $is_excluded = false;
             if (!empty($excluded_domains) && !empty($host)) {
                 foreach ($excluded_domains as $domain_to_exclude) {
@@ -230,7 +240,10 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
             if ($image_url === '') { continue; }
 
             $image_host = parse_url($image_url, PHP_URL_HOST);
+            if ($image_host === false) { continue; }
+
             $site_host  = parse_url($site_url, PHP_URL_HOST);
+            if ($site_host === false) { continue; }
 
             if (!empty($image_host) && !empty($site_host) && strcasecmp($image_host, $site_host) !== 0) {
                 continue;
