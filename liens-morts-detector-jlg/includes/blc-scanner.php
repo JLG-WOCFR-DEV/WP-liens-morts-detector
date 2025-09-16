@@ -78,7 +78,15 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
     
     $excluded_domains = [];
     if (!empty($excluded_domains_raw)) {
-        $excluded_domains = array_filter(array_map('trim', explode("\n", $excluded_domains_raw)));
+        $excluded_domains = array_filter(
+            array_map(
+                static function ($domain) {
+                    return strtolower(trim((string) $domain));
+                },
+                explode("\n", $excluded_domains_raw)
+            ),
+            'strlen'
+        );
     }
 
     // --- 3. Récupération des données et préparation ---
@@ -163,13 +171,17 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
             }
 
             $host = parse_url($url, PHP_URL_HOST);
-            if ($host === false) {
+            if (!is_string($host) || $host === '') {
                 continue;
             }
+            $normalized_host = strtolower($host);
             $is_excluded = false;
             if (!empty($excluded_domains) && !empty($host)) {
                 foreach ($excluded_domains as $domain_to_exclude) {
-                    if (substr($host, -strlen($domain_to_exclude)) === $domain_to_exclude) { $is_excluded = true; break; }
+                    if ($domain_to_exclude === '') {
+                        continue;
+                    }
+                    if (substr($normalized_host, -strlen($domain_to_exclude)) === $domain_to_exclude) { $is_excluded = true; break; }
                 }
             }
 
