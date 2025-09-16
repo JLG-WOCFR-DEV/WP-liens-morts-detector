@@ -227,6 +227,9 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     $posts = $query->posts;
 
     $upload_dir_info = wp_upload_dir();
+    $upload_baseurl = isset($upload_dir_info['baseurl']) ? trailingslashit($upload_dir_info['baseurl']) : '';
+    $upload_basedir = isset($upload_dir_info['basedir']) ? trailingslashit($upload_dir_info['basedir']) : '';
+    $normalized_basedir = $upload_basedir !== '' ? wp_normalize_path($upload_basedir) : '';
     $site_url = home_url();
 
     $blog_charset = get_bloginfo('charset');
@@ -253,7 +256,28 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
             if (!empty($image_host) && !empty($site_host) && strcasecmp($image_host, $site_host) !== 0) {
                 continue;
             }
-            $file_path = str_replace($upload_dir_info['baseurl'], $upload_dir_info['basedir'], $image_url);
+            if (empty($upload_baseurl) || empty($upload_basedir) || empty($normalized_basedir)) {
+                continue;
+            }
+
+            if (strpos($image_url, $upload_baseurl) !== 0) {
+                continue;
+            }
+
+            $relative_path = ltrim(substr($image_url, strlen($upload_baseurl)), '/');
+            if ($relative_path === '') {
+                continue;
+            }
+
+            if (preg_match('#(^|[\\/])\.\.([\\/]|$)#', $relative_path)) {
+                continue;
+            }
+
+            $file_path = wp_normalize_path($upload_basedir . $relative_path);
+            if (strpos($file_path, $normalized_basedir) !== 0) {
+                continue;
+            }
+
             if (!file_exists($file_path)) {
                 if ($debug_mode) { error_log("  -> Image Cassée Trouvée : " . $image_url); }
                 $wpdb->insert(

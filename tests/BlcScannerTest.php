@@ -125,6 +125,12 @@ class BlcScannerTest extends TestCase
         Functions\when('wp_remote_head')->alias(function (string $url, array $args = []) {
             return $this->mockHttpRequest('HEAD', $url);
         });
+        Functions\when('wp_safe_remote_get')->alias(function (string $url, array $args = []) {
+            return $this->mockHttpRequest('GET', $url);
+        });
+        Functions\when('wp_safe_remote_head')->alias(function (string $url, array $args = []) {
+            return $this->mockHttpRequest('HEAD', $url);
+        });
         Functions\when('wp_remote_retrieve_response_code')->alias(function ($response) {
             return $response['response']['code'] ?? 0;
         });
@@ -475,6 +481,27 @@ class BlcScannerTest extends TestCase
         $this->assertSame('blc_check_image_batch', $event['hook']);
         $this->assertSame([1, true], $event['args']);
         $this->assertSame([], $this->updatedOptions, 'Image scan should not update options.');
+    }
+
+    public function test_blc_perform_image_check_ignores_traversal_urls(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 90,
+            'post_title' => 'Traversal Post',
+            'post_content' => '<img src="http://example.com/wp-content/uploads/2024/../secret.jpg" />',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_image_check(0, true);
+
+        $this->assertCount(0, $wpdb->inserted, 'Traversal URLs should be ignored and not marked as broken images.');
     }
 }
 }
