@@ -64,9 +64,14 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
 
     if (function_exists('sys_getloadavg')) {
         $load = sys_getloadavg();
-        if ($load[0] > 2.0) {
+        $max_load_threshold = (float) apply_filters('blc_max_load_threshold', 2.0);
+
+        if ($max_load_threshold > 0 && $load[0] > $max_load_threshold) {
+            $retry_delay = (int) apply_filters('blc_load_retry_delay', 300);
+            if ($retry_delay < 0) { $retry_delay = 0; }
+
             if ($debug_mode) { error_log("Scan reporté : charge serveur trop élevée (" . $load[0] . ")."); }
-            wp_schedule_single_event(current_time('timestamp') + 300, 'blc_check_batch', array($batch, $is_full_scan));
+            wp_schedule_single_event(current_time('timestamp') + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan));
             return;
         }
     }

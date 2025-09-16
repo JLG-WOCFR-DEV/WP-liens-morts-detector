@@ -84,6 +84,7 @@ class BlcScannerTest extends TestCase
         $GLOBALS['wp_query_last_args'] = [];
 
         Functions\when('get_option')->alias(fn(string $name, $default = false) => $this->options[$name] ?? $default);
+        Functions\when('apply_filters')->alias(fn(string $hook, $value, ...$args) => $value);
         Functions\when('home_url')->justReturn('http://example.com');
         Functions\when('current_time')->alias(function (string $type) {
             if ($type === 'timestamp') {
@@ -287,6 +288,49 @@ class BlcScannerTest extends TestCase
         $this->assertSame([0, false], $event['args']);
         $this->assertSame([], $this->updatedOptions, 'No options should be updated when scan is postponed.');
         $this->assertCount(0, $wpdb->inserted, 'No database insertions should occur when load is high.');
+    }
+
+    public function test_blc_perform_check_honors_max_load_threshold_filter(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->serverLoad = [3.5, 2.0, 1.0];
+        Functions\when('apply_filters')->alias(function (string $hook, $value, ...$args) {
+            if ($hook === 'blc_max_load_threshold') {
+                return 4.0;
+            }
+
+            return $value;
+        });
+
+        blc_perform_check(0, false);
+
+        $this->assertSame([], $this->scheduledEvents, 'The scan should continue when the threshold filter raises the limit.');
+        $this->assertCount(1, $GLOBALS['wp_query_last_args'], 'WP_Query should run when the load threshold allows it.');
+    }
+
+    public function test_blc_perform_check_honors_load_retry_delay_filter(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->serverLoad = [3.5, 2.0, 1.0];
+        Functions\when('apply_filters')->alias(function (string $hook, $value, ...$args) {
+            if ($hook === 'blc_load_retry_delay') {
+                return 600;
+            }
+
+            return $value;
+        });
+
+        blc_perform_check(2, false);
+
+        $this->assertCount(1, $this->scheduledEvents, 'A retry should still be scheduled when the delay filter changes the timing.');
+        $event = $this->scheduledEvents[0];
+        $this->assertSame(1600, $event['timestamp']);
+        $this->assertSame('blc_check_batch', $event['hook']);
+        $this->assertSame([2, false], $event['args']);
     }
 
     public function test_blc_perform_check_skips_malformed_urls_without_warnings(): void
