@@ -176,12 +176,39 @@ function blc_ajax_edit_link_callback() {
 
     // Enregistrement du contenu mis à jour
     $new_content = $dom->saveHTML();
-    wp_update_post(['ID' => $post_id, 'post_content' => wp_slash($new_content)]);
+    $update_result = wp_update_post([
+        'ID' => $post_id,
+        'post_content' => wp_slash($new_content),
+    ], true);
+
+    if (!$update_result || is_wp_error($update_result)) {
+        $error_message = 'La mise à jour de l\'article a échoué.';
+        if (is_wp_error($update_result)) {
+            $error_message .= ' ' . $update_result->get_error_message();
+        }
+
+        wp_send_json_error(['message' => $error_message]);
+        return;
+    }
 
     // Supprimer le lien de la table dédiée
     global $wpdb;
     $table_name = $wpdb->prefix . 'blc_broken_links';
-    $wpdb->delete($table_name, ['post_id' => $post_id, 'url' => $old_url, 'type' => 'link'], ['%d', '%s', '%s']);
+    $delete_result = $wpdb->delete(
+        $table_name,
+        ['post_id' => $post_id, 'url' => $old_url, 'type' => 'link'],
+        ['%d', '%s', '%s']
+    );
+
+    if (!$delete_result || is_wp_error($delete_result)) {
+        $error_message = 'La suppression du lien dans la base de données a échoué.';
+        if (is_wp_error($delete_result)) {
+            $error_message .= ' ' . $delete_result->get_error_message();
+        }
+
+        wp_send_json_error(['message' => $error_message]);
+        return;
+    }
 
     wp_send_json_success();
 }
@@ -243,12 +270,39 @@ function blc_ajax_unlink_callback() {
 
     // Enregistrement du contenu mis à jour
     $new_content = $dom->saveHTML();
-    wp_update_post(['ID' => $post_id, 'post_content' => wp_slash($new_content)]);
+    $update_result = wp_update_post([
+        'ID' => $post_id,
+        'post_content' => wp_slash($new_content),
+    ], true);
+
+    if (!$update_result || is_wp_error($update_result)) {
+        $error_message = 'La mise à jour de l\'article a échoué.';
+        if (is_wp_error($update_result)) {
+            $error_message .= ' ' . $update_result->get_error_message();
+        }
+
+        wp_send_json_error(['message' => $error_message]);
+        return;
+    }
 
     // Supprimer le lien de la table dédiée
     global $wpdb;
     $table_name = $wpdb->prefix . 'blc_broken_links';
-    $wpdb->delete($table_name, ['post_id' => $post_id, 'url' => $url_to_unlink, 'type' => 'link'], ['%d', '%s', '%s']);
+    $delete_result = $wpdb->delete(
+        $table_name,
+        ['post_id' => $post_id, 'url' => $url_to_unlink, 'type' => 'link'],
+        ['%d', '%s', '%s']
+    );
+
+    if (!$delete_result || is_wp_error($delete_result)) {
+        $error_message = 'La suppression du lien dans la base de données a échoué.';
+        if (is_wp_error($delete_result)) {
+            $error_message .= ' ' . $delete_result->get_error_message();
+        }
+
+        wp_send_json_error(['message' => $error_message]);
+        return;
+    }
 
     wp_send_json_success();
 }
