@@ -50,8 +50,8 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
     
     $rest_start_hour = get_option('blc_rest_start_hour', '08');
     $rest_end_hour   = get_option('blc_rest_end_hour', '20');
-    $link_delay_ms   = get_option('blc_link_delay', 200);
-    $batch_delay_s   = get_option('blc_batch_delay', 60);
+    $link_delay_ms   = max(0, (int) get_option('blc_link_delay', 200));
+    $batch_delay_s   = max(0, (int) get_option('blc_batch_delay', 60));
     $scan_method     = get_option('blc_scan_method', 'precise');
     $excluded_domains_raw = get_option('blc_excluded_domains', '');
 

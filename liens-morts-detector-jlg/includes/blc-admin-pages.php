@@ -220,8 +220,8 @@ function blc_settings_page() {
         update_option('blc_frequency', sanitize_text_field($_POST['blc_frequency']));
         update_option('blc_rest_start_hour', sanitize_text_field($_POST['blc_rest_start_hour']));
         update_option('blc_rest_end_hour', sanitize_text_field($_POST['blc_rest_end_hour']));
-        update_option('blc_link_delay', intval($_POST['blc_link_delay']));
-        update_option('blc_batch_delay', intval($_POST['blc_batch_delay']));
+        update_option('blc_link_delay', max(0, intval($_POST['blc_link_delay'])));
+        update_option('blc_batch_delay', max(0, intval($_POST['blc_batch_delay'])));
         update_option('blc_scan_method', sanitize_text_field($_POST['blc_scan_method']));
         update_option('blc_excluded_domains', sanitize_textarea_field($_POST['blc_excluded_domains']));
         update_option('blc_debug_mode', isset($_POST['blc_debug_mode']));
@@ -237,8 +237,8 @@ function blc_settings_page() {
     $frequency = get_option('blc_frequency', 'daily');
     $rest_start_hour = get_option('blc_rest_start_hour', '08');
     $rest_end_hour = get_option('blc_rest_end_hour', '20');
-    $link_delay = get_option('blc_link_delay', 200);
-    $batch_delay = get_option('blc_batch_delay', 60);
+    $link_delay = max(0, (int) get_option('blc_link_delay', 200));
+    $batch_delay = max(0, (int) get_option('blc_batch_delay', 60));
     $scan_method = get_option('blc_scan_method', 'precise');
     $excluded_domains = get_option('blc_excluded_domains', "x.com\ntwitter.com\nlinkedin.com");
     $debug_mode = get_option('blc_debug_mode', false);
