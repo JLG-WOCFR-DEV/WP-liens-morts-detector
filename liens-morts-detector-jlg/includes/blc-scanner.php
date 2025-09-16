@@ -86,15 +86,15 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
         $args['date_query'] = [['column' => 'post_modified', 'after' => date('Y-m-d H:i:s', $last_check_time)]];
     }
 
-    $query = new WP_Query($args);
-    $posts = $query->posts;
+    $wp_query = new WP_Query($args);
+    $posts = $wp_query->posts;
 
     $post_ids_in_batch = wp_list_pluck($posts, 'ID');
     if (!empty($post_ids_in_batch)) {
         $post_ids_in_batch = array_map('intval', $post_ids_in_batch);
         $placeholders = implode(',', array_fill(0, count($post_ids_in_batch), '%d'));
-        $query = "DELETE FROM $table_name WHERE post_id IN ($placeholders) AND type = %s";
-        $wpdb->query($wpdb->prepare($query, array_merge($post_ids_in_batch, ['link'])));
+        $delete_sql = "DELETE FROM $table_name WHERE post_id IN ($placeholders) AND type = %s";
+        $wpdb->query($wpdb->prepare($delete_sql, array_merge($post_ids_in_batch, ['link'])));
     }
 
     // --- 4. Boucle d'analyse des LIENS <a> ---
@@ -180,7 +180,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
     }
 
     // --- 5. Sauvegarde et planification ---
-    if ($query->max_num_pages > ($batch + 1)) {
+    if ($wp_query->max_num_pages > ($batch + 1)) {
         wp_schedule_single_event(current_time('timestamp') + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan));
     } else {
         update_option('blc_last_check_time', current_time('timestamp'));
