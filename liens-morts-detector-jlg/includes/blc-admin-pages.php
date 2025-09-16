@@ -5,6 +5,10 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+if (!function_exists('blc_normalize_hour_option')) {
+    require_once __DIR__ . '/blc-utils.php';
+}
+
 /**
  * Crée le menu principal et les sous-menus pour les rapports et les réglages.
  */
@@ -222,12 +226,16 @@ function blc_settings_page() {
         $frequency = sanitize_text_field($frequency_raw);
         update_option('blc_frequency', $frequency);
 
+        $previous_rest_start = get_option('blc_rest_start_hour', '08');
         $rest_start_hour_raw = isset($_POST['blc_rest_start_hour']) ? wp_unslash($_POST['blc_rest_start_hour']) : '';
-        $rest_start_hour = sanitize_text_field($rest_start_hour_raw);
+        $rest_start_hour_clean = sanitize_text_field($rest_start_hour_raw);
+        $rest_start_hour = blc_normalize_hour_option($rest_start_hour_clean, $previous_rest_start);
         update_option('blc_rest_start_hour', $rest_start_hour);
 
+        $previous_rest_end = get_option('blc_rest_end_hour', '20');
         $rest_end_hour_raw = isset($_POST['blc_rest_end_hour']) ? wp_unslash($_POST['blc_rest_end_hour']) : '';
-        $rest_end_hour = sanitize_text_field($rest_end_hour_raw);
+        $rest_end_hour_clean = sanitize_text_field($rest_end_hour_raw);
+        $rest_end_hour = blc_normalize_hour_option($rest_end_hour_clean, $previous_rest_end);
         update_option('blc_rest_end_hour', $rest_end_hour);
 
         $link_delay_raw = isset($_POST['blc_link_delay']) ? wp_unslash($_POST['blc_link_delay']) : '';
@@ -258,8 +266,10 @@ function blc_settings_page() {
     }
 
     $frequency = get_option('blc_frequency', 'daily');
-    $rest_start_hour = get_option('blc_rest_start_hour', '08');
-    $rest_end_hour = get_option('blc_rest_end_hour', '20');
+    $rest_start_hour_option = get_option('blc_rest_start_hour', '08');
+    $rest_end_hour_option = get_option('blc_rest_end_hour', '20');
+    $rest_start_hour = blc_prepare_time_input_value($rest_start_hour_option, '08');
+    $rest_end_hour = blc_prepare_time_input_value($rest_end_hour_option, '20');
     $link_delay = max(0, (int) get_option('blc_link_delay', 200));
     $batch_delay = max(0, (int) get_option('blc_batch_delay', 60));
     $scan_method = get_option('blc_scan_method', 'precise');
@@ -297,9 +307,9 @@ function blc_settings_page() {
                         <th scope="row"><label for="blc_rest_start_hour"><?php esc_html_e('😴 Plage horaire de repos', 'liens-morts-detector-jlg'); ?></label></th>
                         <td>
                             <?php esc_html_e('Ne pas lancer de scan entre', 'liens-morts-detector-jlg'); ?>
-                            <input type="time" name="blc_rest_start_hour" value="<?php echo esc_attr($rest_start_hour); ?>:00">
+                            <input type="time" name="blc_rest_start_hour" value="<?php echo esc_attr($rest_start_hour); ?>">
                             <?php esc_html_e('et', 'liens-morts-detector-jlg'); ?>
-                            <input type="time" name="blc_rest_end_hour" value="<?php echo esc_attr($rest_end_hour); ?>:00">
+                            <input type="time" name="blc_rest_end_hour" value="<?php echo esc_attr($rest_end_hour); ?>">
                             <p class="description">
                                 <?php
                                 echo wp_kses(
