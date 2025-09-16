@@ -2,6 +2,10 @@
 
 if (!defined('ABSPATH')) exit;
 
+if (!function_exists('blc_normalize_hour_option')) {
+    require_once __DIR__ . '/blc-utils.php';
+}
+
 /**
  * Helper to build a DOMDocument instance from raw post content.
  *
@@ -48,15 +52,17 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
     $debug_mode = get_option('blc_debug_mode', false);
     if ($debug_mode) { error_log("--- Début du scan LIENS (Lot #$batch) ---"); }
     
-    $rest_start_hour = get_option('blc_rest_start_hour', '08');
-    $rest_end_hour   = get_option('blc_rest_end_hour', '20');
+    $rest_start_hour_option = get_option('blc_rest_start_hour', '08');
+    $rest_end_hour_option   = get_option('blc_rest_end_hour', '20');
+    $rest_start_hour = (int) blc_normalize_hour_option($rest_start_hour_option, '08');
+    $rest_end_hour   = (int) blc_normalize_hour_option($rest_end_hour_option, '20');
     $link_delay_ms   = max(0, (int) get_option('blc_link_delay', 200));
     $batch_delay_s   = max(0, (int) get_option('blc_batch_delay', 60));
     $scan_method     = get_option('blc_scan_method', 'precise');
     $excluded_domains_raw = get_option('blc_excluded_domains', '');
 
     // --- 2. Contrôles pré-analyse ---
-    $current_hour = current_time('H');
+    $current_hour = (int) current_time('H');
     if ($current_hour >= $rest_start_hour && $current_hour < $rest_end_hour && !$is_full_scan) {
         if ($debug_mode) { error_log("Scan arrêté : dans la plage horaire de repos."); }
         return;

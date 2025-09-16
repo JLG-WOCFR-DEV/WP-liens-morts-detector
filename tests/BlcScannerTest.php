@@ -54,6 +54,8 @@ class BlcScannerTest extends TestCase
     /** @var array<int, float> */
     private array $serverLoad = [0.5, 0.4, 0.3];
 
+    private string $currentHour = '00';
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -80,6 +82,7 @@ class BlcScannerTest extends TestCase
         $this->scheduledEvents = [];
         $this->updatedOptions = [];
         $this->serverLoad = [0.5, 0.4, 0.3];
+        $this->currentHour = '00';
         $GLOBALS['wp_query_queue'] = [];
         $GLOBALS['wp_query_last_args'] = [];
 
@@ -95,7 +98,7 @@ class BlcScannerTest extends TestCase
                 return '1970-01-01 00:00:00';
             }
 
-            return '00';
+            return $this->currentHour;
         });
         Functions\when('trailingslashit')->alias(function ($value) {
             return rtrim((string) $value, "\\/\t\n\r\f ") . '/';
@@ -241,6 +244,40 @@ class BlcScannerTest extends TestCase
                 return vsprintf($query, $escaped);
             }
         };
+    }
+
+    public function test_blc_perform_check_delays_during_rest_period(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_rest_start_hour'] = '08:15';
+        $this->options['blc_rest_end_hour']   = '20:45';
+        $this->currentHour                    = '09';
+
+        blc_perform_check(0, false);
+
+        $this->assertSame([], $GLOBALS['wp_query_last_args'], 'No query should run during the configured rest window.');
+        $this->assertSame([], $wpdb->queries, 'Database queries must not be executed during rest hours.');
+    }
+
+    public function test_blc_perform_check_runs_outside_rest_period(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_rest_start_hour'] = '08';
+        $this->options['blc_rest_end_hour']   = '20';
+        $this->currentHour                    = '07';
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts'        => [],
+            'max_num_pages' => 0,
+        ];
+
+        blc_perform_check(0, false);
+
+        $this->assertNotSame([], $GLOBALS['wp_query_last_args'], 'A scan should start normally outside the rest window.');
     }
 
     public function test_blc_perform_check_skips_excluded_domains_and_records_failed_links(): void
