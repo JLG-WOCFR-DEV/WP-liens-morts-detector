@@ -35,7 +35,7 @@ class BLC_Links_List_Table extends WP_List_Table {
      */
     protected function get_views() {
         $views = [];
-        $current = (!empty($_GET['link_type'])) ? $_GET['link_type'] : 'all';
+        $current = (!empty($_GET['link_type'])) ? sanitize_text_field(wp_unslash($_GET['link_type'])) : 'all';
         global $wpdb;
         $table_name = $wpdb->prefix . 'blc_broken_links';
         $like = $wpdb->esc_like($this->site_url) . '%';
@@ -60,13 +60,13 @@ class BLC_Links_List_Table extends WP_List_Table {
         $external_count = isset($counts['external_count']) ? (int) $counts['external_count'] : max(0, $total_count - $internal_count);
 
         $all_class = ($current == 'all' ? 'current' : '');
-        $views['all'] = "<a href='" . remove_query_arg('link_type') . "' class='$all_class'>Tous <span class='count'>($total_count)</span></a>";
+        $views['all'] = "<a href='" . esc_url(remove_query_arg('link_type')) . "' class='" . esc_attr($all_class) . "'>Tous <span class='count'>($total_count)</span></a>";
 
         $internal_class = ($current == 'internal' ? 'current' : '');
-        $views['internal'] = "<a href='" . add_query_arg('link_type', 'internal') . "' class='$internal_class'>Internes <span class='count'>($internal_count)</span></a>";
+        $views['internal'] = "<a href='" . esc_url(add_query_arg('link_type', 'internal')) . "' class='" . esc_attr($internal_class) . "'>Internes <span class='count'>($internal_count)</span></a>";
 
         $external_class = ($current == 'external' ? 'current' : '');
-        $views['external'] = "<a href='" . add_query_arg('link_type', 'external') . "' class='$external_class'>Externes <span class='count'>($external_count)</span></a>";
+        $views['external'] = "<a href='" . esc_url(add_query_arg('link_type', 'external')) . "' class='" . esc_attr($external_class) . "'>Externes <span class='count'>($external_count)</span></a>";
 
         return $views;
     }
@@ -148,7 +148,7 @@ class BLC_Links_List_Table extends WP_List_Table {
      */
     public function prepare_items($data = null, $total_items_override = null) {
         $this->_column_headers = [$this->get_columns(), [], []];
-        $current_view = (!empty($_GET['link_type'])) ? $_GET['link_type'] : 'all';
+        $current_view = (!empty($_GET['link_type'])) ? sanitize_text_field(wp_unslash($_GET['link_type'])) : 'all';
         $per_page     = 20;
         $current_page = max(1, (int) $this->get_pagenum());
 
