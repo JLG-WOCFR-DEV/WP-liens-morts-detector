@@ -217,15 +217,38 @@ function blc_dashboard_images_page() {
 function blc_settings_page() {
     if (isset($_POST['blc_save_settings'])) {
         check_admin_referer('blc_settings_nonce');
-        update_option('blc_frequency', sanitize_text_field($_POST['blc_frequency']));
-        update_option('blc_rest_start_hour', sanitize_text_field($_POST['blc_rest_start_hour']));
-        update_option('blc_rest_end_hour', sanitize_text_field($_POST['blc_rest_end_hour']));
-        update_option('blc_link_delay', max(0, intval($_POST['blc_link_delay'])));
-        update_option('blc_batch_delay', max(0, intval($_POST['blc_batch_delay'])));
-        update_option('blc_scan_method', sanitize_text_field($_POST['blc_scan_method']));
-        update_option('blc_excluded_domains', sanitize_textarea_field($_POST['blc_excluded_domains']));
-        update_option('blc_debug_mode', isset($_POST['blc_debug_mode']));
-        $frequency = sanitize_text_field($_POST['blc_frequency']);
+
+        $frequency_raw = isset($_POST['blc_frequency']) ? wp_unslash($_POST['blc_frequency']) : '';
+        $frequency = sanitize_text_field($frequency_raw);
+        update_option('blc_frequency', $frequency);
+
+        $rest_start_hour_raw = isset($_POST['blc_rest_start_hour']) ? wp_unslash($_POST['blc_rest_start_hour']) : '';
+        $rest_start_hour = sanitize_text_field($rest_start_hour_raw);
+        update_option('blc_rest_start_hour', $rest_start_hour);
+
+        $rest_end_hour_raw = isset($_POST['blc_rest_end_hour']) ? wp_unslash($_POST['blc_rest_end_hour']) : '';
+        $rest_end_hour = sanitize_text_field($rest_end_hour_raw);
+        update_option('blc_rest_end_hour', $rest_end_hour);
+
+        $link_delay_raw = isset($_POST['blc_link_delay']) ? wp_unslash($_POST['blc_link_delay']) : '';
+        $link_delay = max(0, intval($link_delay_raw));
+        update_option('blc_link_delay', $link_delay);
+
+        $batch_delay_raw = isset($_POST['blc_batch_delay']) ? wp_unslash($_POST['blc_batch_delay']) : '';
+        $batch_delay = max(0, intval($batch_delay_raw));
+        update_option('blc_batch_delay', $batch_delay);
+
+        $scan_method_raw = isset($_POST['blc_scan_method']) ? wp_unslash($_POST['blc_scan_method']) : '';
+        $scan_method = sanitize_text_field($scan_method_raw);
+        update_option('blc_scan_method', $scan_method);
+
+        $excluded_domains_raw = isset($_POST['blc_excluded_domains']) ? wp_unslash($_POST['blc_excluded_domains']) : '';
+        $excluded_domains = sanitize_textarea_field($excluded_domains_raw);
+        update_option('blc_excluded_domains', $excluded_domains);
+
+        $debug_mode = isset($_POST['blc_debug_mode']);
+        update_option('blc_debug_mode', $debug_mode);
+
         wp_clear_scheduled_hook('blc_check_links');
         wp_schedule_event(current_time('timestamp'), $frequency, 'blc_check_links');
         printf(
