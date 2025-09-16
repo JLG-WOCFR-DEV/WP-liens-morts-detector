@@ -19,8 +19,12 @@ function blc_load_dom_from_post($post_content) {
 
     $dom = new DOMDocument();
 
-    $converted_content = mb_convert_encoding($post_content, 'HTML-ENTITIES', 'UTF-8');
-    if ($converted_content === false) {
+    if (function_exists('mb_convert_encoding')) {
+        $converted_content = mb_convert_encoding($post_content, 'HTML-ENTITIES', 'UTF-8');
+        if ($converted_content === false) {
+            $converted_content = $post_content;
+        }
+    } else {
         $converted_content = $post_content;
     }
 
