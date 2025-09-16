@@ -134,8 +134,15 @@ function blc_ajax_edit_link_callback() {
         wp_send_json_error(['message' => 'Permissions insuffisantes.']);
     }
 
-    $old_url = esc_url_raw($params['old_url']);
-    $new_url = esc_url_raw($params['new_url']);
+    $old_url = wp_http_validate_url($params['old_url']);
+    $new_url = wp_http_validate_url($params['new_url']);
+
+    if (!$old_url || !$new_url) {
+        wp_send_json_error(['message' => 'URL invalide.']);
+    }
+
+    $old_url = esc_url_raw($old_url);
+    $new_url = esc_url_raw($new_url);
 
     $post = get_post($post_id);
     if (!$post) {
@@ -192,7 +199,13 @@ function blc_ajax_unlink_callback() {
         wp_send_json_error(['message' => 'Permissions insuffisantes.']);
     }
 
-    $url_to_unlink = esc_url_raw($params['url_to_unlink']);
+    $url_to_unlink = wp_http_validate_url($params['url_to_unlink']);
+
+    if (!$url_to_unlink) {
+        wp_send_json_error(['message' => 'URL invalide.']);
+    }
+
+    $url_to_unlink = esc_url_raw($url_to_unlink);
 
     $post = get_post($post_id);
     if (!$post) {
