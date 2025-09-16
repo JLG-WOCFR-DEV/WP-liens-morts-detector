@@ -78,6 +78,18 @@ function blc_enqueue_admin_assets($hook) {
         filemtime(__DIR__ . '/assets/js/blc-admin-scripts.js'),
         true // Charger dans le pied de page pour de meilleures performances
     );
+
+    wp_localize_script(
+        'blc-admin-js',
+        'blcAdminMessages',
+        array(
+            /* translators: %s: original URL displayed in the edit prompt. */
+            'editPromptMessage'  => __("Entrez la nouvelle URL pour :\n%s", 'liens-morts-detector-jlg'),
+            'editPromptDefault'  => __('https://', 'liens-morts-detector-jlg'),
+            'unlinkConfirmation' => __('Êtes-vous sûr de vouloir supprimer ce lien ? Le texte sera conservé.', 'liens-morts-detector-jlg'),
+            'errorPrefix'        => __('Erreur : ', 'liens-morts-detector-jlg'),
+        )
+    );
 }
 
 // --- Fonctions de rappel AJAX pour les actions rapides ---
