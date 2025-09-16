@@ -1,4 +1,9 @@
 jQuery(document).ready(function($) {
+    var messages = window.blcAdminMessages || {};
+    var editPromptMessage = messages.editPromptMessage || "Entrez la nouvelle URL pour :\n%s";
+    var editPromptDefault = messages.editPromptDefault || 'https://';
+    var unlinkConfirmation = messages.unlinkConfirmation || "Êtes-vous sûr de vouloir supprimer ce lien ? Le texte sera conservé.";
+    var errorPrefix = messages.errorPrefix || 'Erreur : ';
 
     /**
      * Gère le clic sur le bouton "Modifier le lien".
@@ -13,7 +18,8 @@ jQuery(document).ready(function($) {
         var nonce = linkElement.data('nonce');
 
         // Affiche une boîte de dialogue pour demander la nouvelle URL
-        var newUrl = prompt("Entrez la nouvelle URL pour :\n" + oldUrl, "https://");
+        var promptMessage = editPromptMessage.replace('%s', oldUrl);
+        var newUrl = prompt(promptMessage, editPromptDefault);
 
         // Si l'utilisateur a entré une nouvelle URL et n'a pas annulé
         if (newUrl && newUrl !== oldUrl) {
@@ -33,7 +39,7 @@ jQuery(document).ready(function($) {
                     linkElement.closest('tr').fadeOut(300, function() { $(this).remove(); });
                 } else {
                     // S'il y a une erreur, on l'affiche et on remet la ligne en état normal
-                    alert("Erreur : " + response.data.message);
+                    alert(errorPrefix + response.data.message);
                     linkElement.closest('tr').css('opacity', 1);
                 }
             });
@@ -52,7 +58,7 @@ jQuery(document).ready(function($) {
         var nonce = linkElement.data('nonce');
 
         // Demande une confirmation avant de supprimer le lien
-        if (confirm("Êtes-vous sûr de vouloir supprimer ce lien ? Le texte sera conservé.")) {
+        if (confirm(unlinkConfirmation)) {
             linkElement.closest('tr').css('opacity', 0.5);
 
             $.post(ajaxurl, {
@@ -64,7 +70,7 @@ jQuery(document).ready(function($) {
                 if (response.success) {
                     linkElement.closest('tr').fadeOut(300, function() { $(this).remove(); });
                 } else {
-                    alert("Erreur : " + response.data.message);
+                    alert(errorPrefix + response.data.message);
                     linkElement.closest('tr').css('opacity', 1);
                 }
             });

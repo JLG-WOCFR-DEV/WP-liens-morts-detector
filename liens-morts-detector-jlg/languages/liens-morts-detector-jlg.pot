@@ -1,0 +1,259 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: Liens Morts Detector - JLG 1.0\n"
+"POT-Creation-Date: 2025-09-16 11:48+0000\n"
+"PO-Revision-Date: 2025-09-16 11:48+0000\n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: ChatGPT\n"
+
+#: includes/blc-admin-pages.php:13 includes/blc-admin-pages.php:14
+msgid "Liens Morts"
+msgstr ""
+
+#: includes/blc-admin-pages.php:22 includes/blc-admin-pages.php:23
+msgid "Liens Cassés"
+msgstr ""
+
+#: includes/blc-admin-pages.php:30 includes/blc-admin-pages.php:31
+msgid "Images Cassées"
+msgstr ""
+
+#: includes/blc-admin-pages.php:38 includes/blc-admin-pages.php:39
+msgid "Réglages"
+msgstr ""
+
+#: includes/blc-admin-pages.php:58
+msgid "La vérification des liens a été programmée et s'exécute en arrière-plan."
+msgstr ""
+
+#: includes/blc-admin-pages.php:82 includes/blc-admin-pages.php:174
+msgid "Ko"
+msgstr ""
+
+#: includes/blc-admin-pages.php:83 includes/blc-admin-pages.php:175
+msgid "Mo"
+msgstr ""
+
+#: includes/blc-admin-pages.php:84 includes/blc-admin-pages.php:176
+msgid "Jamais"
+msgstr ""
+
+#: includes/blc-admin-pages.php:90
+msgid "Rapport des Liens Cassés"
+msgstr ""
+
+#: includes/blc-admin-pages.php:94
+msgid "Liens morts trouvés"
+msgstr ""
+
+#: includes/blc-admin-pages.php:98 includes/blc-admin-pages.php:190
+msgid "Poids des données"
+msgstr ""
+
+#: includes/blc-admin-pages.php:102
+msgid "Dernière analyse"
+msgstr ""
+
+#: includes/blc-admin-pages.php:115
+msgid "Lancer une %1$sanalyse complète%2$s de tous les articles (plus lent)"
+msgstr ""
+
+#: includes/blc-admin-pages.php:125
+msgid "Si non cochée, l'analyse ne portera que sur les articles modifiés depuis la dernière exécution."
+msgstr ""
+
+#: includes/blc-admin-pages.php:127
+msgid "Lancer la vérification des liens"
+msgstr ""
+
+#: includes/blc-admin-pages.php:130
+msgid "✅ Aucun lien mort trouvé. Bravo !"
+msgstr ""
+
+#: includes/blc-admin-pages.php:151
+msgid "La vérification des images a été programmée et s'exécute en arrière-plan."
+msgstr ""
+
+#: includes/blc-admin-pages.php:182
+msgid "Rapport des Images Cassées"
+msgstr ""
+
+#: includes/blc-admin-pages.php:186
+msgid "Images cassées trouvées"
+msgstr ""
+
+#: includes/blc-admin-pages.php:194
+msgid "Dernière analyse de liens"
+msgstr ""
+
+#: includes/blc-admin-pages.php:200
+msgid "L'analyse des images peut être longue et consommer des ressources. Elle s'exécute en arrière-plan sur l'ensemble du site."
+msgstr ""
+
+#: includes/blc-admin-pages.php:201
+msgid "Lancer l'analyse des images"
+msgstr ""
+
+#: includes/blc-admin-pages.php:204
+msgid "✅ Aucune image cassée trouvée. Bravo !"
+msgstr ""
+
+#: includes/blc-admin-pages.php:233
+msgid "Réglages enregistrés !"
+msgstr ""
+
+#: includes/blc-admin-pages.php:247
+msgid "Réglages des liens morts"
+msgstr ""
+
+#: includes/blc-admin-pages.php:250
+msgid "Planification"
+msgstr ""
+
+#: includes/blc-admin-pages.php:254
+msgid "Fréquence de vérification"
+msgstr ""
+
+#: includes/blc-admin-pages.php:257
+msgid "Quotidienne"
+msgstr ""
+
+#: includes/blc-admin-pages.php:258
+msgid "Hebdomadaire"
+msgstr ""
+
+#: includes/blc-admin-pages.php:259
+msgid "Mensuelle"
+msgstr ""
+
+#: includes/blc-admin-pages.php:264
+msgid "Fréquence de la vérification automatique des <strong>liens</strong>."
+msgstr ""
+
+#: includes/blc-admin-pages.php:274
+msgid "😴 Plage horaire de repos"
+msgstr ""
+
+#: includes/blc-admin-pages.php:276
+msgid "Ne pas lancer de scan entre"
+msgstr ""
+
+#: includes/blc-admin-pages.php:278
+msgid "et"
+msgstr ""
+
+#: includes/blc-admin-pages.php:283
+msgid "Le scan automatique des <strong>liens</strong> ne s'exécutera pas durant cette période. (Fuseau horaire de Paris)"
+msgstr ""
+
+#: includes/blc-admin-pages.php:294
+msgid "Performance"
+msgstr ""
+
+#: includes/blc-admin-pages.php:298
+msgid "⚙️ Délai entre chaque lien"
+msgstr ""
+
+#: includes/blc-admin-pages.php:300
+msgid "ms"
+msgstr ""
+
+#: includes/blc-admin-pages.php:301
+msgid "Pause après la vérification de chaque URL. (Défaut : 200)"
+msgstr ""
+
+#: includes/blc-admin-pages.php:305
+msgid "⚙️ Délai entre chaque lot"
+msgstr ""
+
+#: includes/blc-admin-pages.php:307
+msgid "secondes"
+msgstr ""
+
+#: includes/blc-admin-pages.php:308
+msgid "Pause entre chaque groupe de 20 articles analysés. (Défaut : 60)"
+msgstr ""
+
+#: includes/blc-admin-pages.php:313
+msgid "Méthode d'Analyse"
+msgstr ""
+
+#: includes/blc-admin-pages.php:317
+msgid "Stratégie de vérification"
+msgstr ""
+
+#: includes/blc-admin-pages.php:322
+msgid "Précise (recommandé)"
+msgstr ""
+
+#: includes/blc-admin-pages.php:323
+msgid "Simule un navigateur. Réduit les faux positifs, mais est un peu plus lent."
+msgstr ""
+
+#: includes/blc-admin-pages.php:327
+msgid "Rapide"
+msgstr ""
+
+#: includes/blc-admin-pages.php:328
+msgid "Vérification basique. Très léger, mais peut générer des faux positifs."
+msgstr ""
+
+#: includes/blc-admin-pages.php:334
+msgid "Liste d'exclusion"
+msgstr ""
+
+#: includes/blc-admin-pages.php:337
+msgid "Domaines à ignorer pendant l'analyse. Un domaine par ligne (ex: amazon.fr)."
+msgstr ""
+
+#: includes/blc-admin-pages.php:342
+msgid "Débogage"
+msgstr ""
+
+#: includes/blc-admin-pages.php:346
+msgid "Mode Débogage"
+msgstr ""
+
+#: includes/blc-admin-pages.php:349
+msgid "Activer le journal de débogage"
+msgstr ""
+
+#: includes/blc-admin-pages.php:353
+msgid "Écrit des informations dans <code>/wp-content/debug.log</code>. Nécessite que <code>WP_DEBUG_LOG</code> soit à <code>true</code> dans <code>wp-config.php</code>."
+msgstr ""
+
+#: includes/blc-admin-pages.php:363
+msgid "Enregistrer les modifications"
+msgstr ""
+
+#. translators: %s: original URL displayed in the edit prompt.
+#: liens-morts-detector-jlg.php:86
+msgid ""
+"Entrez la nouvelle URL pour :\n"
+"%s"
+msgstr ""
+
+#: liens-morts-detector-jlg.php:87
+msgid "https://"
+msgstr ""
+
+#: liens-morts-detector-jlg.php:88
+msgid "Êtes-vous sûr de vouloir supprimer ce lien ? Le texte sera conservé."
+msgstr ""
+
+#: liens-morts-detector-jlg.php:89
+msgid "Erreur : "
+msgstr ""
+
+#: includes/blc-cron.php:20
+msgid "Une fois par semaine"
+msgstr ""
+
+#: includes/blc-cron.php:26
+msgid "Une fois par mois"
+msgstr ""
