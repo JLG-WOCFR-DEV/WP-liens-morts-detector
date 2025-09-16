@@ -125,6 +125,12 @@ class BlcScannerTest extends TestCase
         Functions\when('wp_remote_head')->alias(function (string $url, array $args = []) {
             return $this->mockHttpRequest('HEAD', $url);
         });
+        Functions\when('wp_safe_remote_get')->alias(function (string $url, array $args = []) {
+            return $this->mockHttpRequest('GET', $url);
+        });
+        Functions\when('wp_safe_remote_head')->alias(function (string $url, array $args = []) {
+            return $this->mockHttpRequest('HEAD', $url);
+        });
         Functions\when('wp_remote_retrieve_response_code')->alias(function ($response) {
             return $response['response']['code'] ?? 0;
         });
@@ -267,6 +273,41 @@ class BlcScannerTest extends TestCase
         $insert = $wpdb->inserted[0];
         $this->assertSame('wp_blc_broken_links', $insert['table']);
         $this->assertSame('http://allowed.com/bad', $insert['data']['url']);
+        $this->assertSame('link', $insert['data']['type']);
+        $this->assertSame([], $this->scheduledEvents, 'No follow-up batch should be scheduled.');
+        $this->assertSame(1000, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated.');
+    }
+
+    public function test_blc_perform_check_skips_excluded_domains_case_insensitively(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_excluded_domains'] = "EXCLUDED.COM\nIGNORED.NET";
+        $this->options['blc_scan_method'] = 'precise';
+
+        $post = (object) [
+            'ID' => 84,
+            'post_title' => 'Case Sensitivity Post',
+            'post_content' => '<a href="http://Excluded.com/page">Excluded</a> <a href="http://ALLOWED.com/bad">Allowed</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('GET', 'http://ALLOWED.com/bad', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(1, $this->httpRequests, 'Only the non-excluded URL should be requested when exclusions differ by case.');
+        $this->assertSame('http://ALLOWED.com/bad', $this->httpRequests[0]['url']);
+
+        $this->assertCount(1, $wpdb->inserted, 'Only one broken link should be inserted when exclusions differ by case.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('wp_blc_broken_links', $insert['table']);
+        $this->assertSame('http://ALLOWED.com/bad', $insert['data']['url']);
         $this->assertSame('link', $insert['data']['type']);
         $this->assertSame([], $this->scheduledEvents, 'No follow-up batch should be scheduled.');
         $this->assertSame(1000, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated.');
