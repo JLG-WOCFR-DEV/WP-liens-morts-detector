@@ -358,6 +358,48 @@ class BlcScannerTest extends TestCase
         $this->assertSame([], $this->updatedOptions, 'Last check time should not be updated before the final batch.');
     }
 
+    public function test_blc_perform_check_normalizes_negative_delays(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_link_delay'] = -150;
+        $this->options['blc_batch_delay'] = -45;
+
+        $post = (object) [
+            'ID' => 9,
+            'post_title' => 'Negative Delay Post',
+            'post_content' => '<a href="http://ok.com/resource">Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 2,
+        ];
+
+        $errorHandler = function (int $severity, string $message): bool {
+            if ($severity & (E_WARNING | E_NOTICE)) {
+                throw new \ErrorException($message, 0, $severity);
+            }
+
+            return false;
+        };
+
+        set_error_handler($errorHandler);
+
+        try {
+            blc_perform_check(0, false);
+        } finally {
+            restore_error_handler();
+        }
+
+        $this->assertCount(1, $this->scheduledEvents, 'Next batch should still be scheduled.');
+        $event = $this->scheduledEvents[0];
+        $this->assertSame(1000, $event['timestamp'], 'Negative delays should be coerced to zero before scheduling.');
+        $this->assertSame('blc_check_batch', $event['hook']);
+        $this->assertSame([1, false], $event['args']);
+    }
+
     public function test_blc_perform_image_check_cleans_table_and_reschedules(): void
     {
         global $wpdb;
