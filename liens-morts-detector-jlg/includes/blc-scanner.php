@@ -193,6 +193,11 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
 
             if ($is_excluded) { continue; }
 
+            if (!blc_is_safe_remote_host($host)) {
+                if ($debug_mode) { error_log("  -> Lien ignoré (IP non autorisée) : " . $url); }
+                continue;
+            }
+
             $response = ($scan_method === 'precise') ? wp_safe_remote_get($url, ['timeout' => 10, 'user-agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0', 'method' => 'GET']) : wp_safe_remote_head($url, ['timeout' => 5]);
 
             if (is_wp_error($response) || wp_remote_retrieve_response_code($response) >= 400) {
