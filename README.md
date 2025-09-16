@@ -19,6 +19,25 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 - Les liens ou images détectés comme cassés apparaissent dans une table permettant la modification rapide de l’URL ou la suppression du lien.
 - Des réglages avancés permettent d’exclure certains domaines, de limiter l’analyse à des plages horaires et d’activer un mode debug pour le suivi.
 
+## Hooks disponibles
+### `blc_max_load_threshold`
+Permet d’ajuster le seuil de charge CPU au‑delà duquel l’analyse est reportée. La valeur par défaut est `2.0`.
+
+```php
+add_filter('blc_max_load_threshold', function (float $threshold): float {
+    return 3.5; // Reporter le scan uniquement si la charge instantanée dépasse 3.5.
+});
+```
+
+### `blc_load_retry_delay`
+Définit le délai (en secondes) avant la reprise d’un scan suspendu pour cause de forte charge. La valeur par défaut est `300` secondes.
+
+```php
+add_filter('blc_load_retry_delay', function (int $delay): int {
+    return 600; // Reprogrammer le scan dans 10 minutes au lieu de 5.
+});
+```
+
 ## Structure du projet
 - `liens-morts-detector-jlg.php` : point d’entrée du plugin, chargement des fichiers, hooks et actions AJAX.
 - `includes/` : planification WP‑Cron, fonctions d’activation/désactivation, scanners et pages d’administration.
