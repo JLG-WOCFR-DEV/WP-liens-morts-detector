@@ -467,7 +467,27 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                 continue;
             }
 
-            $relative_path = ltrim(substr($image_url, strlen($normalized_upload_baseurl)), '/');
+            $parsed_image_url = function_exists('wp_parse_url') ? wp_parse_url($image_url) : parse_url($image_url);
+            if (!is_array($parsed_image_url) || empty($parsed_image_url['path'])) {
+                continue;
+            }
+
+            $image_path = wp_normalize_path($parsed_image_url['path']);
+
+            $parsed_upload_baseurl = function_exists('wp_parse_url') ? wp_parse_url($normalized_upload_baseurl) : parse_url($normalized_upload_baseurl);
+            $upload_base_path = '';
+            if (is_array($parsed_upload_baseurl) && !empty($parsed_upload_baseurl['path'])) {
+                $upload_base_path = wp_normalize_path($parsed_upload_baseurl['path']);
+            }
+
+            $upload_base_path_trimmed = ltrim(trailingslashit($upload_base_path), '/');
+            $image_path_trimmed = ltrim($image_path, '/');
+
+            if ($upload_base_path_trimmed === '' || strpos($image_path_trimmed, $upload_base_path_trimmed) !== 0) {
+                continue;
+            }
+
+            $relative_path = ltrim(substr($image_path_trimmed, strlen($upload_base_path_trimmed)), '/');
             if ($relative_path === '') {
                 continue;
             }
@@ -476,7 +496,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                 continue;
             }
 
-            $file_path = wp_normalize_path($upload_basedir . $relative_path);
+            $file_path = wp_normalize_path(trailingslashit($upload_basedir) . $relative_path);
             if (strpos($file_path, $normalized_basedir) !== 0) {
                 continue;
             }
@@ -484,7 +504,8 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
             if (!file_exists($file_path)) {
                 if ($debug_mode) { error_log("  -> Image Cassée Trouvée : " . $image_url); }
                 $url_for_storage    = blc_prepare_url_for_storage($original_image_url);
-                $anchor_for_storage = blc_prepare_text_field_for_storage(basename($image_url));
+                $image_filename = wp_basename($image_path);
+                $anchor_for_storage = blc_prepare_text_field_for_storage($image_filename);
                 $wpdb->insert(
                     $table_name,
                     [

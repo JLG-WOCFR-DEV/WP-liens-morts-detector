@@ -166,6 +166,7 @@ class BlcScannerTest extends TestCase
             return $values;
         });
         Functions\when('wp_kses_decode_entities')->alias(fn($value) => $value);
+        Functions\when('wp_basename')->alias(fn($path, $suffix = '') => basename((string) $path, (string) $suffix));
         Functions\when('wp_strip_all_tags')->alias(fn(string $text) => strip_tags($text));
         Functions\when('wp_remote_get')->alias(function (string $url, array $args = []) {
             return $this->mockHttpRequest('GET', $url);
@@ -855,6 +856,44 @@ class BlcScannerTest extends TestCase
         $this->assertSame('blc_check_image_batch', $event['hook']);
         $this->assertSame([1, true], $event['args']);
         $this->assertSame([], $this->updatedOptions, 'Image scan should not update options.');
+    }
+
+    public function test_blc_perform_image_check_allows_existing_upload_with_query(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $uploads_dir = sys_get_temp_dir() . '/uploads-test';
+        $image_dir = $uploads_dir . '/2024/05';
+        if (!is_dir($image_dir) && !mkdir($image_dir, 0777, true) && !is_dir($image_dir)) {
+            $this->fail('Unable to create uploads directory for test.');
+        }
+
+        $image_file = $image_dir . '/present.jpg';
+        if (file_put_contents($image_file, 'img') === false) {
+            $this->fail('Unable to create uploads image file for test.');
+        }
+
+        $post = (object) [
+            'ID' => 92,
+            'post_title' => 'Uploads Image With Query',
+            'post_content' => '<img src="https://example.com/wp-content/uploads/2024/05/present.jpg?ver=123" />',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        try {
+            blc_perform_image_check(0, true);
+        } finally {
+            @unlink($image_file);
+            @rmdir($image_dir);
+            @rmdir(dirname($image_dir));
+        }
+
+        $this->assertCount(0, $wpdb->inserted, 'Existing upload with query string should not be flagged as broken.');
     }
 
     public function test_blc_perform_image_check_ignores_traversal_urls(): void
