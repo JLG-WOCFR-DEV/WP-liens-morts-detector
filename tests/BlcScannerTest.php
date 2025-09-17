@@ -56,6 +56,8 @@ class BlcScannerTest extends TestCase
 
     private string $currentHour = '00';
 
+    private int $utcNow = 1000;
+
     /** @var array<int, array<string, mixed>> */
     private array $updatedPosts = [];
 
@@ -91,6 +93,7 @@ class BlcScannerTest extends TestCase
         $this->currentHour = '00';
         $this->updatedPosts = [];
         $this->ajaxResponse = null;
+        $this->utcNow = 1000;
         $GLOBALS['wp_query_queue'] = [];
         $GLOBALS['wp_query_last_args'] = [];
 
@@ -113,16 +116,17 @@ class BlcScannerTest extends TestCase
 
             return preg_replace('#^[a-z0-9+.-]+://#i', $scheme . '://', $url);
         });
-        Functions\when('current_time')->alias(function (string $type) {
+        $testCase = $this;
+        Functions\when('current_time')->alias(function (string $type, $gmt = 0) use ($testCase) {
             if ($type === 'timestamp') {
-                return 1000;
+                return $testCase->utcNow;
             }
 
             if ($type === 'mysql') {
                 return '1970-01-01 00:00:00';
             }
 
-            return $this->currentHour;
+            return $testCase->currentHour;
         });
         Functions\when('trailingslashit')->alias(function ($value) {
             return rtrim((string) $value, "\\/\t\n\r\f ") . '/';
@@ -224,7 +228,7 @@ class BlcScannerTest extends TestCase
             return true;
         });
         Functions\when('sys_getloadavg')->alias(fn() => $this->serverLoad);
-        Functions\when('time')->justReturn(1000);
+        Functions\when('time')->alias(fn() => $this->utcNow);
         Functions\when('wp_unslash')->alias(fn($value) => $value);
         Functions\when('wp_slash')->alias(fn($value) => $value);
         Functions\when('wp_send_json_success')->alias(function ($data = null) {
@@ -391,7 +395,7 @@ class BlcScannerTest extends TestCase
         $this->assertSame('http://allowed.com/bad', $insert['data']['url']);
         $this->assertSame('link', $insert['data']['type']);
         $this->assertSame([], $this->scheduledEvents, 'No follow-up batch should be scheduled.');
-        $this->assertSame(1000, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated.');
+        $this->assertSame($this->utcNow, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated.');
     }
 
     public function test_blc_perform_check_skips_excluded_domains_case_insensitively(): void
@@ -426,7 +430,7 @@ class BlcScannerTest extends TestCase
         $this->assertSame('http://ALLOWED.com/bad', $insert['data']['url']);
         $this->assertSame('link', $insert['data']['type']);
         $this->assertSame([], $this->scheduledEvents, 'No follow-up batch should be scheduled.');
-        $this->assertSame(1000, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated.');
+        $this->assertSame($this->utcNow, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated.');
     }
 
     public function test_blc_perform_check_reschedules_when_server_load_is_high(): void
@@ -440,7 +444,7 @@ class BlcScannerTest extends TestCase
         $this->assertSame([], $GLOBALS['wp_query_last_args'], 'WP_Query should not be instantiated when load is high.');
         $this->assertCount(1, $this->scheduledEvents, 'A retry should be scheduled when load is high.');
         $event = $this->scheduledEvents[0];
-        $this->assertSame(1300, $event['timestamp']);
+        $this->assertSame($this->utcNow + 300, $event['timestamp']);
         $this->assertSame('blc_check_batch', $event['hook']);
         $this->assertSame([0, false], $event['args']);
         $this->assertSame([], $this->updatedOptions, 'No options should be updated when scan is postponed.');
@@ -485,7 +489,7 @@ class BlcScannerTest extends TestCase
 
         $this->assertCount(1, $this->scheduledEvents, 'A retry should still be scheduled when the delay filter changes the timing.');
         $event = $this->scheduledEvents[0];
-        $this->assertSame(1600, $event['timestamp']);
+        $this->assertSame($this->utcNow + 600, $event['timestamp']);
         $this->assertSame('blc_check_batch', $event['hook']);
         $this->assertSame([2, false], $event['args']);
     }
@@ -626,7 +630,7 @@ class BlcScannerTest extends TestCase
         $this->assertCount(0, $wpdb->inserted, 'No broken links should be recorded for healthy responses.');
         $this->assertCount(1, $this->scheduledEvents, 'Next batch should be scheduled.');
         $event = $this->scheduledEvents[0];
-        $this->assertSame(1060, $event['timestamp']);
+        $this->assertSame($this->utcNow + 60, $event['timestamp']);
         $this->assertSame('blc_check_batch', $event['hook']);
         $this->assertSame([1, true], $event['args']);
         $this->assertSame([], $this->updatedOptions, 'Last check time should not be updated before the final batch.');
@@ -669,7 +673,7 @@ class BlcScannerTest extends TestCase
 
         $this->assertCount(1, $this->scheduledEvents, 'Next batch should still be scheduled.');
         $event = $this->scheduledEvents[0];
-        $this->assertSame(1000, $event['timestamp'], 'Negative delays should be coerced to zero before scheduling.');
+        $this->assertSame($this->utcNow, $event['timestamp'], 'Negative delays should be coerced to zero before scheduling.');
         $this->assertSame('blc_check_batch', $event['hook']);
         $this->assertSame([1, false], $event['args']);
     }
@@ -701,7 +705,7 @@ class BlcScannerTest extends TestCase
         $this->assertSame(88, $insert['data']['post_id']);
         $this->assertCount(1, $this->scheduledEvents, 'Image batches should schedule follow-ups.');
         $event = $this->scheduledEvents[0];
-        $this->assertSame(1060, $event['timestamp']);
+        $this->assertSame($this->utcNow + 60, $event['timestamp']);
         $this->assertSame('blc_check_image_batch', $event['hook']);
         $this->assertSame([1, true], $event['args']);
         $this->assertSame([], $this->updatedOptions, 'Image scan should not update options.');
