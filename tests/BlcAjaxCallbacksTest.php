@@ -277,4 +277,66 @@ class BlcAjaxCallbacksTest extends TestCase
 
         $this->assertSame($initial, libxml_use_internal_errors());
     }
+
+    public function test_unlink_relative_url_updates_content_and_database(): void
+    {
+        $_POST['post_id'] = 7;
+        $_POST['url_to_unlink'] = '/relative/path';
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('current_user_can')->once()->with('edit_post', 7)->andReturn(true);
+
+        $post = (object) ['post_content' => '<p><a href="/relative/path">Relative</a> link</p>'];
+        Functions\expect('get_post')->once()->with(7)->andReturn($post);
+        Functions\when('esc_url_raw')->alias(function ($url) {
+            return $url;
+        });
+
+        $captured_update = null;
+        Functions\expect('wp_update_post')->once()->andReturnUsing(function () use (&$captured_update) {
+            $captured_update = func_get_args();
+            return true;
+        });
+
+        global $wpdb;
+        $wpdb = new class {
+            public $prefix = '';
+            public $delete_args = null;
+            public function delete($table, $where, $formats)
+            {
+                $this->delete_args = [$table, $where, $formats];
+                return true;
+            }
+        };
+
+        Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
+            throw new \Exception('success');
+        });
+
+        $initial = libxml_use_internal_errors();
+
+        try {
+            blc_ajax_unlink_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $e) {
+            $this->assertSame('success', $e->getMessage());
+        }
+
+        $this->assertSame($initial, libxml_use_internal_errors());
+        $this->assertIsArray($captured_update);
+        $this->assertCount(2, $captured_update);
+        $this->assertIsArray($captured_update[0]);
+        $this->assertSame(7, $captured_update[0]['ID']);
+        $this->assertSame('<p>Relative link</p>', trim($captured_update[0]['post_content']));
+        $this->assertTrue($captured_update[1]);
+
+        $this->assertSame('', $wpdb->prefix);
+        $this->assertIsArray($wpdb->delete_args);
+        $this->assertSame('blc_broken_links', $wpdb->delete_args[0]);
+        $this->assertSame(
+            ['post_id' => 7, 'url' => '/relative/path', 'type' => 'link'],
+            $wpdb->delete_args[1]
+        );
+        $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);
+    }
 }

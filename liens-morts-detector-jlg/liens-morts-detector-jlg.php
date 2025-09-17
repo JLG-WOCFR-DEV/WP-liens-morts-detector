@@ -295,13 +295,26 @@ function blc_ajax_unlink_callback() {
         wp_send_json_error(['message' => 'Permissions insuffisantes.']);
     }
 
-    $url_to_unlink = wp_http_validate_url($params['url_to_unlink']);
+    $raw_home_url = home_url();
+    $site_url = trailingslashit($raw_home_url);
+    $site_scheme = parse_url($raw_home_url, PHP_URL_SCHEME);
+    if (!is_string($site_scheme) || $site_scheme === '') {
+        $site_scheme = 'http';
+    }
 
-    if (!$url_to_unlink) {
+    $raw_url_to_unlink = $params['url_to_unlink'];
+    $validated_url = wp_http_validate_url($raw_url_to_unlink);
+    $normalized_url = $validated_url ?: blc_normalize_link_url($raw_url_to_unlink, $site_url, $site_scheme);
+
+    $normalized_parts = $normalized_url !== '' ? parse_url($normalized_url) : false;
+    if (!$normalized_url || $normalized_parts === false || empty($normalized_parts['scheme']) || !in_array($normalized_parts['scheme'], ['http', 'https'], true)) {
         wp_send_json_error(['message' => 'URL invalide.']);
     }
 
-    $url_to_unlink = esc_url_raw($url_to_unlink);
+    $url_to_unlink = esc_url_raw($raw_url_to_unlink);
+    if ($url_to_unlink === '') {
+        wp_send_json_error(['message' => 'URL invalide.']);
+    }
 
     $post = get_post($post_id);
     if (!$post) {
