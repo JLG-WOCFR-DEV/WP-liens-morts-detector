@@ -267,18 +267,22 @@ function blc_settings_page() {
 
     $frequency = get_option('blc_frequency', 'daily');
     $timezone_label = '';
+
     if (function_exists('wp_timezone_string')) {
         $timezone_label = (string) wp_timezone_string();
     }
+
     if ('' === $timezone_label && function_exists('wp_timezone')) {
         $timezone_object = wp_timezone();
         if ($timezone_object instanceof DateTimeZone) {
             $timezone_label = $timezone_object->getName();
         }
     }
+
     if ('' === $timezone_label) {
         $timezone_label = (string) get_option('timezone_string', '');
     }
+
     if ('' === $timezone_label) {
         $gmt_offset = get_option('gmt_offset');
         if (is_numeric($gmt_offset) && (float) $gmt_offset !== 0.0) {
@@ -333,14 +337,16 @@ function blc_settings_page() {
                             <input type="time" name="blc_rest_end_hour" value="<?php echo esc_attr($rest_end_hour); ?>">
                             <p class="description">
                                 <?php
-                                $timezone_description = sprintf(
+                                $timezone_information = sprintf(
                                     /* translators: %s: timezone label. */
+                                    __('Fuseau horaire : %s', 'liens-morts-detector-jlg'),
+                                    esc_html($timezone_label)
+                                );
+
+                                $timezone_description = sprintf(
+                                    /* translators: %s: formatted timezone information. */
                                     __('Le scan automatique des <strong>liens</strong> ne s\'exécutera pas durant cette période. %s', 'liens-morts-detector-jlg'),
-                                    sprintf(
-                                        /* translators: %s: timezone label. */
-                                        __('Fuseau horaire : %s', 'liens-morts-detector-jlg'),
-                                        esc_html($timezone_label)
-                                    )
+                                    $timezone_information
                                 );
                                 echo wp_kses(
                                     $timezone_description,
