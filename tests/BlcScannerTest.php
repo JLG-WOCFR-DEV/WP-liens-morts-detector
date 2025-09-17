@@ -56,6 +56,12 @@ class BlcScannerTest extends TestCase
 
     private string $currentHour = '00';
 
+    /** @var array<int, array<string, mixed>> */
+    private array $updatedPosts = [];
+
+    /** @var array{success: bool, data: mixed}|null */
+    private ?array $ajaxResponse = null;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -83,12 +89,30 @@ class BlcScannerTest extends TestCase
         $this->updatedOptions = [];
         $this->serverLoad = [0.5, 0.4, 0.3];
         $this->currentHour = '00';
+        $this->updatedPosts = [];
+        $this->ajaxResponse = null;
         $GLOBALS['wp_query_queue'] = [];
         $GLOBALS['wp_query_last_args'] = [];
 
         Functions\when('get_option')->alias(fn(string $name, $default = false) => $this->options[$name] ?? $default);
         Functions\when('apply_filters')->alias(fn(string $hook, $value, ...$args) => $value);
-        Functions\when('home_url')->justReturn('http://example.com');
+        Functions\when('home_url')->alias(function ($path = '', $scheme = null) {
+            $base = 'https://example.com';
+            if ($path !== '') {
+                return rtrim($base, '/') . '/' . ltrim($path, '/');
+            }
+
+            return $base;
+        });
+        Functions\when('set_url_scheme')->alias(function ($url, $scheme = null) {
+            $scheme = $scheme ?: 'http';
+
+            if (strpos($url, '//') === 0) {
+                return $scheme . ':' . $url;
+            }
+
+            return preg_replace('#^[a-z0-9+.-]+://#i', $scheme . '://', $url);
+        });
         Functions\when('current_time')->alias(function (string $type) {
             if ($type === 'timestamp') {
                 return 1000;
@@ -117,7 +141,7 @@ class BlcScannerTest extends TestCase
         });
         Functions\when('wp_upload_dir')->alias(function () {
             return [
-                'baseurl' => 'http://example.com/wp-content/uploads',
+                'baseurl' => 'https://example.com/wp-content/uploads',
                 'basedir' => sys_get_temp_dir() . '/uploads-test',
             ];
         });
@@ -162,8 +186,32 @@ class BlcScannerTest extends TestCase
 
             return '';
         });
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->justReturn(true);
+        Functions\when('get_post')->alias(fn(int $post_id) => null);
+        Functions\when('wp_http_validate_url')->alias(function ($url) {
+            if (!is_string($url)) {
+                return false;
+            }
+
+            $url = trim($url);
+            if ($url === '') {
+                return false;
+            }
+
+            if (preg_match('#^https?://#i', $url) === 1) {
+                return $url;
+            }
+
+            return false;
+        });
+        Functions\when('esc_url_raw')->alias(fn($url) => is_string($url) ? $url : '');
         Functions\when('update_option')->alias(function (string $option, $value) {
             $this->updatedOptions[$option] = $value;
+            return true;
+        });
+        Functions\when('wp_update_post')->alias(function (array $data, $wp_error = false) {
+            $this->updatedPosts[] = ['data' => $data, 'wp_error' => $wp_error];
             return true;
         });
         Functions\when('wp_schedule_single_event')->alias(function (int $timestamp, string $hook, array $args = [], bool $unique = true) {
@@ -179,8 +227,17 @@ class BlcScannerTest extends TestCase
         Functions\when('time')->justReturn(1000);
         Functions\when('wp_unslash')->alias(fn($value) => $value);
         Functions\when('wp_slash')->alias(fn($value) => $value);
+        Functions\when('wp_send_json_success')->alias(function ($data = null) {
+            $this->ajaxResponse = ['success' => true, 'data' => $data];
+            throw new \RuntimeException('wp_send_json_success');
+        });
+        Functions\when('wp_send_json_error')->alias(function ($data = null) {
+            $this->ajaxResponse = ['success' => false, 'data' => $data];
+            throw new \RuntimeException('wp_send_json_error');
+        });
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-scanner.php';
+        require_once __DIR__ . '/../liens-morts-detector-jlg/liens-morts-detector-jlg.php';
     }
 
     protected function tearDown(): void
@@ -188,6 +245,8 @@ class BlcScannerTest extends TestCase
         Monkey\tearDown();
         parent::tearDown();
         unset($GLOBALS['wp_query_queue'], $GLOBALS['wp_query_last_args']);
+        unset($_POST);
+        $this->ajaxResponse = null;
         global $wpdb;
         $wpdb = null;
     }
@@ -214,6 +273,8 @@ class BlcScannerTest extends TestCase
             public array $queries = [];
             /** @var array<int, array<string, mixed>> */
             public array $inserted = [];
+            /** @var array<int, array<string, mixed>> */
+            public array $deleted = [];
 
             public function query(string $sql)
             {
@@ -225,6 +286,12 @@ class BlcScannerTest extends TestCase
             {
                 $this->inserted[] = ['table' => $table, 'data' => $data, 'formats' => $formats];
                 return true;
+            }
+
+            public function delete(string $table, array $where, array $formats)
+            {
+                $this->deleted[] = ['table' => $table, 'where' => $where, 'formats' => $formats];
+                return 1;
             }
 
             public function prepare(string $query, $args = null): string
@@ -459,6 +526,79 @@ class BlcScannerTest extends TestCase
         $this->assertCount(0, $wpdb->inserted, 'Malformed URLs should be ignored.');
     }
 
+    public function test_blc_perform_check_handles_scheme_relative_urls(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 314,
+            'post_title' => 'CDN Link Post',
+            'post_content' => '<a href="//cdn.example.com/foo">CDN Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('GET', 'https://cdn.example.com/foo', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(1, $this->httpRequests, 'Scheme-relative URLs should be requested once.');
+        $this->assertSame('https://cdn.example.com/foo', $this->httpRequests[0]['url']);
+
+        $this->assertCount(1, $wpdb->inserted, 'Broken scheme-relative URL should be recorded.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('//cdn.example.com/foo', $insert['data']['url'], 'Original URL should be stored for UI consistency.');
+        $this->assertSame('link', $insert['data']['type']);
+        $this->assertSame('CDN Link', $insert['data']['anchor']);
+    }
+
+    public function test_blc_ajax_edit_link_callback_updates_scheme_relative_url(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post_id = 512;
+        $original_content = '<p><a href="//cdn.example.com/foo">CDN Link</a></p>';
+
+        Functions\when('get_post')->alias(function (int $requested_post_id) use ($post_id, $original_content) {
+            if ($requested_post_id === $post_id) {
+                return (object) ['ID' => $post_id, 'post_content' => $original_content];
+            }
+
+            return null;
+        });
+
+        $_POST = [
+            'post_id'    => (string) $post_id,
+            'old_url'    => '//cdn.example.com/foo',
+            'new_url'    => 'https://cdn.example.com/bar',
+            '_ajax_nonce' => 'nonce',
+        ];
+
+        try {
+            blc_ajax_edit_link_callback();
+            $this->fail('Expected wp_send_json_success to terminate execution.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('wp_send_json_success', $exception->getMessage());
+        }
+
+        $this->assertNotNull($this->ajaxResponse, 'AJAX response should be captured.');
+        $this->assertTrue($this->ajaxResponse['success'], 'AJAX call should succeed.');
+
+        $this->assertCount(1, $this->updatedPosts, 'The post content should be updated once.');
+        $update = $this->updatedPosts[0]['data'];
+        $this->assertSame($post_id, $update['ID']);
+        $this->assertStringContainsString('https://cdn.example.com/bar', $update['post_content']);
+        $this->assertStringNotContainsString('//cdn.example.com/foo', $update['post_content']);
+
+        $this->assertCount(1, $wpdb->deleted, 'Original URL should be removed from the broken links table.');
+        $this->assertSame('//cdn.example.com/foo', $wpdb->deleted[0]['where']['url']);
+    }
+
     public function test_blc_perform_check_batches_and_reschedules_next_batch(): void
     {
         global $wpdb;
@@ -542,7 +682,7 @@ class BlcScannerTest extends TestCase
         $post = (object) [
             'ID' => 88,
             'post_title' => 'Images Post',
-            'post_content' => '<img src="http://example.com/wp-content/uploads/2024/05/missing.jpg" />' .
+            'post_content' => '<img src="https://example.com/wp-content/uploads/2024/05/missing.jpg" />' .
                 '<img src="http://cdn.example.com/image.jpg" />',
         ];
 
@@ -575,7 +715,7 @@ class BlcScannerTest extends TestCase
         $post = (object) [
             'ID' => 90,
             'post_title' => 'Traversal Post',
-            'post_content' => '<img src="http://example.com/wp-content/uploads/2024/../secret.jpg" />',
+            'post_content' => '<img src="https://example.com/wp-content/uploads/2024/../secret.jpg" />',
         ];
 
         $GLOBALS['wp_query_queue'][] = [

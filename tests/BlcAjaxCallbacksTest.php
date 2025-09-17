@@ -26,6 +26,19 @@ class BlcAjaxCallbacksTest extends TestCase
             return dirname($file) . '/';
         });
         Functions\when('plugin_dir_url')->justReturn('http://example.com/');
+        Functions\when('home_url')->justReturn('https://example.com');
+        Functions\when('trailingslashit')->alias(function ($value) {
+            return rtrim((string) $value, "\\/\t\n\r\f ") . '/';
+        });
+        Functions\when('set_url_scheme')->alias(function ($url, $scheme = null) {
+            $scheme = $scheme ?: 'http';
+
+            if (strpos($url, '//') === 0) {
+                return $scheme . ':' . $url;
+            }
+
+            return preg_replace('#^[a-z0-9+.-]+://#i', $scheme . '://', $url);
+        });
         Functions\when('wp_unslash')->alias(function ($value) {
             return $value;
         });

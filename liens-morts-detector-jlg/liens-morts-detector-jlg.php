@@ -194,15 +194,27 @@ function blc_ajax_edit_link_callback() {
         wp_send_json_error(['message' => 'Permissions insuffisantes.']);
     }
 
-    $old_url = wp_http_validate_url($params['old_url']);
-    $new_url = wp_http_validate_url($params['new_url']);
+    $raw_home_url = home_url();
+    $site_url = trailingslashit($raw_home_url);
+    $site_scheme = parse_url($raw_home_url, PHP_URL_SCHEME);
+    if (!is_string($site_scheme) || $site_scheme === '') {
+        $site_scheme = 'http';
+    }
 
-    if (!$old_url || !$new_url) {
+    $raw_old_url = $params['old_url'];
+    $raw_new_url = $params['new_url'];
+
+    $validated_old_url = wp_http_validate_url($raw_old_url);
+    $normalized_old_url = $validated_old_url ?: blc_normalize_link_url($raw_old_url, $site_url, $site_scheme);
+    $validated_new_url = wp_http_validate_url($raw_new_url);
+
+    $normalized_parts = $normalized_old_url !== '' ? parse_url($normalized_old_url) : false;
+    if (!$normalized_old_url || $normalized_parts === false || empty($normalized_parts['scheme']) || !in_array($normalized_parts['scheme'], ['http', 'https'], true) || !$validated_new_url) {
         wp_send_json_error(['message' => 'URL invalide.']);
     }
 
-    $old_url = esc_url_raw($old_url);
-    $new_url = esc_url_raw($new_url);
+    $old_url = esc_url_raw($raw_old_url);
+    $new_url = esc_url_raw($validated_new_url);
 
     $post = get_post($post_id);
     if (!$post) {
