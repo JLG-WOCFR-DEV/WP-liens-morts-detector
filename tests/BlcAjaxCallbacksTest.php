@@ -39,6 +39,11 @@ class BlcAjaxCallbacksTest extends TestCase
 
             return preg_replace('#^[a-z0-9+.-]+://#i', $scheme . '://', $url);
         });
+        Functions\when('wp_kses_decode_entities')->alias(function ($value, $keep_special_chars = false, $charset = null) {
+            $charset = $charset ?: 'UTF-8';
+
+            return html_entity_decode((string) $value, ENT_QUOTES, $charset);
+        });
         Functions\when('wp_unslash')->alias(function ($value) {
             return $value;
         });
@@ -223,6 +228,68 @@ class BlcAjaxCallbacksTest extends TestCase
         $this->assertSame($initial, libxml_use_internal_errors());
     }
 
+    public function test_edit_link_preserves_scheme_relative_url_for_xpath_and_database(): void
+    {
+        $_POST['post_id'] = 12;
+        $_POST['old_url'] = '//example.com/cdn/asset.js';
+        $_POST['new_url'] = 'https://cdn.example.com/asset.js';
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('current_user_can')->once()->with('edit_post', 12)->andReturn(true);
+
+        $post = (object) ['post_content' => '<p><a href="//example.com/cdn/asset.js">CDN asset</a></p>'];
+        Functions\expect('get_post')->once()->with(12)->andReturn($post);
+        Functions\when('esc_url_raw')->alias(function ($url) {
+            return $url;
+        });
+
+        $captured_update = null;
+        Functions\expect('wp_update_post')->once()->andReturnUsing(function () use (&$captured_update) {
+            $captured_update = func_get_args();
+            return true;
+        });
+
+        global $wpdb;
+        $wpdb = new class {
+            public $prefix = '';
+            public $delete_args = null;
+            public function delete($table, $where, $formats)
+            {
+                $this->delete_args = [$table, $where, $formats];
+                return true;
+            }
+        };
+
+        Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
+            throw new \Exception('success');
+        });
+
+        $initial = libxml_use_internal_errors();
+
+        try {
+            blc_ajax_edit_link_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $e) {
+            $this->assertSame('success', $e->getMessage());
+        }
+
+        $this->assertSame($initial, libxml_use_internal_errors());
+        $this->assertIsArray($captured_update);
+        $this->assertCount(2, $captured_update);
+        $this->assertIsArray($captured_update[0]);
+        $this->assertSame(12, $captured_update[0]['ID']);
+        $this->assertStringContainsString('https://cdn.example.com/asset.js', $captured_update[0]['post_content']);
+        $this->assertStringNotContainsString('//example.com/cdn/asset.js', $captured_update[0]['post_content']);
+
+        $this->assertIsArray($wpdb->delete_args);
+        $this->assertSame('blc_broken_links', $wpdb->delete_args[0]);
+        $this->assertSame(
+            ['post_id' => 12, 'url' => '//example.com/cdn/asset.js', 'type' => 'link'],
+            $wpdb->delete_args[1]
+        );
+        $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);
+    }
+
     public function test_unlink_denied_for_user_without_permission(): void
     {
         $_POST['post_id'] = 3;
@@ -335,6 +402,67 @@ class BlcAjaxCallbacksTest extends TestCase
         $this->assertSame('blc_broken_links', $wpdb->delete_args[0]);
         $this->assertSame(
             ['post_id' => 7, 'url' => '/relative/path', 'type' => 'link'],
+            $wpdb->delete_args[1]
+        );
+        $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);
+    }
+
+    public function test_unlink_scheme_relative_url_updates_content_and_database(): void
+    {
+        $_POST['post_id'] = 8;
+        $_POST['url_to_unlink'] = '//example.com/image.png';
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('current_user_can')->once()->with('edit_post', 8)->andReturn(true);
+
+        $post = (object) ['post_content' => '<p>Image: <a href="//example.com/image.png">logo</a></p>'];
+        Functions\expect('get_post')->once()->with(8)->andReturn($post);
+        Functions\when('esc_url_raw')->alias(function ($url) {
+            return $url;
+        });
+
+        $captured_update = null;
+        Functions\expect('wp_update_post')->once()->andReturnUsing(function () use (&$captured_update) {
+            $captured_update = func_get_args();
+            return true;
+        });
+
+        global $wpdb;
+        $wpdb = new class {
+            public $prefix = '';
+            public $delete_args = null;
+            public function delete($table, $where, $formats)
+            {
+                $this->delete_args = [$table, $where, $formats];
+                return true;
+            }
+        };
+
+        Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
+            throw new \Exception('success');
+        });
+
+        $initial = libxml_use_internal_errors();
+
+        try {
+            blc_ajax_unlink_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $e) {
+            $this->assertSame('success', $e->getMessage());
+        }
+
+        $this->assertSame($initial, libxml_use_internal_errors());
+        $this->assertIsArray($captured_update);
+        $this->assertCount(2, $captured_update);
+        $this->assertIsArray($captured_update[0]);
+        $this->assertSame(8, $captured_update[0]['ID']);
+        $this->assertStringNotContainsString('<a href="//example.com/image.png">', $captured_update[0]['post_content']);
+        $this->assertStringContainsString('Image: logo', preg_replace('/\s+/', ' ', trim($captured_update[0]['post_content'])));
+
+        $this->assertIsArray($wpdb->delete_args);
+        $this->assertSame('blc_broken_links', $wpdb->delete_args[0]);
+        $this->assertSame(
+            ['post_id' => 8, 'url' => '//example.com/image.png', 'type' => 'link'],
             $wpdb->delete_args[1]
         );
         $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);

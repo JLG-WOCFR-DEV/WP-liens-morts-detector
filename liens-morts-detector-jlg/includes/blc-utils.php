@@ -317,3 +317,21 @@ function blc_is_safe_remote_host($host) {
 
     return true;
 }
+
+/**
+ * Sanitize a URL received from user input while preserving scheme-relative prefixes.
+ *
+ * The plugin stores the original representation of scanned links, including URLs starting
+ * with "//". WordPress' default esc_url_raw() helper prepends the site scheme to such
+ * values, preventing XPath lookups from matching the original attribute. This helper keeps
+ * the raw prefix intact while removing leading/trailing whitespace and decoding HTML
+ * entities.
+ *
+ * @param string $url Raw URL submitted through an AJAX request.
+ * @return string Sanitized URL suitable for DOM queries and database lookups.
+ */
+function blc_prepare_posted_url($url) {
+    $url = wp_kses_decode_entities((string) $url);
+
+    return trim($url);
+}
