@@ -204,6 +204,8 @@ function blc_ajax_edit_link_callback() {
     $raw_old_url = $params['old_url'];
     $raw_new_url = $params['new_url'];
 
+    $stored_old_url = blc_prepare_url_for_storage($raw_old_url);
+
     $validated_old_url = wp_http_validate_url($raw_old_url);
     $normalized_old_url = $validated_old_url ?: blc_normalize_link_url($raw_old_url, $site_url, $site_scheme);
     $validated_new_url = wp_http_validate_url($raw_new_url);
@@ -265,7 +267,7 @@ function blc_ajax_edit_link_callback() {
     $table_name = $wpdb->prefix . 'blc_broken_links';
     $delete_result = $wpdb->delete(
         $table_name,
-        ['post_id' => $post_id, 'url' => $old_url, 'type' => 'link'],
+        ['post_id' => $post_id, 'url' => $stored_old_url, 'type' => 'link'],
         ['%d', '%s', '%s']
     );
 
@@ -303,6 +305,7 @@ function blc_ajax_unlink_callback() {
     }
 
     $raw_url_to_unlink = $params['url_to_unlink'];
+    $stored_url_to_unlink = blc_prepare_url_for_storage($raw_url_to_unlink);
     $validated_url = wp_http_validate_url($raw_url_to_unlink);
     $normalized_url = $validated_url ?: blc_normalize_link_url($raw_url_to_unlink, $site_url, $site_scheme);
 
@@ -369,7 +372,7 @@ function blc_ajax_unlink_callback() {
     $table_name = $wpdb->prefix . 'blc_broken_links';
     $delete_result = $wpdb->delete(
         $table_name,
-        ['post_id' => $post_id, 'url' => $url_to_unlink, 'type' => 'link'],
+        ['post_id' => $post_id, 'url' => $stored_url_to_unlink, 'type' => 'link'],
         ['%d', '%s', '%s']
     );
 
