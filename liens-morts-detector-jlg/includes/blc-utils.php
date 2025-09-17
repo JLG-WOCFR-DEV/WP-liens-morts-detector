@@ -53,6 +53,80 @@ function blc_load_dom_from_post($post_content) {
     ];
 }
 
+
+/**
+ * Normalize and truncate a string before storing it in the database.
+ *
+ * @param string $value               Raw value to clean.
+ * @param int    $max_length          Maximum allowed length.
+ * @param bool   $normalize_whitespace Whether to collapse consecutive whitespace.
+ *
+ * @return string Cleaned value trimmed to the requested length.
+ */
+function blc_truncate_for_storage($value, $max_length, $normalize_whitespace = false) {
+    $value = trim((string) $value);
+
+    if ($value === '') {
+        return '';
+    }
+
+    if ($normalize_whitespace) {
+        $normalized = preg_replace('/\s+/u', ' ', $value);
+        if (is_string($normalized)) {
+            $value = trim($normalized);
+        } else {
+            $fallback = preg_replace('/\s+/', ' ', $value);
+            if (is_string($fallback)) {
+                $value = trim($fallback);
+            }
+        }
+    }
+
+    $max_length = (int) $max_length;
+    if ($max_length <= 0) {
+        return $value;
+    }
+
+    if (function_exists('mb_strlen') && function_exists('mb_substr')) {
+        if (mb_strlen($value, 'UTF-8') > $max_length) {
+            $value = mb_substr($value, 0, $max_length, 'UTF-8');
+        }
+    } else {
+        if (strlen($value) > $max_length) {
+            $value = substr($value, 0, $max_length);
+        }
+    }
+
+    return $value;
+}
+
+/**
+ * Prepare a URL for storage in the database by trimming and truncating it.
+ *
+ * @param string $url Raw URL captured during the scan or provided by the UI.
+ *
+ * @return string URL cleaned to match the storage column length.
+ */
+function blc_prepare_url_for_storage($url) {
+    $max_length = defined('BLC_URL_MAX_LENGTH') ? (int) BLC_URL_MAX_LENGTH : 255;
+
+    return blc_truncate_for_storage($url, $max_length, false);
+}
+
+/**
+ * Prepare a generic text field (anchor, post title, etc.) for storage.
+ *
+ * @param string $text Raw text captured during the scan or provided by the UI.
+ *
+ * @return string Text cleaned to match the storage column length.
+ */
+function blc_prepare_text_field_for_storage($text) {
+    $max_length = defined('BLC_TEXT_FIELD_LENGTH') ? (int) BLC_TEXT_FIELD_LENGTH : 255;
+
+    return blc_truncate_for_storage($text, $max_length, true);
+}
+
+
 /**
  * Normalize a value received from an <input type="time"> field to a two-digit hour string.
  *

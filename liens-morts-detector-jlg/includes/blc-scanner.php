@@ -265,6 +265,8 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
     foreach ($posts as $post) {
         if ($debug_mode) { error_log("Analyse LIENS pour : '" . $post->post_title . "'"); }
 
+        $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
+
         $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
         if (!$dom instanceof DOMDocument) {
             continue;
@@ -277,6 +279,9 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
             $anchor_text = wp_strip_all_tags($link_node->textContent);
             $anchor_text = trim(preg_replace('/\s+/u', ' ', $anchor_text));
             if ($anchor_text === '') { $anchor_text = '[Lien sans texte]'; }
+
+            $url_for_storage    = blc_prepare_url_for_storage($original_url);
+            $anchor_for_storage = blc_prepare_text_field_for_storage($anchor_text);
 
             $normalized_url = blc_normalize_link_url($original_url, $site_url, $site_scheme);
             if ($normalized_url === '') {
@@ -303,10 +308,10 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
                         $wpdb->insert(
                             $table_name,
                             [
-                                'url'        => $original_url,
-                                'anchor'     => $anchor_text,
+                                'url'        => $url_for_storage,
+                                'anchor'     => $anchor_for_storage,
                                 'post_id'    => $post->ID,
-                                'post_title' => $post->post_title,
+                                'post_title' => $post_title_for_storage,
                                 'type'       => 'link',
                             ],
                             ['%s', '%s', '%d', '%s', '%s']
@@ -344,10 +349,10 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
                 $wpdb->insert(
                     $table_name,
                     [
-                        'url'        => $original_url,
-                        'anchor'     => $anchor_text,
+                        'url'        => $url_for_storage,
+                        'anchor'     => $anchor_for_storage,
                         'post_id'    => $post->ID,
-                        'post_title' => $post->post_title,
+                        'post_title' => $post_title_for_storage,
                         'type'       => 'link',
                     ],
                     ['%s', '%s', '%d', '%s', '%s']
@@ -400,6 +405,8 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
 
     foreach ($posts as $post) {
         if ($debug_mode) { error_log("Analyse IMAGES pour : '" . $post->post_title . "'"); }
+
+        $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
 
         $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
         if (!$dom instanceof DOMDocument) {
@@ -461,13 +468,15 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
 
             if (!file_exists($file_path)) {
                 if ($debug_mode) { error_log("  -> Image Cassée Trouvée : " . $image_url); }
+                $url_for_storage    = blc_prepare_url_for_storage($original_image_url);
+                $anchor_for_storage = blc_prepare_text_field_for_storage(basename($image_url));
                 $wpdb->insert(
                     $table_name,
                     [
-                        'url'        => $original_image_url,
-                        'anchor'     => basename($image_url),
+                        'url'        => $url_for_storage,
+                        'anchor'     => $anchor_for_storage,
                         'post_id'    => $post->ID,
-                        'post_title' => $post->post_title,
+                        'post_title' => $post_title_for_storage,
                         'type'       => 'image',
                     ],
                     ['%s', '%s', '%d', '%s', '%s']
