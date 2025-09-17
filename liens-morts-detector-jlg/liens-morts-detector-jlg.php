@@ -271,7 +271,7 @@ function blc_ajax_edit_link_callback() {
         ['%d', '%s', '%s']
     );
 
-    if (!$delete_result || is_wp_error($delete_result)) {
+    if ($delete_result === false || is_wp_error($delete_result)) {
         $error_message = 'La suppression du lien dans la base de données a échoué.';
         if (is_wp_error($delete_result)) {
             $error_message .= ' ' . $delete_result->get_error_message();
@@ -376,7 +376,7 @@ function blc_ajax_unlink_callback() {
         ['%d', '%s', '%s']
     );
 
-    if (!$delete_result || is_wp_error($delete_result)) {
+    if ($delete_result === false || is_wp_error($delete_result)) {
         $error_message = 'La suppression du lien dans la base de données a échoué.';
         if (is_wp_error($delete_result)) {
             $error_message .= ' ' . $delete_result->get_error_message();
