@@ -371,6 +371,32 @@ class BlcScannerTest extends TestCase
         $this->assertSame(20 * 3600, $event['timestamp']);
     }
 
+    public function test_blc_perform_check_reschedules_during_overnight_rest_period(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_rest_start_hour'] = '22';
+        $this->options['blc_rest_end_hour']   = '06';
+        $this->currentHour                    = '23';
+        $this->utcNow                         = 23 * 3600;
+
+        blc_perform_check(5, false);
+
+        $this->assertSame([], $GLOBALS['wp_query_last_args'], 'No query should run during the overnight rest window.');
+        $this->assertSame([], $wpdb->queries, 'Database queries must not be executed during rest hours.');
+        $this->assertSame([], $wpdb->inserted, 'No records should be inserted during rest hours.');
+        $this->assertSame([], $wpdb->deleted, 'No deletions should be issued during rest hours.');
+
+        $this->assertCount(1, $this->scheduledEvents, 'A rescheduled scan should be queued when inside the rest window.');
+        $event = $this->scheduledEvents[0];
+
+        $this->assertSame('blc_check_batch', $event['hook']);
+        $this->assertSame([5, false], $event['args']);
+        $this->assertGreaterThan($this->utcNow, $event['timestamp']);
+        $this->assertSame(30 * 3600, $event['timestamp']);
+    }
+
     public function test_blc_perform_check_runs_outside_rest_period(): void
     {
         global $wpdb;
