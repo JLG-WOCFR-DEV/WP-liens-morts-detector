@@ -146,7 +146,7 @@ function blc_activation() {
     // On vérifie si une tâche est déjà planifiée pour éviter les doublons
     if (!wp_next_scheduled('blc_check_links')) {
         // Planifie l'événement : quand commencer (maintenant), à quelle fréquence, et quelle action exécuter
-        wp_schedule_event(current_time('timestamp'), $frequency, 'blc_check_links');
+        wp_schedule_event(time(), $frequency, 'blc_check_links');
     }
 }
 
