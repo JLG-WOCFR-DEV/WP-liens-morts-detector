@@ -6,11 +6,7 @@ if (!defined('ABSPATH')) {
 }
 
 if (!defined('BLC_DB_VERSION')) {
-    define('BLC_DB_VERSION', '1.2.0');
-}
-
-if (!defined('BLC_URL_MAX_LENGTH')) {
-    define('BLC_URL_MAX_LENGTH', 255);
+    define('BLC_DB_VERSION', '1.3.0');
 }
 
 if (!defined('BLC_TEXT_FIELD_LENGTH')) {
@@ -36,9 +32,14 @@ function blc_maybe_upgrade_database() {
         return;
     }
 
-    blc_migrate_column_to_varchar($table_name, 'url', BLC_URL_MAX_LENGTH, false);
-    blc_migrate_column_to_varchar($table_name, 'anchor', BLC_TEXT_FIELD_LENGTH, true);
-    blc_migrate_column_to_varchar($table_name, 'post_title', BLC_TEXT_FIELD_LENGTH, true);
+    if (!$installed_version || version_compare($installed_version, '1.2.0', '<')) {
+        blc_migrate_column_to_varchar($table_name, 'anchor', BLC_TEXT_FIELD_LENGTH, true);
+        blc_migrate_column_to_varchar($table_name, 'post_title', BLC_TEXT_FIELD_LENGTH, true);
+    }
+
+    if (!$installed_version || version_compare($installed_version, '1.3.0', '<')) {
+        blc_migrate_column_to_text($table_name, 'url', 'longtext', false);
+    }
 
     update_option('blc_plugin_db_version', BLC_DB_VERSION);
 }
@@ -114,6 +115,58 @@ function blc_migrate_column_to_varchar($table_name, $column_name, $target_length
 }
 
 /**
+ * Convertit une colonne en type TEXT si elle ne l'est pas déjà.
+ *
+ * @param string $table_name  Nom de la table.
+ * @param string $column_name Nom de la colonne à mettre à jour.
+ * @param string $target_type Type TEXT cible (TEXT, LONGTEXT, etc.).
+ * @param bool   $is_nullable Indique si la colonne peut être NULL.
+ */
+function blc_migrate_column_to_text($table_name, $column_name, $target_type = 'longtext', $is_nullable = false) {
+    global $wpdb;
+
+    $table  = esc_sql($table_name);
+    $column = esc_sql($column_name);
+
+    $column_definition = $wpdb->get_row(
+        $wpdb->prepare("SHOW COLUMNS FROM `$table` LIKE %s", $column)
+    );
+
+    if (!$column_definition) {
+        return;
+    }
+
+    $current_type = strtolower($column_definition->Type);
+    $target_type  = strtolower(trim((string) $target_type));
+
+    if ($target_type === '') {
+        $target_type = 'text';
+    }
+
+    if (strpos($current_type, $target_type) !== false) {
+        return;
+    }
+
+    if (strpos($current_type, 'text') !== false && $target_type === 'text') {
+        return;
+    }
+
+    $null_sql    = $is_nullable ? 'NULL' : 'NOT NULL';
+    $default_sql = $is_nullable ? ' DEFAULT NULL' : '';
+
+    $wpdb->query(
+        sprintf(
+            "ALTER TABLE `%s` MODIFY `%s` %s %s%s",
+            $table,
+            $column,
+            strtoupper($target_type),
+            $null_sql,
+            $default_sql
+        )
+    );
+}
+
+/**
  * S'exécute à l'activation de l'extension.
  * Met en place la tâche planifiée (cron) pour les liens si elle n'existe pas déjà.
  */
@@ -125,7 +178,7 @@ function blc_activation() {
     $charset_collate = $wpdb->get_charset_collate();
     $sql             = "CREATE TABLE $table_name (
         id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-        url varchar(" . BLC_URL_MAX_LENGTH . ") NOT NULL,
+        url longtext NOT NULL,
         anchor varchar(" . BLC_TEXT_FIELD_LENGTH . ") NULL,
         post_id bigint(20) unsigned NOT NULL,
         post_title varchar(" . BLC_TEXT_FIELD_LENGTH . ") NULL,

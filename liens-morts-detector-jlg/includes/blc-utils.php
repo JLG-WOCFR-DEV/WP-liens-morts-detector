@@ -101,16 +101,14 @@ function blc_truncate_for_storage($value, $max_length, $normalize_whitespace = f
 }
 
 /**
- * Prepare a URL for storage in the database by trimming and truncating it.
+ * Prepare a URL for storage in the database by trimming it.
  *
  * @param string $url Raw URL captured during the scan or provided by the UI.
  *
- * @return string URL cleaned to match the storage column length.
+ * @return string URL cleaned while preserving its full length.
  */
 function blc_prepare_url_for_storage($url) {
-    $max_length = defined('BLC_URL_MAX_LENGTH') ? (int) BLC_URL_MAX_LENGTH : 255;
-
-    return blc_truncate_for_storage($url, $max_length, false);
+    return blc_truncate_for_storage($url, 0, false);
 }
 
 /**
