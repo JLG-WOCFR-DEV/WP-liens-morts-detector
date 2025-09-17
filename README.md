@@ -44,5 +44,10 @@ add_filter('blc_load_retry_delay', function (int $delay): int {
 - `assets/` : ressources CSS et JS pour l’administration.
 - `languages/` : fichiers de traduction.
 
+## Développement
+- PHP 7.3 ou supérieur et [Composer](https://getcomposer.org/) sont requis pour installer les dépendances de développement.
+- Installer les dépendances : `composer install`.
+- Exécuter la suite de tests : `vendor/bin/phpunit`.
+
 ## Auteur
 Jérôme Le Gousse
