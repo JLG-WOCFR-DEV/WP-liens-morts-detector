@@ -209,14 +209,26 @@ function blc_ajax_edit_link_callback() {
     $validated_old_url = wp_http_validate_url($raw_old_url);
     $normalized_old_url = $validated_old_url ?: blc_normalize_link_url($raw_old_url, $site_url, $site_scheme);
     $validated_new_url = wp_http_validate_url($raw_new_url);
+    $normalized_new_url = $validated_new_url ?: blc_normalize_link_url($raw_new_url, $site_url, $site_scheme);
 
     $normalized_parts = $normalized_old_url !== '' ? parse_url($normalized_old_url) : false;
-    if (!$normalized_old_url || $normalized_parts === false || empty($normalized_parts['scheme']) || !in_array($normalized_parts['scheme'], ['http', 'https'], true) || !$validated_new_url) {
+    $normalized_new_parts = $normalized_new_url !== '' ? parse_url($normalized_new_url) : false;
+    $normalized_new_scheme = $normalized_new_parts !== false ? ($normalized_new_parts['scheme'] ?? null) : null;
+    if (
+        !$normalized_old_url ||
+        $normalized_parts === false ||
+        empty($normalized_parts['scheme']) ||
+        !in_array($normalized_parts['scheme'], ['http', 'https'], true) ||
+        !$normalized_new_url ||
+        $normalized_new_parts === false ||
+        empty($normalized_new_scheme) ||
+        !in_array($normalized_new_scheme, ['http', 'https'], true)
+    ) {
         wp_send_json_error(['message' => 'URL invalide.']);
     }
 
     $old_url = blc_prepare_posted_url($raw_old_url);
-    $new_url = esc_url_raw($validated_new_url);
+    $new_url = blc_prepare_posted_url($raw_new_url);
 
     $post = get_post($post_id);
     if (!$post) {

@@ -290,6 +290,102 @@ class BlcAjaxCallbacksTest extends TestCase
         $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);
     }
 
+    public function test_edit_link_accepts_relative_new_url_and_preserves_representation(): void
+    {
+        $_POST['post_id'] = 21;
+        $_POST['old_url'] = 'http://old.example.com/page';
+        $_POST['new_url'] = '/chemin-interne';
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('current_user_can')->once()->with('edit_post', 21)->andReturn(true);
+
+        $post = (object) ['post_content' => '<div><a href="http://old.example.com/page">Ancien lien</a></div>'];
+        Functions\expect('get_post')->once()->with(21)->andReturn($post);
+
+        $captured_update = null;
+        Functions\expect('wp_update_post')->once()->andReturnUsing(function () use (&$captured_update) {
+            $captured_update = func_get_args();
+            return true;
+        });
+
+        global $wpdb;
+        $wpdb = new class {
+            public $prefix = '';
+            public function delete($table, $where, $formats)
+            {
+                return true;
+            }
+        };
+
+        Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
+            throw new \Exception('success');
+        });
+
+        $initial = libxml_use_internal_errors();
+
+        try {
+            blc_ajax_edit_link_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $e) {
+            $this->assertSame('success', $e->getMessage());
+        }
+
+        $this->assertSame($initial, libxml_use_internal_errors());
+        $this->assertIsArray($captured_update);
+        $this->assertCount(2, $captured_update);
+        $this->assertSame(21, $captured_update[0]['ID']);
+        $this->assertStringContainsString('href=\\"/chemin-interne\\"', $captured_update[0]['post_content']);
+        $this->assertStringNotContainsString('http://old.example.com/page', $captured_update[0]['post_content']);
+    }
+
+    public function test_edit_link_accepts_scheme_relative_new_url_and_preserves_representation(): void
+    {
+        $_POST['post_id'] = 22;
+        $_POST['old_url'] = 'https://example.com/script.js';
+        $_POST['new_url'] = '//exemple.com/ressource.js';
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('current_user_can')->once()->with('edit_post', 22)->andReturn(true);
+
+        $post = (object) ['post_content' => '<p><a href="https://example.com/script.js">Script</a></p>'];
+        Functions\expect('get_post')->once()->with(22)->andReturn($post);
+
+        $captured_update = null;
+        Functions\expect('wp_update_post')->once()->andReturnUsing(function () use (&$captured_update) {
+            $captured_update = func_get_args();
+            return true;
+        });
+
+        global $wpdb;
+        $wpdb = new class {
+            public $prefix = '';
+            public function delete($table, $where, $formats)
+            {
+                return true;
+            }
+        };
+
+        Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
+            throw new \Exception('success');
+        });
+
+        $initial = libxml_use_internal_errors();
+
+        try {
+            blc_ajax_edit_link_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $e) {
+            $this->assertSame('success', $e->getMessage());
+        }
+
+        $this->assertSame($initial, libxml_use_internal_errors());
+        $this->assertIsArray($captured_update);
+        $this->assertCount(2, $captured_update);
+        $this->assertSame(22, $captured_update[0]['ID']);
+        $this->assertStringContainsString('href=\\"//exemple.com/ressource.js\\"', $captured_update[0]['post_content']);
+        $this->assertStringNotContainsString('https://example.com/script.js', $captured_update[0]['post_content']);
+    }
+
     public function test_unlink_denied_for_user_without_permission(): void
     {
         $_POST['post_id'] = 3;
