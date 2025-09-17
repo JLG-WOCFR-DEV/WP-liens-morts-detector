@@ -215,7 +215,7 @@ function blc_ajax_edit_link_callback() {
         wp_send_json_error(['message' => 'URL invalide.']);
     }
 
-    $old_url = esc_url_raw($raw_old_url);
+    $old_url = blc_prepare_posted_url($raw_old_url);
     $new_url = esc_url_raw($validated_new_url);
 
     $post = get_post($post_id);
@@ -314,7 +314,7 @@ function blc_ajax_unlink_callback() {
         wp_send_json_error(['message' => 'URL invalide.']);
     }
 
-    $url_to_unlink = esc_url_raw($raw_url_to_unlink);
+    $url_to_unlink = blc_prepare_posted_url($raw_url_to_unlink);
     if ($url_to_unlink === '') {
         wp_send_json_error(['message' => 'URL invalide.']);
     }
