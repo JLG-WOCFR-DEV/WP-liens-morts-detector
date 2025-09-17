@@ -47,8 +47,14 @@ class BlcAjaxCallbacksTest extends TestCase
         Functions\when('wp_unslash')->alias(function ($value) {
             return $value;
         });
+        Functions\when('wp_slash')->alias(function ($value) {
+            return $value;
+        });
         Functions\when('wp_http_validate_url')->alias(function ($url) {
             return filter_var($url, FILTER_VALIDATE_URL) ? $url : false;
+        });
+        Functions\when('is_wp_error')->alias(function () {
+            return false;
         });
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/liens-morts-detector-jlg.php';
@@ -288,6 +294,99 @@ class BlcAjaxCallbacksTest extends TestCase
             $wpdb->delete_args[1]
         );
         $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);
+    }
+
+    public function test_edit_and_unlink_handle_long_urls(): void
+    {
+        $long_old_url = 'https://example.com/' . str_repeat('very-long-path/', 16) . '?query=' . str_repeat('a', 140);
+        $long_new_url = 'https://cdn.example.net/' . str_repeat('another-segment/', 16) . '?token=' . str_repeat('b', 140);
+
+        $this->assertGreaterThan(255, strlen($long_old_url));
+        $this->assertGreaterThan(255, strlen($long_new_url));
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(function ($capability, $post_id) {
+            return $capability === 'edit_post';
+        });
+        Functions\when('esc_url_raw')->alias(function ($url) {
+            return $url;
+        });
+        Functions\when('wp_send_json_error')->alias(function () {
+            throw new \RuntimeException('error');
+        });
+
+        $posts = [
+            (object) ['post_content' => '<p><a href="' . $long_old_url . '">Long link</a></p>'],
+            (object) ['post_content' => '<p><a href="' . $long_new_url . '">Long link</a></p>'],
+        ];
+
+        Functions\when('get_post')->alias(function () use (&$posts) {
+            return array_shift($posts);
+        });
+
+        $update_calls = [];
+        Functions\when('wp_update_post')->alias(function () use (&$update_calls) {
+            $update_calls[] = func_get_args();
+            return true;
+        });
+
+        $success_calls = 0;
+        Functions\when('wp_send_json_success')->alias(function () use (&$success_calls) {
+            $success_calls++;
+            throw new \RuntimeException('success-' . $success_calls);
+        });
+
+        global $wpdb;
+        $wpdb = new class {
+            public $prefix = 'wp_';
+            public $delete_calls = [];
+            public function delete($table, $where, $formats)
+            {
+                $this->delete_calls[] = [$table, $where, $formats];
+                return true;
+            }
+        };
+
+        $_POST = [
+            'post_id' => 42,
+            'old_url' => $long_old_url,
+            'new_url' => $long_new_url,
+        ];
+
+        try {
+            blc_ajax_edit_link_callback();
+            $this->fail('Expected the edit callback to signal success.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('success-1', $exception->getMessage());
+        }
+
+        $this->assertSame(1, $success_calls);
+        $this->assertCount(1, $update_calls);
+        $this->assertSame(1, count($wpdb->delete_calls));
+        $this->assertSame('wp_blc_broken_links', $wpdb->delete_calls[0][0]);
+        $this->assertSame($long_old_url, $wpdb->delete_calls[0][1]['url']);
+        $this->assertGreaterThan(255, strlen($wpdb->delete_calls[0][1]['url']));
+        $this->assertStringContainsString($long_new_url, $update_calls[0][0]['post_content']);
+        $this->assertStringNotContainsString($long_old_url, $update_calls[0][0]['post_content']);
+
+        $_POST = [
+            'post_id' => 42,
+            'url_to_unlink' => $long_new_url,
+        ];
+
+        try {
+            blc_ajax_unlink_callback();
+            $this->fail('Expected the unlink callback to signal success.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('success-2', $exception->getMessage());
+        }
+
+        $this->assertSame(2, $success_calls);
+        $this->assertCount(2, $update_calls);
+        $this->assertSame(2, count($wpdb->delete_calls));
+        $this->assertSame($long_new_url, $wpdb->delete_calls[1][1]['url']);
+        $this->assertStringNotContainsString($long_new_url, $update_calls[1][0]['post_content']);
+        $this->assertStringContainsString('Long link', $update_calls[1][0]['post_content']);
     }
 
     public function test_unlink_denied_for_user_without_permission(): void
