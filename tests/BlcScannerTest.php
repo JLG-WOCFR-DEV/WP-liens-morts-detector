@@ -432,6 +432,7 @@ class BlcScannerTest extends TestCase
         Functions\when('wp_timezone')->alias(fn() => new \DateTimeZone('Europe/Paris'));
         Functions\when('wp_timezone_string')->alias(fn() => 'Europe/Paris');
 
+        $this->utcNow = 7200;
         $this->options['blc_last_check_time'] = $this->utcNow - 3600;
         $this->options['blc_scan_method'] = 'precise';
 
@@ -460,6 +461,49 @@ class BlcScannerTest extends TestCase
         $this->assertSame($expectedThreshold, $lastArgs['date_query'][0]['after']);
 
         $this->assertSame($this->utcNow, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated using GMT timestamps.');
+    }
+
+    public function test_blc_perform_check_rescans_recent_posts_with_timezone_offset(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        Functions\when('wp_timezone')->alias(fn() => new \DateTimeZone('America/New_York'));
+        Functions\when('wp_timezone_string')->alias(fn() => 'America/New_York');
+
+        $this->options['blc_last_check_time'] = $this->utcNow - 600;
+        $this->options['blc_scan_method'] = 'precise';
+
+        $post = (object) [
+            'ID' => 405,
+            'post_title' => 'Modified After Last Scan',
+            'post_content' => '<a href="http://example.org/missing">Broken Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('GET', 'http://example.org/missing', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertNotEmpty($this->httpRequests, 'Incremental scans should request links from recently modified posts.');
+        $this->assertSame('http://example.org/missing', $this->httpRequests[0]['url']);
+
+        $this->assertCount(1, $wpdb->inserted, 'A broken link detected during an incremental scan should be recorded.');
+
+        $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should be called to fetch recently modified posts.');
+        $lastArgs = end($GLOBALS['wp_query_last_args']);
+        $this->assertIsArray($lastArgs, 'WP_Query arguments should be an array for incremental scans.');
+
+        $expectedThreshold = gmdate('Y-m-d H:i:s', $this->options['blc_last_check_time']);
+        $this->assertArrayHasKey('date_query', $lastArgs, 'Incremental scans must restrict posts by modification date in GMT.');
+        $this->assertSame('post_modified_gmt', $lastArgs['date_query'][0]['column']);
+        $this->assertSame($expectedThreshold, $lastArgs['date_query'][0]['after']);
+
+        $this->assertSame($this->utcNow, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated in GMT after the scan.');
     }
 
     public function test_blc_perform_check_skips_excluded_domains_case_insensitively(): void
