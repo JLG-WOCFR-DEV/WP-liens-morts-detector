@@ -216,14 +216,15 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
 
     // --- 3. Récupération des données et préparation ---
     $batch_size      = 20;
-    $last_check_time = get_option('blc_last_check_time', 0);
+    $last_check_time = (int) get_option('blc_last_check_time', 0);
     $table_name      = $wpdb->prefix . 'blc_broken_links';
 
     $args = ['post_type' => 'any', 'post_status' => 'publish', 'posts_per_page' => $batch_size, 'paged' => $batch + 1];
-    if (!$is_full_scan && $last_check_time) {
+    if (!$is_full_scan && $last_check_time > 0) {
+        $threshold = gmdate('Y-m-d H:i:s', $last_check_time);
         $args['date_query'] = [[
             'column' => 'post_modified_gmt',
-            'after'  => gmdate('Y-m-d H:i:s', $last_check_time),
+            'after'  => $threshold,
         ]];
     }
 
