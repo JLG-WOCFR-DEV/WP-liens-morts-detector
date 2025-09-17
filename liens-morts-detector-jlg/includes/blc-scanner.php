@@ -221,7 +221,10 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
 
     $args = ['post_type' => 'any', 'post_status' => 'publish', 'posts_per_page' => $batch_size, 'paged' => $batch + 1];
     if (!$is_full_scan && $last_check_time) {
-        $args['date_query'] = [['column' => 'post_modified', 'after' => date('Y-m-d H:i:s', $last_check_time)]];
+        $args['date_query'] = [[
+            'column' => 'post_modified_gmt',
+            'after'  => gmdate('Y-m-d H:i:s', $last_check_time),
+        ]];
     }
 
     $wp_query = new WP_Query($args);
