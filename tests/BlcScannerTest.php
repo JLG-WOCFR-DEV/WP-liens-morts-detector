@@ -131,6 +131,11 @@ class BlcScannerTest extends TestCase
         Functions\when('trailingslashit')->alias(function ($value) {
             return rtrim((string) $value, "\\/\t\n\r\f ") . '/';
         });
+        Functions\when('wp_timezone')->alias(fn() => new \DateTimeZone('UTC'));
+        Functions\when('wp_timezone_string')->alias(fn() => 'UTC');
+        Functions\when('plugin_dir_path')->alias(fn($file) => rtrim(dirname((string) $file), '/\\') . '/');
+        Functions\when('register_activation_hook')->alias(function () { return null; });
+        Functions\when('register_deactivation_hook')->alias(function () { return null; });
         Functions\when('set_url_scheme')->alias(function ($url, $scheme = null) {
             $scheme = $scheme ?? 'http';
             if (strpos($url, '//') === 0) {
@@ -342,6 +347,27 @@ class BlcScannerTest extends TestCase
 
         $this->assertSame([], $GLOBALS['wp_query_last_args'], 'No query should run during the configured rest window.');
         $this->assertSame([], $wpdb->queries, 'Database queries must not be executed during rest hours.');
+    }
+
+    public function test_blc_perform_check_schedules_next_event_after_rest_period(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_rest_start_hour'] = '08';
+        $this->options['blc_rest_end_hour']   = '20';
+        $this->currentHour                    = '09';
+        $this->utcNow                         = 9 * 3600;
+
+        blc_perform_check(3, false);
+
+        $this->assertCount(1, $this->scheduledEvents, 'A rescheduled scan should be queued when inside the rest window.');
+        $event = $this->scheduledEvents[0];
+
+        $this->assertSame('blc_check_batch', $event['hook']);
+        $this->assertSame([3, false], $event['args']);
+        $this->assertGreaterThan($this->utcNow, $event['timestamp']);
+        $this->assertSame(20 * 3600, $event['timestamp']);
     }
 
     public function test_blc_perform_check_runs_outside_rest_period(): void
