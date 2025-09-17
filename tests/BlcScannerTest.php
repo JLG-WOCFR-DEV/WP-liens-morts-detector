@@ -459,6 +459,41 @@ class BlcScannerTest extends TestCase
         $this->assertSame($this->utcNow, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated.');
     }
 
+    public function test_blc_perform_check_skips_exact_and_subdomain_exclusions_only(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_excluded_domains'] = "example.com";
+        $this->options['blc_scan_method'] = 'precise';
+
+        $post = (object) [
+            'ID' => 128,
+            'post_title' => 'Domain Exclusions',
+            'post_content' => '<a href="http://example.com/page">Exact</a> <a href="http://sub.example.com/page">Subdomain</a> <a href="http://notexample.com/bad">Allowed</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('GET', 'http://notexample.com/bad', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(1, $this->httpRequests, 'Only the non-excluded host should be requested.');
+        $this->assertSame('http://notexample.com/bad', $this->httpRequests[0]['url']);
+
+        $this->assertCount(1, $wpdb->inserted, 'Only the link from the non-excluded host should be recorded.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('wp_blc_broken_links', $insert['table']);
+        $this->assertSame('http://notexample.com/bad', $insert['data']['url']);
+        $this->assertSame('link', $insert['data']['type']);
+        $this->assertSame([], $this->scheduledEvents, 'No follow-up batch should be scheduled.');
+        $this->assertSame($this->utcNow, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated.');
+    }
+
     public function test_blc_perform_check_reschedules_when_server_load_is_high(): void
     {
         global $wpdb;
