@@ -270,6 +270,18 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
             $image_url = trim(wp_kses_decode_entities($image_node->getAttribute('src')));
             if ($image_url === '') { continue; }
 
+            $original_image_url = $image_url;
+
+            if (strpos($image_url, '//') === 0) {
+                $site_scheme = parse_url($site_url, PHP_URL_SCHEME);
+                if (!is_string($site_scheme) || $site_scheme === '') {
+                    $site_scheme = 'https';
+                }
+                $image_url = set_url_scheme($image_url, $site_scheme);
+            } elseif (strpos($image_url, '/') === 0) {
+                $image_url = trailingslashit(home_url()) . ltrim($image_url, '/');
+            }
+
             $image_host = parse_url($image_url, PHP_URL_HOST);
             if ($image_host === false) { continue; }
 
@@ -283,11 +295,17 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                 continue;
             }
 
-            if (strpos($image_url, $upload_baseurl) !== 0) {
+            $image_scheme = parse_url($image_url, PHP_URL_SCHEME);
+            $normalized_upload_baseurl = $upload_baseurl;
+            if ($image_scheme && $upload_baseurl !== '') {
+                $normalized_upload_baseurl = set_url_scheme($upload_baseurl, $image_scheme);
+            }
+
+            if (strpos($image_url, $normalized_upload_baseurl) !== 0) {
                 continue;
             }
 
-            $relative_path = ltrim(substr($image_url, strlen($upload_baseurl)), '/');
+            $relative_path = ltrim(substr($image_url, strlen($normalized_upload_baseurl)), '/');
             if ($relative_path === '') {
                 continue;
             }
@@ -306,7 +324,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                 $wpdb->insert(
                     $table_name,
                     [
-                        'url'        => $image_url,
+                        'url'        => $original_image_url,
                         'anchor'     => basename($image_url),
                         'post_id'    => $post->ID,
                         'post_title' => $post->post_title,

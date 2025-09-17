@@ -103,6 +103,18 @@ class BlcScannerTest extends TestCase
         Functions\when('trailingslashit')->alias(function ($value) {
             return rtrim((string) $value, "\\/\t\n\r\f ") . '/';
         });
+        Functions\when('set_url_scheme')->alias(function ($url, $scheme = null) {
+            $scheme = $scheme ?? 'http';
+            if (strpos($url, '//') === 0) {
+                $url = $scheme . ':' . $url;
+            }
+
+            if (!preg_match('#^https?://#i', $url)) {
+                return $url;
+            }
+
+            return preg_replace('#^https?://#i', $scheme . '://', $url);
+        });
         Functions\when('wp_upload_dir')->alias(function () {
             return [
                 'baseurl' => 'http://example.com/wp-content/uploads',
@@ -574,6 +586,31 @@ class BlcScannerTest extends TestCase
         blc_perform_image_check(0, true);
 
         $this->assertCount(0, $wpdb->inserted, 'Traversal URLs should be ignored and not marked as broken images.');
+    }
+
+    public function test_blc_perform_image_check_records_relative_missing_images(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 91,
+            'post_title' => 'Relative Image Post',
+            'post_content' => '<img src="/wp-content/uploads/missing.jpg" />',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_image_check(0, true);
+
+        $this->assertCount(1, $wpdb->inserted, 'Relative upload image should be recorded when file is missing.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('/wp-content/uploads/missing.jpg', $insert['data']['url']);
+        $this->assertSame('missing.jpg', $insert['data']['anchor']);
+        $this->assertSame(91, $insert['data']['post_id']);
     }
 }
 }
