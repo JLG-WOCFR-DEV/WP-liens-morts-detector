@@ -266,6 +266,27 @@ function blc_settings_page() {
     }
 
     $frequency = get_option('blc_frequency', 'daily');
+    $timezone_label = '';
+    if (function_exists('wp_timezone_string')) {
+        $timezone_label = wp_timezone_string();
+    }
+    if (empty($timezone_label) && function_exists('wp_timezone')) {
+        $timezone_object = wp_timezone();
+        if ($timezone_object instanceof DateTimeZone) {
+            $timezone_label = $timezone_object->getName();
+        }
+    }
+    if (empty($timezone_label)) {
+        $timezone_label = get_option('timezone_string');
+    }
+    if (empty($timezone_label)) {
+        $gmt_offset = get_option('gmt_offset');
+        if (is_numeric($gmt_offset) && (float) $gmt_offset !== 0.0) {
+            $timezone_label = sprintf('UTC%+g', (float) $gmt_offset);
+        } else {
+            $timezone_label = 'UTC';
+        }
+    }
     $rest_start_hour_option = get_option('blc_rest_start_hour', '08');
     $rest_end_hour_option = get_option('blc_rest_end_hour', '20');
     $rest_start_hour = blc_prepare_time_input_value($rest_start_hour_option, '08');
@@ -312,8 +333,15 @@ function blc_settings_page() {
                             <input type="time" name="blc_rest_end_hour" value="<?php echo esc_attr($rest_end_hour); ?>">
                             <p class="description">
                                 <?php
+                                $timezone_description = sprintf(
+                                    __('Le scan automatique des <strong>liens</strong> ne s\'exécutera pas durant cette période. %s', 'liens-morts-detector-jlg'),
+                                    sprintf(
+                                        __('Fuseau horaire : %s', 'liens-morts-detector-jlg'),
+                                        esc_html($timezone_label)
+                                    )
+                                );
                                 echo wp_kses(
-                                    __('Le scan automatique des <strong>liens</strong> ne s\'exécutera pas durant cette période. (Fuseau horaire de Paris)', 'liens-morts-detector-jlg'),
+                                    $timezone_description,
                                     array(
                                         'strong' => array(),
                                     )
