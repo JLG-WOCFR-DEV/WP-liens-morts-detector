@@ -424,6 +424,44 @@ class BlcScannerTest extends TestCase
         $this->assertSame($this->utcNow, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated.');
     }
 
+    public function test_blc_perform_check_uses_gmt_dates_for_incremental_scans(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        Functions\when('wp_timezone')->alias(fn() => new \DateTimeZone('Europe/Paris'));
+        Functions\when('wp_timezone_string')->alias(fn() => 'Europe/Paris');
+
+        $this->options['blc_last_check_time'] = $this->utcNow - 3600;
+        $this->options['blc_scan_method'] = 'precise';
+
+        $post = (object) [
+            'ID' => 404,
+            'post_title' => 'Recently Updated',
+            'post_content' => '<a href="http://example.net/bad">Broken</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('GET', 'http://example.net/bad', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should be instantiated for incremental scans.');
+        $lastArgs = end($GLOBALS['wp_query_last_args']);
+        $this->assertIsArray($lastArgs, 'WP_Query arguments should be an array.');
+
+        $expectedThreshold = gmdate('Y-m-d H:i:s', $this->options['blc_last_check_time']);
+        $this->assertArrayHasKey('date_query', $lastArgs, 'Incremental scans should set a date_query clause.');
+        $this->assertSame('post_modified_gmt', $lastArgs['date_query'][0]['column']);
+        $this->assertSame($expectedThreshold, $lastArgs['date_query'][0]['after']);
+
+        $this->assertSame($this->utcNow, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated using GMT timestamps.');
+    }
+
     public function test_blc_perform_check_skips_excluded_domains_case_insensitively(): void
     {
         global $wpdb;
