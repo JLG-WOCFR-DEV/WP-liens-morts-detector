@@ -234,6 +234,50 @@ class BlcAjaxCallbacksTest extends TestCase
         $this->assertSame($initial, libxml_use_internal_errors());
     }
 
+    public function test_edit_link_succeeds_even_when_no_rows_deleted(): void
+    {
+        $_POST['post_id'] = 22;
+        $_POST['old_url'] = 'http://old.com';
+        $_POST['new_url'] = 'http://new.com';
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('current_user_can')->once()->with('edit_post', 22)->andReturn(true);
+
+        $post = (object) ['post_content' => '<a href="http://old.com">Link</a>'];
+        Functions\expect('get_post')->once()->with(22)->andReturn($post);
+        Functions\when('esc_url_raw')->alias(function ($url) {
+            return $url;
+        });
+
+        Functions\expect('wp_update_post')->once()->andReturn(true);
+        global $wpdb;
+        $wpdb = new class {
+            public $prefix = '';
+            public $delete_calls = 0;
+            public function delete($table, $where, $formats)
+            {
+                $this->delete_calls++;
+                return 0;
+            }
+        };
+
+        Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
+            throw new \Exception('success');
+        });
+
+        $initial = libxml_use_internal_errors();
+
+        try {
+            blc_ajax_edit_link_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $e) {
+            $this->assertSame('success', $e->getMessage());
+        }
+
+        $this->assertSame($initial, libxml_use_internal_errors());
+        $this->assertSame(1, $wpdb->delete_calls);
+    }
+
     public function test_edit_link_preserves_scheme_relative_url_for_xpath_and_database(): void
     {
         $_POST['post_id'] = 12;
@@ -442,6 +486,49 @@ class BlcAjaxCallbacksTest extends TestCase
         }
 
         $this->assertSame($initial, libxml_use_internal_errors());
+    }
+
+    public function test_unlink_succeeds_even_when_no_rows_deleted(): void
+    {
+        $_POST['post_id'] = 44;
+        $_POST['url_to_unlink'] = 'http://old.com';
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('current_user_can')->once()->with('edit_post', 44)->andReturn(true);
+
+        $post = (object) ['post_content' => '<a href="http://old.com">Link</a>'];
+        Functions\expect('get_post')->once()->with(44)->andReturn($post);
+        Functions\when('esc_url_raw')->alias(function ($url) {
+            return $url;
+        });
+
+        Functions\expect('wp_update_post')->once()->andReturn(true);
+        global $wpdb;
+        $wpdb = new class {
+            public $prefix = '';
+            public $delete_calls = 0;
+            public function delete($table, $where, $formats)
+            {
+                $this->delete_calls++;
+                return 0;
+            }
+        };
+
+        Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
+            throw new \Exception('success');
+        });
+
+        $initial = libxml_use_internal_errors();
+
+        try {
+            blc_ajax_unlink_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $e) {
+            $this->assertSame('success', $e->getMessage());
+        }
+
+        $this->assertSame($initial, libxml_use_internal_errors());
+        $this->assertSame(1, $wpdb->delete_calls);
     }
 
     public function test_unlink_relative_url_updates_content_and_database(): void
