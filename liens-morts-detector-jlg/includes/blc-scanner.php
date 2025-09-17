@@ -102,7 +102,14 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
 
     // --- 2. Contrôles pré-analyse ---
     $current_hour = (int) current_time('H');
-    if ($current_hour >= $rest_start_hour && $current_hour < $rest_end_hour && !$is_full_scan) {
+    $is_in_rest_window = false;
+    if ($rest_start_hour <= $rest_end_hour) {
+        $is_in_rest_window = ($current_hour >= $rest_start_hour && $current_hour < $rest_end_hour);
+    } else {
+        $is_in_rest_window = ($current_hour >= $rest_start_hour || $current_hour < $rest_end_hour);
+    }
+
+    if ($is_in_rest_window && !$is_full_scan) {
         if ($debug_mode) { error_log("Scan arrêté : dans la plage horaire de repos."); }
 
         $current_gmt_timestamp = time();
