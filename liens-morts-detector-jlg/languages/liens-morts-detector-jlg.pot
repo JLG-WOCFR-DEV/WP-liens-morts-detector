@@ -148,7 +148,11 @@ msgid "et"
 msgstr ""
 
 #: includes/blc-admin-pages.php:283
-msgid "Le scan automatique des <strong>liens</strong> ne s'exécutera pas durant cette période. (Fuseau horaire de Paris)"
+msgid "Le scan automatique des <strong>liens</strong> ne s'exécutera pas durant cette période. %s"
+msgstr ""
+
+#: includes/blc-admin-pages.php:286
+msgid "Fuseau horaire : %s"
 msgstr ""
 
 #: includes/blc-admin-pages.php:294

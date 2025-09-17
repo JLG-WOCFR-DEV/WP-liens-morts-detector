@@ -267,20 +267,26 @@ function blc_settings_page() {
 
     $frequency = get_option('blc_frequency', 'daily');
     $timezone_label = '';
+
     if (function_exists('wp_timezone_string')) {
         $timezone_label = wp_timezone_string();
     }
+
     if (empty($timezone_label) && function_exists('wp_timezone')) {
         $timezone_object = wp_timezone();
+
         if ($timezone_object instanceof DateTimeZone) {
             $timezone_label = $timezone_object->getName();
         }
     }
+
     if (empty($timezone_label)) {
         $timezone_label = get_option('timezone_string');
     }
+
     if (empty($timezone_label)) {
         $gmt_offset = get_option('gmt_offset');
+
         if (is_numeric($gmt_offset) && (float) $gmt_offset !== 0.0) {
             $timezone_label = sprintf('UTC%+g', (float) $gmt_offset);
         } else {
