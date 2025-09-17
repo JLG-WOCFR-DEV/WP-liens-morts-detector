@@ -903,7 +903,8 @@ class BlcScannerTest extends TestCase
         $post = (object) [
             'ID' => 92,
             'post_title' => 'Uploads Image With Query',
-            'post_content' => '<img src="https://example.com/wp-content/uploads/2024/05/present.jpg?ver=123" />',
+            'post_content' => '<img src="https://example.com/wp-content/uploads/2024/05/present.jpg?ver=123" />'
+                . '<img src="https://example.com/wp-content/uploads/2024/05/missing-query.jpg?ver=456" />',
         ];
 
         $GLOBALS['wp_query_queue'][] = [
@@ -919,7 +920,14 @@ class BlcScannerTest extends TestCase
             @rmdir(dirname($image_dir));
         }
 
-        $this->assertCount(0, $wpdb->inserted, 'Existing upload with query string should not be flagged as broken.');
+        $this->assertCount(1, $wpdb->inserted, 'Only the missing upload should be flagged even when query strings are present.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('image', $insert['data']['type']);
+        $this->assertSame('missing-query.jpg', $insert['data']['anchor']);
+        $this->assertSame(
+            'https://example.com/wp-content/uploads/2024/05/missing-query.jpg?ver=456',
+            $insert['data']['url']
+        );
     }
 
     public function test_blc_perform_image_check_ignores_traversal_urls(): void

@@ -474,12 +474,14 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                 continue;
             }
 
-            $parsed_image_url = function_exists('wp_parse_url') ? wp_parse_url($image_url) : parse_url($image_url);
-            if (!is_array($parsed_image_url) || empty($parsed_image_url['path'])) {
+            $image_path_from_url = function_exists('wp_parse_url')
+                ? wp_parse_url($image_url, PHP_URL_PATH)
+                : parse_url($image_url, PHP_URL_PATH);
+            if (!is_string($image_path_from_url) || $image_path_from_url === '') {
                 continue;
             }
 
-            $image_path = wp_normalize_path($parsed_image_url['path']);
+            $image_path = wp_normalize_path($image_path_from_url);
 
             $parsed_upload_baseurl = function_exists('wp_parse_url') ? wp_parse_url($normalized_upload_baseurl) : parse_url($normalized_upload_baseurl);
             $upload_base_path = '';
