@@ -332,7 +332,18 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
                     if ($domain_to_exclude === '') {
                         continue;
                     }
-                    if (substr($normalized_host, -strlen($domain_to_exclude)) === $domain_to_exclude) { $is_excluded = true; break; }
+
+                    if ($normalized_host === $domain_to_exclude) {
+                        $is_excluded = true;
+                        break;
+                    }
+
+                    $suffix = '.' . $domain_to_exclude;
+                    $suffix_length = strlen($suffix);
+                    if (strlen($normalized_host) > $suffix_length && substr($normalized_host, -$suffix_length) === $suffix) {
+                        $is_excluded = true;
+                        break;
+                    }
                 }
             }
 
