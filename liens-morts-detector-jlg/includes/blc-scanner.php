@@ -104,6 +104,86 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
     $current_hour = (int) current_time('H');
     if ($current_hour >= $rest_start_hour && $current_hour < $rest_end_hour && !$is_full_scan) {
         if ($debug_mode) { error_log("Scan arrêté : dans la plage horaire de repos."); }
+
+        $current_gmt_timestamp = time();
+        $timezone = null;
+
+        if (function_exists('wp_timezone')) {
+            $maybe_timezone = wp_timezone();
+            if ($maybe_timezone instanceof \DateTimeZone) {
+                $timezone = $maybe_timezone;
+            }
+        }
+
+        if (!$timezone instanceof \DateTimeZone && function_exists('wp_timezone_string')) {
+            $timezone_string = wp_timezone_string();
+            if (is_string($timezone_string) && $timezone_string !== '') {
+                try {
+                    $timezone = new \DateTimeZone($timezone_string);
+                } catch (\Exception $e) {
+                    $timezone = null;
+                }
+            }
+        }
+
+        if (!$timezone instanceof \DateTimeZone) {
+            $offset = (float) get_option('gmt_offset', 0);
+            $offset_seconds = (int) round($offset * 3600);
+            $timezone_name = timezone_name_from_abbr('', $offset_seconds, 0);
+
+            if (is_string($timezone_name) && $timezone_name !== '') {
+                try {
+                    $timezone = new \DateTimeZone($timezone_name);
+                } catch (\Exception $e) {
+                    $timezone = null;
+                }
+            }
+
+            if (!$timezone instanceof \DateTimeZone) {
+                $sign = $offset >= 0 ? '+' : '-';
+                $abs_offset = abs($offset);
+                $hours = (int) floor($abs_offset);
+                $minutes = (int) round(($abs_offset - $hours) * 60);
+
+                if ($minutes === 60) {
+                    $hours += 1;
+                    $minutes = 0;
+                }
+
+                $formatted_offset = sprintf('%s%02d:%02d', $sign, $hours, $minutes);
+
+                try {
+                    $timezone = new \DateTimeZone($formatted_offset);
+                } catch (\Exception $e) {
+                    $timezone = new \DateTimeZone('UTC');
+                }
+            }
+        }
+
+        if (!$timezone instanceof \DateTimeZone) {
+            $timezone = new \DateTimeZone('UTC');
+        }
+
+        $current_datetime = (new \DateTimeImmutable('@' . $current_gmt_timestamp))->setTimezone($timezone);
+        $next_run = $current_datetime->setTime($rest_end_hour, 0, 0);
+
+        if ($rest_start_hour > $rest_end_hour) {
+            if ($current_hour >= $rest_start_hour) {
+                $next_run = $next_run->modify('+1 day');
+            } elseif ($next_run <= $current_datetime) {
+                $next_run = $next_run->modify('+1 day');
+            }
+        } elseif ($next_run <= $current_datetime) {
+            $next_run = $next_run->modify('+1 day');
+        }
+
+        $next_timestamp = $next_run->getTimestamp();
+
+        if ($next_timestamp <= $current_gmt_timestamp) {
+            $next_timestamp = $current_gmt_timestamp + 60;
+        }
+
+        wp_schedule_single_event($next_timestamp, 'blc_check_batch', array($batch, $is_full_scan));
         return;
     }
 
