@@ -38,19 +38,19 @@ class BLC_Links_List_Table extends WP_List_Table {
         $current = (!empty($_GET['link_type'])) ? sanitize_text_field(wp_unslash($_GET['link_type'])) : 'all';
         global $wpdb;
         $table_name = $wpdb->prefix . 'blc_broken_links';
-        $like = $wpdb->esc_like($this->site_url) . '%';
+        $internal_condition = $this->build_internal_url_condition();
+        $internal_sql       = $internal_condition['sql'];
+        $internal_params    = $internal_condition['params'];
 
         $counts = $wpdb->get_row(
             $wpdb->prepare(
                 "SELECT
                     COUNT(*) AS total,
-                    COALESCE(SUM(CASE WHEN url LIKE %s THEN 1 ELSE 0 END), 0) AS internal_count,
-                    COALESCE(SUM(CASE WHEN url LIKE %s THEN 0 ELSE 1 END), 0) AS external_count
+                    COALESCE(SUM(CASE WHEN $internal_sql THEN 1 ELSE 0 END), 0) AS internal_count,
+                    COALESCE(SUM(CASE WHEN $internal_sql THEN 0 ELSE 1 END), 0) AS external_count
                  FROM $table_name
                  WHERE type = %s",
-                $like,
-                $like,
-                'link'
+                array_merge($internal_params, $internal_params, ['link'])
             ),
             ARRAY_A
         );
@@ -161,17 +161,19 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         global $wpdb;
         $table_name = $wpdb->prefix . 'blc_broken_links';
-        $like       = $wpdb->esc_like($this->site_url) . '%';
+        $internal_condition = $this->build_internal_url_condition();
+        $internal_sql       = $internal_condition['sql'];
+        $internal_params    = $internal_condition['params'];
 
-        $where   = ['type = %s'];
-        $params  = ['link'];
+        $where  = ['type = %s'];
+        $params = ['link'];
 
         if ($current_view === 'internal') {
-            $where[]  = 'url LIKE %s';
-            $params[] = $like;
+            $where[] = $internal_sql;
+            $params  = array_merge($params, $internal_params);
         } elseif ($current_view === 'external') {
-            $where[]  = '(url NOT LIKE %s OR url IS NULL OR url = \'\')';
-            $params[] = $like;
+            $where[] = "((NOT {$internal_sql}) OR url IS NULL OR url = '')";
+            $params  = array_merge($params, $internal_params);
         }
 
         $where_clause = implode(' AND ', $where);
@@ -196,5 +198,31 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         $this->set_pagination_args(['total_items' => $total_items, 'per_page' => $per_page]);
         $this->items = $items ? $items : [];
+    }
+
+    private function build_internal_url_condition() {
+        global $wpdb;
+
+        $home_like = $wpdb->esc_like($this->site_url) . '%';
+        $host      = function_exists('wp_parse_url') ? wp_parse_url($this->site_url, PHP_URL_HOST) : parse_url($this->site_url, PHP_URL_HOST);
+
+        $conditions = ['url LIKE %s'];
+        $params     = [$home_like];
+
+        if (!empty($host)) {
+            $conditions[] = 'url LIKE %s';
+            $params[]     = '//' . $host . '%';
+        }
+
+        $conditions[] = 'url LIKE %s';
+        $params[]     = '/%';
+
+        $conditions[] = "(url NOT LIKE %s AND url NOT LIKE %s AND url NOT LIKE %s AND url <> '' AND url IS NOT NULL)";
+        $params       = array_merge($params, ['%://%', '//%', '%:%']);
+
+        return [
+            'sql'    => '(' . implode(' OR ', $conditions) . ')',
+            'params' => $params,
+        ];
     }
 }
