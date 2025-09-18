@@ -205,28 +205,58 @@ class BLC_Links_List_Table extends WP_List_Table {
     private function build_internal_url_condition() {
         global $wpdb;
 
-        $home_like = $wpdb->esc_like($this->site_url) . '%';
-        $host      = function_exists('wp_parse_url') ? wp_parse_url($this->site_url, PHP_URL_HOST) : parse_url($this->site_url, PHP_URL_HOST);
-
         $patterns = [];
-        $patterns[] = [
-            'sql'    => 'url LIKE %s',
-            'params' => [$home_like],
-        ];
 
-        if (!empty($host)) {
-            $patterns[] = [
-                'sql'    => 'url LIKE %s',
-                'params' => ['//' . $host . '%'],
-            ];
+        $add_pattern = function ($value) use (&$patterns, $wpdb) {
+            if ($value === '') {
+                return;
+            }
+
+            if (!isset($patterns[$value])) {
+                $patterns[$value] = [
+                    'sql'    => 'url LIKE %s',
+                    'params' => [$wpdb->esc_like($value) . '%'],
+                ];
+            }
+        };
+
+        $add_pattern($this->site_url);
+
+        $parsed_url = function_exists('wp_parse_url') ? wp_parse_url($this->site_url) : parse_url($this->site_url);
+        $host       = isset($parsed_url['host']) ? $parsed_url['host'] : '';
+        $port       = isset($parsed_url['port']) ? ':' . $parsed_url['port'] : '';
+        $path       = isset($parsed_url['path']) ? trim($parsed_url['path'], '/') : '';
+        $path       = $path === '' ? '' : '/' . $path;
+
+        if ($host !== '') {
+            $host_with_port = $host . $port;
+            $segments       = [$host_with_port];
+
+            if ($path !== '') {
+                $segments[] = $host_with_port . $path;
+            }
+
+            $schemes = ['https', 'http'];
+            if (!empty($parsed_url['scheme']) && !in_array($parsed_url['scheme'], $schemes, true)) {
+                array_unshift($schemes, $parsed_url['scheme']);
+                $schemes = array_values(array_unique($schemes));
+            }
+
+            foreach ($segments as $segment) {
+                foreach ($schemes as $scheme) {
+                    $add_pattern($scheme . '://' . $segment);
+                }
+
+                $add_pattern('//' . $segment);
+            }
         }
 
-        $patterns[] = [
+        $patterns['relative'] = [
             'sql'    => 'url LIKE %s',
             'params' => ['/%'],
         ];
 
-        $patterns[] = [
+        $patterns['path_without_scheme'] = [
             'sql'    => "(url NOT LIKE %s AND url NOT LIKE %s AND url NOT LIKE %s AND url <> '' AND url IS NOT NULL)",
             'params' => ['%://%', '//%', '%:%'],
         ];
