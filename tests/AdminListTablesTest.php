@@ -111,19 +111,15 @@ class AdminListTablesTest extends TestCase
         $table = new \BLC_Links_List_Table();
         $table->prepare_items();
 
-        $this->assertStringContainsString("url LIKE 'https://example.com%'", $wpdb->last_get_var_query);
-        $this->assertStringContainsString("url LIKE '//example.com%'", $wpdb->last_get_var_query);
-        $this->assertStringContainsString("url LIKE '/%'", $wpdb->last_get_var_query);
-        $this->assertStringContainsString("url NOT LIKE '%://%'", $wpdb->last_get_var_query);
-        $this->assertStringContainsString("url NOT LIKE '//%'", $wpdb->last_get_var_query);
-        $this->assertStringContainsString("url NOT LIKE '%:%'", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("(url LIKE 'https://example.com%')", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("(url LIKE '//example.com%')", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("(url LIKE '/%')", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("(url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_var_query);
 
-        $this->assertStringContainsString("url LIKE 'https://example.com%'", $wpdb->last_get_results_query);
-        $this->assertStringContainsString("url LIKE '//example.com%'", $wpdb->last_get_results_query);
-        $this->assertStringContainsString("url LIKE '/%'", $wpdb->last_get_results_query);
-        $this->assertStringContainsString("url NOT LIKE '%://%'", $wpdb->last_get_results_query);
-        $this->assertStringContainsString("url NOT LIKE '//%'", $wpdb->last_get_results_query);
-        $this->assertStringContainsString("url NOT LIKE '%:%'", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("(url LIKE 'https://example.com%')", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("(url LIKE '//example.com%')", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("(url LIKE '/%')", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("(url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_results_query);
     }
 
     public function test_links_prepare_items_external_filter_adds_not_like_condition(): void
@@ -138,13 +134,15 @@ class AdminListTablesTest extends TestCase
         $table = new \BLC_Links_List_Table();
         $table->prepare_items();
 
-        $this->assertStringContainsString('NOT (url LIKE \'https://example.com%\'', $wpdb->last_get_var_query);
-        $this->assertStringContainsString('NOT (url LIKE \'https://example.com%\'', $wpdb->last_get_results_query);
-        $this->assertStringContainsString("url LIKE '//example.com%'", $wpdb->last_get_results_query);
-        $this->assertStringContainsString("url LIKE '/%'", $wpdb->last_get_results_query);
-        $this->assertStringContainsString("url NOT LIKE '%://%'", $wpdb->last_get_results_query);
-        $this->assertStringContainsString("url NOT LIKE '//%'", $wpdb->last_get_results_query);
-        $this->assertStringContainsString("url NOT LIKE '%:%'", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("NOT (url LIKE 'https://example.com%')", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("NOT (url LIKE '//example.com%')", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("NOT (url LIKE '/%')", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("NOT ((url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_var_query);
+
+        $this->assertStringContainsString("NOT (url LIKE 'https://example.com%')", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("NOT (url LIKE '//example.com%')", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("NOT (url LIKE '/%')", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("NOT ((url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_results_query);
         $this->assertStringContainsString('url IS NULL', $wpdb->last_get_results_query);
         $this->assertStringContainsString("url = ''", $wpdb->last_get_results_query);
     }
@@ -166,12 +164,33 @@ class AdminListTablesTest extends TestCase
 
         $this->assertArrayHasKey('internal', $views);
         $this->assertArrayHasKey('external', $views);
-        $this->assertStringContainsString("url LIKE 'https://example.com%'", $wpdb->last_get_row_query);
-        $this->assertStringContainsString("url LIKE '//example.com%'", $wpdb->last_get_row_query);
-        $this->assertStringContainsString("url LIKE '/%'", $wpdb->last_get_row_query);
-        $this->assertStringContainsString("url NOT LIKE '%://%'", $wpdb->last_get_row_query);
-        $this->assertStringContainsString("url NOT LIKE '//%'", $wpdb->last_get_row_query);
-        $this->assertStringContainsString("url NOT LIKE '%:%'", $wpdb->last_get_row_query);
+        $this->assertStringContainsString("CASE WHEN url LIKE 'https://example.com%' THEN 1", $wpdb->last_get_row_query);
+        $this->assertStringContainsString("'//example.com%'", $wpdb->last_get_row_query);
+        $this->assertStringContainsString("'/%'", $wpdb->last_get_row_query);
+        $this->assertStringContainsString("WHEN (url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_row_query);
+
+        $prepare_call = end($wpdb->prepare_calls);
+        $this->assertSame(
+            [
+                "SELECT\n                    COUNT(*) AS total,\n                    COALESCE(SUM(CASE WHEN url LIKE %s THEN 1 WHEN url LIKE %s THEN 1 WHEN url LIKE %s THEN 1 WHEN (url NOT LIKE %s AND url NOT LIKE %s AND url NOT LIKE %s AND url <> '' AND url IS NOT NULL) THEN 1 ELSE 0 END), 0) AS internal_count,\n                    (COUNT(*) - COALESCE(SUM(CASE WHEN url LIKE %s THEN 1 WHEN url LIKE %s THEN 1 WHEN url LIKE %s THEN 1 WHEN (url NOT LIKE %s AND url NOT LIKE %s AND url NOT LIKE %s AND url <> '' AND url IS NOT NULL) THEN 1 ELSE 0 END), 0)) AS external_count\n                 FROM wp_blc_broken_links\n                 WHERE type = %s",
+                [
+                    'https://example.com%',
+                    '//example.com%',
+                    '/%',
+                    '%://%',
+                    '//%',
+                    '%:%',
+                    'https://example.com%',
+                    '//example.com%',
+                    '/%',
+                    '%://%',
+                    '//%',
+                    '%:%',
+                    'link',
+                ],
+            ],
+            $prepare_call
+        );
     }
 
     public function test_images_prepare_items_supports_injected_data_with_pagination(): void

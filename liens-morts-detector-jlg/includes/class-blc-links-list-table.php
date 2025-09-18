@@ -39,18 +39,18 @@ class BLC_Links_List_Table extends WP_List_Table {
         global $wpdb;
         $table_name = $wpdb->prefix . 'blc_broken_links';
         $internal_condition = $this->build_internal_url_condition();
-        $internal_sql       = $internal_condition['sql'];
-        $internal_params    = $internal_condition['params'];
+        $internal_case      = $internal_condition['case_template'];
+        $internal_case_params = $internal_condition['case_params'];
 
         $counts = $wpdb->get_row(
             $wpdb->prepare(
                 "SELECT
                     COUNT(*) AS total,
-                    COALESCE(SUM(CASE WHEN $internal_sql THEN 1 ELSE 0 END), 0) AS internal_count,
-                    COALESCE(SUM(CASE WHEN $internal_sql THEN 0 ELSE 1 END), 0) AS external_count
+                    COALESCE(SUM($internal_case), 0) AS internal_count,
+                    (COUNT(*) - COALESCE(SUM($internal_case), 0)) AS external_count
                  FROM $table_name
                  WHERE type = %s",
-                array_merge($internal_params, $internal_params, ['link'])
+                array_merge($internal_case_params, $internal_case_params, ['link'])
             ),
             ARRAY_A
         );
@@ -164,6 +164,8 @@ class BLC_Links_List_Table extends WP_List_Table {
         $internal_condition = $this->build_internal_url_condition();
         $internal_sql       = $internal_condition['sql'];
         $internal_params    = $internal_condition['params'];
+        $external_sql       = $internal_condition['not_sql'];
+        $external_params    = $internal_condition['not_params'];
 
         $where  = ['type = %s'];
         $params = ['link'];
@@ -172,8 +174,8 @@ class BLC_Links_List_Table extends WP_List_Table {
             $where[] = $internal_sql;
             $params  = array_merge($params, $internal_params);
         } elseif ($current_view === 'external') {
-            $where[] = "((NOT {$internal_sql}) OR url IS NULL OR url = '')";
-            $params  = array_merge($params, $internal_params);
+            $where[] = "({$external_sql} OR url IS NULL OR url = '')";
+            $params  = array_merge($params, $external_params);
         }
 
         $where_clause = implode(' AND ', $where);
@@ -206,23 +208,50 @@ class BLC_Links_List_Table extends WP_List_Table {
         $home_like = $wpdb->esc_like($this->site_url) . '%';
         $host      = function_exists('wp_parse_url') ? wp_parse_url($this->site_url, PHP_URL_HOST) : parse_url($this->site_url, PHP_URL_HOST);
 
-        $conditions = ['url LIKE %s'];
-        $params     = [$home_like];
+        $patterns = [];
+        $patterns[] = [
+            'sql'    => 'url LIKE %s',
+            'params' => [$home_like],
+        ];
 
         if (!empty($host)) {
-            $conditions[] = 'url LIKE %s';
-            $params[]     = '//' . $host . '%';
+            $patterns[] = [
+                'sql'    => 'url LIKE %s',
+                'params' => ['//' . $host . '%'],
+            ];
         }
 
-        $conditions[] = 'url LIKE %s';
-        $params[]     = '/%';
+        $patterns[] = [
+            'sql'    => 'url LIKE %s',
+            'params' => ['/%'],
+        ];
 
-        $conditions[] = "(url NOT LIKE %s AND url NOT LIKE %s AND url NOT LIKE %s AND url <> '' AND url IS NOT NULL)";
-        $params       = array_merge($params, ['%://%', '//%', '%:%']);
+        $patterns[] = [
+            'sql'    => "(url NOT LIKE %s AND url NOT LIKE %s AND url NOT LIKE %s AND url <> '' AND url IS NOT NULL)",
+            'params' => ['%://%', '//%', '%:%'],
+        ];
+
+        $or_conditions = [];
+        $case_clauses  = [];
+        $case_params   = [];
+        $not_clauses   = [];
+        $not_params    = [];
+
+        foreach ($patterns as $pattern) {
+            $or_conditions[] = '(' . $pattern['sql'] . ')';
+            $case_clauses[]  = 'WHEN ' . $pattern['sql'] . ' THEN 1';
+            $case_params     = array_merge($case_params, $pattern['params']);
+            $not_clauses[]   = 'NOT (' . $pattern['sql'] . ')';
+            $not_params      = array_merge($not_params, $pattern['params']);
+        }
 
         return [
-            'sql'    => '(' . implode(' OR ', $conditions) . ')',
-            'params' => $params,
+            'sql'           => '(' . implode(' OR ', $or_conditions) . ')',
+            'params'        => $case_params,
+            'case_template' => 'CASE ' . implode(' ', $case_clauses) . ' ELSE 0 END',
+            'case_params'   => $case_params,
+            'not_sql'       => '(' . implode(' AND ', $not_clauses) . ')',
+            'not_params'    => $not_params,
         ];
     }
 }
