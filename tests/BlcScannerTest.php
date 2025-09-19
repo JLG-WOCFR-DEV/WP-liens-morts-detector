@@ -279,6 +279,7 @@ class BlcScannerTest extends TestCase
     {
         return new class {
             public string $prefix = 'wp_';
+            public string $posts = 'wp_posts';
             /** @var array<int, array<string, mixed>> */
             public array $queries = [];
             /** @var array<int, array<string, mixed>> */
@@ -799,7 +800,7 @@ class BlcScannerTest extends TestCase
         $this->assertSame(1, $args['paged']);
         $this->assertSame(20, $args['posts_per_page']);
 
-        $this->assertCount(1, $wpdb->queries, 'Existing entries for the batch should be cleared.');
+        $this->assertCount(2, $wpdb->queries, 'Existing entries for the batch should be cleared.');
         $this->assertCount(0, $wpdb->inserted, 'No broken links should be recorded for healthy responses.');
         $this->assertCount(1, $this->scheduledEvents, 'Next batch should be scheduled.');
         $event = $this->scheduledEvents[0];
@@ -849,6 +850,41 @@ class BlcScannerTest extends TestCase
         $this->assertSame($this->utcNow, $event['timestamp'], 'Negative delays should be coerced to zero before scheduling.');
         $this->assertSame('blc_check_batch', $event['hook']);
         $this->assertSame([1, false], $event['args']);
+    }
+
+    public function test_blc_perform_check_removes_entries_for_deleted_posts_before_inserting(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 55,
+            'post_title' => 'Cleanup Post',
+            'post_content' => '<a href="http://cleanup.example.com">Broken Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('GET', 'http://cleanup.example.com', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $cleanupQueryFound = false;
+        foreach ($wpdb->queries as $query) {
+            $sql = $query['sql'] ?? '';
+            if (strpos($sql, 'DELETE blc FROM wp_blc_broken_links AS blc') !== false
+                && strpos($sql, 'LEFT JOIN wp_posts AS posts') !== false
+                && strpos($sql, 'posts.ID IS NULL') !== false) {
+                $cleanupQueryFound = true;
+                break;
+            }
+        }
+
+        $this->assertTrue($cleanupQueryFound, 'Cleanup query should remove orphaned entries before inserting new ones.');
+        $this->assertNotEmpty($wpdb->inserted, 'Broken links should continue to be recorded after cleanup.');
     }
 
     public function test_blc_perform_image_check_cleans_table_and_reschedules(): void
