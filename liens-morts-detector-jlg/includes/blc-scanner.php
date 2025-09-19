@@ -238,6 +238,9 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
     $wp_query = new WP_Query($args);
     $posts = $wp_query->posts;
 
+    $cleanup_sql = "DELETE blc FROM $table_name AS blc LEFT JOIN {$wpdb->posts} AS posts ON blc.post_id = posts.ID WHERE blc.type = %s AND posts.ID IS NULL";
+    $wpdb->query($wpdb->prepare($cleanup_sql, 'link'));
+
     $post_ids_in_batch = wp_list_pluck($posts, 'ID');
     if (!empty($post_ids_in_batch)) {
         $post_ids_in_batch = array_map('intval', $post_ids_in_batch);

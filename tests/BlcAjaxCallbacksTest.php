@@ -185,6 +185,11 @@ class BlcAjaxCallbacksTest extends TestCase
 
         Functions\when('check_ajax_referer')->justReturn(true);
         Functions\expect('current_user_can')->once()->with('edit_post', 1)->andReturn(false);
+        global $wpdb;
+        $wpdb = new class {
+            public string $prefix = 'wp_';
+        };
+        Functions\expect('get_post')->once()->with(1)->andReturn((object) ['post_content' => '<a href="http://old.com">Link</a>']);
         Functions\expect('wp_send_json_error')->once()->with(['message' => 'Permissions insuffisantes.'])->andReturnUsing(function () {
             throw new \Exception('error');
         });
@@ -232,6 +237,44 @@ class BlcAjaxCallbacksTest extends TestCase
         }
 
         $this->assertSame($initial, libxml_use_internal_errors());
+    }
+
+    public function test_edit_link_returns_success_when_post_has_been_deleted(): void
+    {
+        $_POST['post_id'] = 11;
+        $_POST['old_url'] = 'http://old.com';
+        $_POST['new_url'] = 'http://new.com';
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('get_post')->once()->with(11)->andReturn(null);
+        Functions\expect('current_user_can')->never();
+
+        global $wpdb;
+        $wpdb = new class {
+            public string $prefix = 'wp_';
+            public array $deleted = [];
+            public function delete($table, $where, $formats)
+            {
+                $this->deleted[] = ['table' => $table, 'where' => $where, 'formats' => $formats];
+                return 1;
+            }
+        };
+
+        Functions\expect('wp_send_json_success')->once()->with(['purged' => true])->andReturnUsing(function () {
+            throw new \Exception('success');
+        });
+
+        try {
+            blc_ajax_edit_link_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $exception) {
+            $this->assertSame('success', $exception->getMessage());
+        }
+
+        $this->assertCount(1, $wpdb->deleted, 'Cleanup should remove the orphaned database row.');
+        $deleted = $wpdb->deleted[0];
+        $this->assertSame(11, $deleted['where']['post_id']);
+        $this->assertSame('link', $deleted['where']['type']);
     }
 
     public function test_edit_link_succeeds_when_no_database_rows_deleted(): void
@@ -437,6 +480,11 @@ class BlcAjaxCallbacksTest extends TestCase
 
         Functions\when('check_ajax_referer')->justReturn(true);
         Functions\expect('current_user_can')->once()->with('edit_post', 3)->andReturn(false);
+        global $wpdb;
+        $wpdb = new class {
+            public string $prefix = 'wp_';
+        };
+        Functions\expect('get_post')->once()->with(3)->andReturn((object) ['post_content' => '<a href="http://old.com">Link</a>']);
         Functions\expect('wp_send_json_error')->once()->with(['message' => 'Permissions insuffisantes.'])->andReturnUsing(function () {
             throw new \Exception('error');
         });
@@ -483,6 +531,43 @@ class BlcAjaxCallbacksTest extends TestCase
         }
 
         $this->assertSame($initial, libxml_use_internal_errors());
+    }
+
+    public function test_unlink_returns_success_when_post_has_been_deleted(): void
+    {
+        $_POST['post_id'] = 21;
+        $_POST['url_to_unlink'] = 'http://old.com';
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('get_post')->once()->with(21)->andReturn(null);
+        Functions\expect('current_user_can')->never();
+
+        global $wpdb;
+        $wpdb = new class {
+            public string $prefix = 'wp_';
+            public array $deleted = [];
+            public function delete($table, $where, $formats)
+            {
+                $this->deleted[] = ['table' => $table, 'where' => $where, 'formats' => $formats];
+                return 1;
+            }
+        };
+
+        Functions\expect('wp_send_json_success')->once()->with(['purged' => true])->andReturnUsing(function () {
+            throw new \Exception('success');
+        });
+
+        try {
+            blc_ajax_unlink_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $exception) {
+            $this->assertSame('success', $exception->getMessage());
+        }
+
+        $this->assertCount(1, $wpdb->deleted, 'Cleanup should remove the orphaned database row.');
+        $deleted = $wpdb->deleted[0];
+        $this->assertSame(21, $deleted['where']['post_id']);
+        $this->assertSame('link', $deleted['where']['type']);
     }
 
     public function test_unlink_succeeds_when_no_database_rows_deleted(): void

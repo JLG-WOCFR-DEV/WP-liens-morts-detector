@@ -189,10 +189,8 @@ function blc_ajax_edit_link_callback() {
     $params = blc_require_post_params(['post_id', 'old_url', 'new_url']);
 
     $post_id = intval($params['post_id']);
-
-    if (!current_user_can('edit_post', $post_id)) {
-        wp_send_json_error(['message' => 'Permissions insuffisantes.']);
-    }
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'blc_broken_links';
 
     $raw_home_url = home_url();
     $site_url = trailingslashit($raw_home_url);
@@ -215,13 +213,24 @@ function blc_ajax_edit_link_callback() {
         wp_send_json_error(['message' => 'URL invalide.']);
     }
 
-    $old_url = blc_prepare_posted_url($raw_old_url);
-    $new_url = esc_url_raw($validated_new_url);
-
     $post = get_post($post_id);
     if (!$post) {
-        wp_send_json_error(['message' => 'Article non trouvé.']);
+        $wpdb->delete(
+            $table_name,
+            ['post_id' => $post_id, 'url' => $stored_old_url, 'type' => 'link'],
+            ['%d', '%s', '%s']
+        );
+
+        wp_send_json_success(['purged' => true]);
+        return;
     }
+
+    if (!current_user_can('edit_post', $post_id)) {
+        wp_send_json_error(['message' => 'Permissions insuffisantes.']);
+    }
+
+    $old_url = blc_prepare_posted_url($raw_old_url);
+    $new_url = esc_url_raw($validated_new_url);
 
     $dom_data = blc_load_dom_from_post($post->post_content);
     if (isset($dom_data['error'])) {
@@ -263,8 +272,6 @@ function blc_ajax_edit_link_callback() {
     }
 
     // Supprimer le lien de la table dédiée
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'blc_broken_links';
     $delete_result = $wpdb->delete(
         $table_name,
         ['post_id' => $post_id, 'url' => $stored_old_url, 'type' => 'link'],
@@ -292,10 +299,8 @@ function blc_ajax_unlink_callback() {
     $params = blc_require_post_params(['post_id', 'url_to_unlink']);
 
     $post_id = intval($params['post_id']);
-
-    if (!current_user_can('edit_post', $post_id)) {
-        wp_send_json_error(['message' => 'Permissions insuffisantes.']);
-    }
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'blc_broken_links';
 
     $raw_home_url = home_url();
     $site_url = trailingslashit($raw_home_url);
@@ -314,14 +319,25 @@ function blc_ajax_unlink_callback() {
         wp_send_json_error(['message' => 'URL invalide.']);
     }
 
+    $post = get_post($post_id);
+    if (!$post) {
+        $wpdb->delete(
+            $table_name,
+            ['post_id' => $post_id, 'url' => $stored_url_to_unlink, 'type' => 'link'],
+            ['%d', '%s', '%s']
+        );
+
+        wp_send_json_success(['purged' => true]);
+        return;
+    }
+
+    if (!current_user_can('edit_post', $post_id)) {
+        wp_send_json_error(['message' => 'Permissions insuffisantes.']);
+    }
+
     $url_to_unlink = blc_prepare_posted_url($raw_url_to_unlink);
     if ($url_to_unlink === '') {
         wp_send_json_error(['message' => 'URL invalide.']);
-    }
-
-    $post = get_post($post_id);
-    if (!$post) {
-        wp_send_json_error(['message' => 'Article non trouvé.']);
     }
 
     $dom_data = blc_load_dom_from_post($post->post_content);
@@ -368,8 +384,6 @@ function blc_ajax_unlink_callback() {
     }
 
     // Supprimer le lien de la table dédiée
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'blc_broken_links';
     $delete_result = $wpdb->delete(
         $table_name,
         ['post_id' => $post_id, 'url' => $stored_url_to_unlink, 'type' => 'link'],
