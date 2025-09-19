@@ -90,6 +90,11 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
     // --- 1. Récupération des réglages ---
     $debug_mode = get_option('blc_debug_mode', false);
     if ($debug_mode) { error_log("--- Début du scan LIENS (Lot #$batch) ---"); }
+
+    $current_hook = function_exists('current_filter') ? current_filter() : '';
+    if (!$is_full_scan && $current_hook === 'blc_check_links') {
+        $is_full_scan = true;
+    }
     
     $rest_start_hour_option = get_option('blc_rest_start_hour', '08');
     $rest_end_hour_option   = get_option('blc_rest_end_hour', '20');
