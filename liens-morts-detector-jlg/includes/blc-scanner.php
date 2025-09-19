@@ -200,16 +200,22 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
     }
 
     if (function_exists('sys_getloadavg')) {
-        $load = sys_getloadavg();
-        $max_load_threshold = (float) apply_filters('blc_max_load_threshold', 2.0);
+        $load_values = sys_getloadavg();
 
-        if ($max_load_threshold > 0 && $load[0] > $max_load_threshold) {
-            $retry_delay = (int) apply_filters('blc_load_retry_delay', 300);
-            if ($retry_delay < 0) { $retry_delay = 0; }
+        if (is_array($load_values) && isset($load_values[0]) && is_numeric($load_values[0])) {
+            $current_load = (float) $load_values[0];
+            $max_load_threshold = (float) apply_filters('blc_max_load_threshold', 2.0);
 
-            if ($debug_mode) { error_log("Scan reporté : charge serveur trop élevée (" . $load[0] . ")."); }
-            wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan));
-            return;
+            if ($max_load_threshold > 0 && $current_load > $max_load_threshold) {
+                $retry_delay = (int) apply_filters('blc_load_retry_delay', 300);
+                if ($retry_delay < 0) { $retry_delay = 0; }
+
+                if ($debug_mode) { error_log("Scan reporté : charge serveur trop élevée (" . $current_load . ")."); }
+                wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan));
+                return;
+            }
+        } elseif ($debug_mode) {
+            error_log('Contrôle de charge ignoré : sys_getloadavg() n\'a pas retourné de données valides.');
         }
     }
     
