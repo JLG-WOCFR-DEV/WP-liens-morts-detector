@@ -84,7 +84,7 @@ function blc_create_dom_from_content($content, $charset = 'UTF-8') {
  * Fonction de scan DÉDIÉE AUX LIENS <a>.
  * Déclenchée par la planification et le bouton principal.
  */
-function blc_perform_check($batch = 0, $is_full_scan = false) {
+function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_window = false) {
     global $wpdb;
 
     // --- 1. Récupération des réglages ---
@@ -94,6 +94,10 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
     $current_hook = function_exists('current_filter') ? current_filter() : '';
     if (!$is_full_scan && $current_hook === 'blc_check_links') {
         $is_full_scan = true;
+    }
+
+    if ($current_hook === 'blc_check_links') {
+        $bypass_rest_window = false;
     }
     
     $rest_start_hour_option = get_option('blc_rest_start_hour', '08');
@@ -114,7 +118,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
         $is_in_rest_window = ($current_hour >= $rest_start_hour || $current_hour < $rest_end_hour);
     }
 
-    if ($is_in_rest_window && !$is_full_scan) {
+    if ($is_in_rest_window && !$bypass_rest_window) {
         if ($debug_mode) { error_log("Scan arrêté : dans la plage horaire de repos."); }
 
         $current_gmt_timestamp = time();
@@ -195,7 +199,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
             $next_timestamp = $current_gmt_timestamp + 60;
         }
 
-        wp_schedule_single_event($next_timestamp, 'blc_check_batch', array($batch, $is_full_scan));
+        wp_schedule_single_event($next_timestamp, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
         return;
     }
 
@@ -214,7 +218,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
                     if ($retry_delay < 0) { $retry_delay = 0; }
 
                     if ($debug_mode) { error_log("Scan reporté : charge serveur trop élevée (" . $current_load . ")."); }
-                    wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan));
+                    wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
                     return;
                 }
             } elseif ($debug_mode) {
@@ -406,7 +410,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false) {
 
     // --- 5. Sauvegarde et planification ---
     if ($wp_query->max_num_pages > ($batch + 1)) {
-        wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan));
+        wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan, $bypass_rest_window));
     } else {
         update_option('blc_last_check_time', time());
     }
