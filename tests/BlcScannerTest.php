@@ -367,7 +367,7 @@ class BlcScannerTest extends TestCase
         $event = $this->scheduledEvents[0];
 
         $this->assertSame('blc_check_batch', $event['hook']);
-        $this->assertSame([3, false], $event['args']);
+        $this->assertSame([3, false, false], $event['args']);
         $this->assertGreaterThan($this->utcNow, $event['timestamp']);
         $this->assertSame(20 * 3600, $event['timestamp']);
     }
@@ -393,9 +393,39 @@ class BlcScannerTest extends TestCase
         $event = $this->scheduledEvents[0];
 
         $this->assertSame('blc_check_batch', $event['hook']);
-        $this->assertSame([5, false], $event['args']);
+        $this->assertSame([5, false, false], $event['args']);
         $this->assertGreaterThan($this->utcNow, $event['timestamp']);
         $this->assertSame(30 * 3600, $event['timestamp']);
+    }
+
+    public function test_blc_perform_check_bypass_rest_window_runs_immediately(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_rest_start_hour'] = '08';
+        $this->options['blc_rest_end_hour']   = '20';
+        $this->currentHour                    = '09';
+
+        $post = (object) [
+            'ID' => 13,
+            'post_title' => 'Bypass Post',
+            'post_content' => '<a href="http://ok.com/resource">Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 2,
+        ];
+
+        blc_perform_check(0, true, true);
+
+        $this->assertNotSame([], $GLOBALS['wp_query_last_args'], 'Manual scans should run immediately even during rest hours.');
+        $this->assertCount(1, $this->scheduledEvents, 'Follow-up batch should be scheduled when more pages remain.');
+        $event = $this->scheduledEvents[0];
+
+        $this->assertSame('blc_check_batch', $event['hook']);
+        $this->assertSame([1, true, true], $event['args']);
     }
 
     public function test_blc_perform_check_runs_outside_rest_period(): void
@@ -620,7 +650,7 @@ class BlcScannerTest extends TestCase
         $event = $this->scheduledEvents[0];
         $this->assertSame($this->utcNow + 300, $event['timestamp']);
         $this->assertSame('blc_check_batch', $event['hook']);
-        $this->assertSame([0, false], $event['args']);
+        $this->assertSame([0, false, false], $event['args']);
         $this->assertSame([], $this->updatedOptions, 'No options should be updated when scan is postponed.');
         $this->assertCount(0, $wpdb->inserted, 'No database insertions should occur when load is high.');
     }
@@ -665,7 +695,7 @@ class BlcScannerTest extends TestCase
         $event = $this->scheduledEvents[0];
         $this->assertSame($this->utcNow + 600, $event['timestamp']);
         $this->assertSame('blc_check_batch', $event['hook']);
-        $this->assertSame([2, false], $event['args']);
+        $this->assertSame([2, false, false], $event['args']);
     }
 
     public function test_blc_perform_check_skips_malformed_urls_without_warnings(): void
@@ -806,7 +836,7 @@ class BlcScannerTest extends TestCase
         $event = $this->scheduledEvents[0];
         $this->assertSame($this->utcNow + 60, $event['timestamp']);
         $this->assertSame('blc_check_batch', $event['hook']);
-        $this->assertSame([1, true], $event['args']);
+        $this->assertSame([1, true, false], $event['args']);
         $this->assertSame([], $this->updatedOptions, 'Last check time should not be updated before the final batch.');
     }
 
@@ -849,7 +879,7 @@ class BlcScannerTest extends TestCase
         $event = $this->scheduledEvents[0];
         $this->assertSame($this->utcNow, $event['timestamp'], 'Negative delays should be coerced to zero before scheduling.');
         $this->assertSame('blc_check_batch', $event['hook']);
-        $this->assertSame([1, false], $event['args']);
+        $this->assertSame([1, false, false], $event['args']);
     }
 
     public function test_blc_perform_check_removes_entries_for_deleted_posts_before_inserting(): void
