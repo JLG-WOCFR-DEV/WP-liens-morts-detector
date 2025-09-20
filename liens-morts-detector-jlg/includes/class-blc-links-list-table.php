@@ -23,8 +23,8 @@ class BLC_Links_List_Table extends WP_List_Table {
      */
     public function __construct() {
         parent::__construct([
-            'singular' => 'Lien mort',
-            'plural'   => 'Liens morts',
+            'singular' => __('Lien mort', 'liens-morts-detector-jlg'),
+            'plural'   => __('Liens morts', 'liens-morts-detector-jlg'),
             'ajax'     => false
         ]);
         $this->site_url = home_url();
@@ -60,13 +60,31 @@ class BLC_Links_List_Table extends WP_List_Table {
         $external_count = isset($counts['external_count']) ? (int) $counts['external_count'] : max(0, $total_count - $internal_count);
 
         $all_class = ($current == 'all' ? 'current' : '');
-        $views['all'] = "<a href='" . esc_url(remove_query_arg('link_type')) . "' class='" . esc_attr($all_class) . "'>Tous <span class='count'>($total_count)</span></a>";
+        $views['all'] = sprintf(
+            "<a href='%s' class='%s'>%s <span class='count'>(%d)</span></a>",
+            esc_url(remove_query_arg('link_type')),
+            esc_attr($all_class),
+            esc_html__('Tous', 'liens-morts-detector-jlg'),
+            $total_count
+        );
 
         $internal_class = ($current == 'internal' ? 'current' : '');
-        $views['internal'] = "<a href='" . esc_url(add_query_arg('link_type', 'internal')) . "' class='" . esc_attr($internal_class) . "'>Internes <span class='count'>($internal_count)</span></a>";
+        $views['internal'] = sprintf(
+            "<a href='%s' class='%s'>%s <span class='count'>(%d)</span></a>",
+            esc_url(add_query_arg('link_type', 'internal')),
+            esc_attr($internal_class),
+            esc_html__('Internes', 'liens-morts-detector-jlg'),
+            $internal_count
+        );
 
         $external_class = ($current == 'external' ? 'current' : '');
-        $views['external'] = "<a href='" . esc_url(add_query_arg('link_type', 'external')) . "' class='" . esc_attr($external_class) . "'>Externes <span class='count'>($external_count)</span></a>";
+        $views['external'] = sprintf(
+            "<a href='%s' class='%s'>%s <span class='count'>(%d)</span></a>",
+            esc_url(add_query_arg('link_type', 'external')),
+            esc_attr($external_class),
+            esc_html__('Externes', 'liens-morts-detector-jlg'),
+            $external_count
+        );
 
         return $views;
     }
@@ -76,10 +94,10 @@ class BLC_Links_List_Table extends WP_List_Table {
      */
     public function get_columns() {
         return [
-            'url'          => 'URL Cassée',
-            'anchor_text'  => 'Texte du lien',
-            'post_title'   => 'Trouvé dans l\'article/page',
-            'actions'      => 'Actions'
+            'url'          => __('URL Cassée', 'liens-morts-detector-jlg'),
+            'anchor_text'  => __('Texte du lien', 'liens-morts-detector-jlg'),
+            'post_title'   => __('Trouvé dans l\'article/page', 'liens-morts-detector-jlg'),
+            'actions'      => __('Actions', 'liens-morts-detector-jlg')
         ];
     }
 
@@ -88,8 +106,9 @@ class BLC_Links_List_Table extends WP_List_Table {
      */
     protected function column_url($item) {
         $output = sprintf(
-            '<strong><a href="%s" target="_blank" rel="noopener noreferrer" title="Vérifier ce lien (nouvel onglet)">%s</a></strong>',
+            '<strong><a href="%s" target="_blank" rel="noopener noreferrer" title="%s">%s</a></strong>',
             esc_url($item['url']),
+            esc_attr__('Vérifier ce lien (nouvel onglet)', 'liens-morts-detector-jlg'),
             esc_html($item['url'])
         );
         
@@ -106,7 +125,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         if (!empty($item['anchor'])) {
             return '<em>' . esc_html($item['anchor']) . '</em>';
         }
-        return '—'; // Affiche un tiret si aucun texte de lien n'a été capturé
+        return esc_html__('—', 'liens-morts-detector-jlg'); // Affiche un tiret si aucun texte de lien n'a été capturé
     }
 
     /**
@@ -116,7 +135,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         $edit_link = get_edit_post_link($item['post_id']);
 
         if ($edit_link === false) {
-            return '&mdash;';
+            return esc_html__('—', 'liens-morts-detector-jlg');
         }
 
         return sprintf('<a href="%s">%s</a>', esc_url($edit_link), esc_html($item['post_title']));
@@ -129,10 +148,14 @@ class BLC_Links_List_Table extends WP_List_Table {
         $edit_link = get_edit_post_link($item['post_id']);
 
         if ($edit_link === false) {
-            return '&mdash;';
+            return esc_html__('—', 'liens-morts-detector-jlg');
         }
 
-        return sprintf('<a href="%s" class="button button-secondary">Modifier l\'article</a>', esc_url($edit_link));
+        return sprintf(
+            '<a href="%s" class="button button-secondary">%s</a>',
+            esc_url($edit_link),
+            esc_html__('Modifier l\'article', 'liens-morts-detector-jlg')
+        );
     }
 
     /**
@@ -141,16 +164,18 @@ class BLC_Links_List_Table extends WP_List_Table {
     protected function get_row_actions($item) {
         $actions = [];
         $actions['edit_link'] = sprintf(
-            '<a href="#" class="blc-edit-link" data-postid="%d" data-url="%s" data-nonce="%s">Modifier</a>',
+            '<a href="#" class="blc-edit-link" data-postid="%d" data-url="%s" data-nonce="%s">%s</a>',
             $item['post_id'],
             esc_attr($item['url']),
-            wp_create_nonce('blc_edit_link_nonce')
+            wp_create_nonce('blc_edit_link_nonce'),
+            esc_html__('Modifier', 'liens-morts-detector-jlg')
         );
         $actions['unlink'] = sprintf(
-            '<a href="#" class="blc-unlink" data-postid="%d" data-url="%s" data-nonce="%s" style="color:#a00;">Dissocier</a>',
+            '<a href="#" class="blc-unlink" data-postid="%d" data-url="%s" data-nonce="%s" style="color:#a00;">%s</a>',
             $item['post_id'],
             esc_attr($item['url']),
-            wp_create_nonce('blc_unlink_nonce')
+            wp_create_nonce('blc_unlink_nonce'),
+            esc_html__('Dissocier', 'liens-morts-detector-jlg')
         );
         return $actions;
     }
