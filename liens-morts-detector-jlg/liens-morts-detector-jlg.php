@@ -204,12 +204,44 @@ function blc_ajax_edit_link_callback() {
 
     $stored_old_url = blc_prepare_url_for_storage($raw_old_url);
 
+    $prepared_old_url = blc_prepare_posted_url($raw_old_url);
+    $prepared_new_url = blc_prepare_posted_url($raw_new_url);
+
+    if ($prepared_new_url === '') {
+        wp_send_json_error(['message' => 'URL invalide.']);
+    }
+
+    $sanitized_new_url = wp_kses_bad_protocol($prepared_new_url, ['http', 'https']);
+    if (!is_string($sanitized_new_url) || $sanitized_new_url !== $prepared_new_url) {
+        wp_send_json_error(['message' => 'URL invalide.']);
+    }
+
     $validated_old_url = wp_http_validate_url($raw_old_url);
     $normalized_old_url = $validated_old_url ?: blc_normalize_link_url($raw_old_url, $site_url, $site_scheme);
-    $validated_new_url = wp_http_validate_url($raw_new_url);
+
+    $validated_new_url = wp_http_validate_url($prepared_new_url);
+    $normalized_new_url = '';
+    if (!$validated_new_url) {
+        $normalized_new_url = blc_normalize_link_url($prepared_new_url, $site_url, $site_scheme);
+        if ($normalized_new_url !== '') {
+            $validated_new_url = wp_http_validate_url($normalized_new_url);
+        }
+    } else {
+        $normalized_new_url = $validated_new_url;
+    }
 
     $normalized_parts = $normalized_old_url !== '' ? parse_url($normalized_old_url) : false;
-    if (!$normalized_old_url || $normalized_parts === false || empty($normalized_parts['scheme']) || !in_array($normalized_parts['scheme'], ['http', 'https'], true) || !$validated_new_url) {
+    $validated_new_parts = $validated_new_url ? parse_url($validated_new_url) : false;
+    if (
+        !$normalized_old_url ||
+        $normalized_parts === false ||
+        empty($normalized_parts['scheme']) ||
+        !in_array($normalized_parts['scheme'], ['http', 'https'], true) ||
+        !$validated_new_url ||
+        $validated_new_parts === false ||
+        empty($validated_new_parts['scheme']) ||
+        !in_array($validated_new_parts['scheme'], ['http', 'https'], true)
+    ) {
         wp_send_json_error(['message' => 'URL invalide.']);
     }
 
@@ -229,8 +261,8 @@ function blc_ajax_edit_link_callback() {
         wp_send_json_error(['message' => 'Permissions insuffisantes.']);
     }
 
-    $old_url = blc_prepare_posted_url($raw_old_url);
-    $new_url = esc_url_raw($validated_new_url);
+    $old_url = $prepared_old_url;
+    $new_url = $prepared_new_url;
 
     $dom_data = blc_load_dom_from_post($post->post_content);
     if (isset($dom_data['error'])) {
