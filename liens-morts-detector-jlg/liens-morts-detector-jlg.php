@@ -224,9 +224,27 @@ function blc_ajax_edit_link_callback() {
     }
 
     $sanitized_new_url = wp_kses_bad_protocol($prepared_new_url, ['http', 'https']);
-    if (!is_string($sanitized_new_url) || $sanitized_new_url !== $prepared_new_url) {
+    if (!is_string($sanitized_new_url) || $sanitized_new_url === '') {
         wp_send_json_error(['message' => 'URL invalide.']);
     }
+
+    $normalize_scheme_case = static function ($url) {
+        if (!is_string($url) || $url === '') {
+            return $url;
+        }
+
+        if (preg_match('#^([a-z0-9+.-]+):(.*)$#i', $url, $matches)) {
+            return strtolower($matches[1]) . ':' . $matches[2];
+        }
+
+        return $url;
+    };
+
+    if ($normalize_scheme_case($sanitized_new_url) !== $normalize_scheme_case($prepared_new_url)) {
+        wp_send_json_error(['message' => 'URL invalide.']);
+    }
+
+    $prepared_new_url = $sanitized_new_url;
 
     $validated_old_url = wp_http_validate_url($raw_old_url);
     $normalized_old_url = $validated_old_url ?: blc_normalize_link_url($raw_old_url, $site_url, $site_scheme);
