@@ -116,6 +116,20 @@ class BlcScannerTest extends TestCase
 
             return preg_replace('#^[a-z0-9+.-]+://#i', $scheme . '://', $url);
         });
+        Functions\when('wp_kses_bad_protocol')->alias(function ($string, $allowed_protocols = []) {
+            $string = (string) $string;
+            $allowed_protocols = array_map('strtolower', (array) $allowed_protocols);
+
+            if (preg_match('#^([a-z0-9+.-]+):#i', $string, $matches)) {
+                $scheme = strtolower($matches[1]);
+
+                if (!in_array($scheme, $allowed_protocols, true)) {
+                    return preg_replace('#^[a-z0-9+.-]+:#i', '', $string);
+                }
+            }
+
+            return $string;
+        });
         $testCase = $this;
         Functions\when('current_time')->alias(function (string $type, $gmt = 0) use ($testCase) {
             if ($type === 'timestamp') {

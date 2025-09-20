@@ -44,6 +44,20 @@ class BlcAjaxCallbacksTest extends TestCase
 
             return html_entity_decode((string) $value, ENT_QUOTES, $charset);
         });
+        Functions\when('wp_kses_bad_protocol')->alias(function ($string, $allowed_protocols = []) {
+            $string = (string) $string;
+            $allowed_protocols = array_map('strtolower', (array) $allowed_protocols);
+
+            if (preg_match('#^([a-z0-9+.-]+):#i', $string, $matches)) {
+                $scheme = strtolower($matches[1]);
+
+                if (!in_array($scheme, $allowed_protocols, true)) {
+                    return preg_replace('#^[a-z0-9+.-]+:#i', '', $string);
+                }
+            }
+
+            return $string;
+        });
         Functions\when('wp_unslash')->alias(function ($value) {
             return $value;
         });
@@ -237,6 +251,82 @@ class BlcAjaxCallbacksTest extends TestCase
         }
 
         $this->assertSame($initial, libxml_use_internal_errors());
+    }
+
+    public function test_edit_link_accepts_relative_url_and_preserves_href(): void
+    {
+        $_POST['post_id'] = 42;
+        $_POST['old_url'] = 'http://old.com';
+        $_POST['new_url'] = '/nouvelle-page';
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('current_user_can')->once()->with('edit_post', 42)->andReturn(true);
+
+        $post = (object) ['post_content' => '<a href="http://old.com">Ancien lien</a>'];
+        Functions\expect('get_post')->once()->with(42)->andReturn($post);
+
+        $captured_update = null;
+        Functions\expect('wp_update_post')->once()->andReturnUsing(function () use (&$captured_update) {
+            $captured_update = func_get_args();
+            return true;
+        });
+
+        global $wpdb;
+        $wpdb = new class {
+            public $prefix = '';
+            public $delete_args = null;
+            public function delete($table, $where, $formats)
+            {
+                $this->delete_args = [$table, $where, $formats];
+
+                return true;
+            }
+        };
+
+        Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
+            throw new \Exception('success');
+        });
+
+        try {
+            blc_ajax_edit_link_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $exception) {
+            $this->assertSame('success', $exception->getMessage());
+        }
+
+        $this->assertIsArray($captured_update);
+        $this->assertCount(2, $captured_update);
+        $this->assertIsArray($captured_update[0]);
+        $this->assertSame(42, $captured_update[0]['ID']);
+        $this->assertStringContainsString('<a href="/nouvelle-page">', $captured_update[0]['post_content']);
+        $this->assertStringNotContainsString('http://old.com', $captured_update[0]['post_content']);
+
+        $this->assertIsArray($wpdb->delete_args);
+        $this->assertSame('blc_broken_links', $wpdb->delete_args[0]);
+        $this->assertSame(['post_id' => 42, 'url' => 'http://old.com', 'type' => 'link'], $wpdb->delete_args[1]);
+        $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);
+    }
+
+    public function test_edit_link_rejects_dangerous_scheme(): void
+    {
+        $_POST['post_id'] = 8;
+        $_POST['old_url'] = 'http://old.com';
+        $_POST['new_url'] = 'javascript:alert(1)';
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+
+        global $wpdb;
+        $wpdb = new class {
+            public $prefix = 'wp_';
+        };
+
+        Functions\expect('wp_send_json_error')->once()->with(['message' => 'URL invalide.'])->andReturnUsing(function () {
+            throw new \Exception('error');
+        });
+
+        $this->expectExceptionMessage('error');
+
+        blc_ajax_edit_link_callback();
     }
 
     public function test_edit_link_returns_success_when_post_has_been_deleted(): void
