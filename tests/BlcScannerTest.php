@@ -964,6 +964,51 @@ class BlcScannerTest extends TestCase
         $this->assertSame([], $this->updatedOptions, 'Image scan should not update options.');
     }
 
+    public function test_blc_perform_image_check_records_missing_cdn_upload_images(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $uploads_dir = sys_get_temp_dir() . '/uploads-test';
+        Functions\when('wp_upload_dir')->alias(function () use ($uploads_dir) {
+            return [
+                'baseurl' => 'https://cdn.example.com/wp-content/uploads',
+                'basedir' => $uploads_dir,
+            ];
+        });
+
+        $post = (object) [
+            'ID' => 108,
+            'post_title' => 'CDN Image Post',
+            'post_content' => '<img src="https://cdn.example.com/wp-content/uploads/2024/05/missing-cdn.jpg" />',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        try {
+            blc_perform_image_check(0, true);
+        } finally {
+            Functions\when('wp_upload_dir')->alias(function () {
+                return [
+                    'baseurl' => 'https://example.com/wp-content/uploads',
+                    'basedir' => sys_get_temp_dir() . '/uploads-test',
+                ];
+            });
+        }
+
+        $this->assertCount(1, $wpdb->inserted, 'Missing CDN-based upload should be recorded as broken.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('image', $insert['data']['type']);
+        $this->assertSame('missing-cdn.jpg', $insert['data']['anchor']);
+        $this->assertSame(
+            'https://cdn.example.com/wp-content/uploads/2024/05/missing-cdn.jpg',
+            $insert['data']['url']
+        );
+    }
+
     public function test_blc_perform_image_check_allows_existing_upload_with_query(): void
     {
         global $wpdb;

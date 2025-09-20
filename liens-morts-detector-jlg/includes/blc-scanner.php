@@ -446,6 +446,22 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     $normalized_basedir = $upload_basedir !== '' ? wp_normalize_path($upload_basedir) : '';
     $site_url = home_url();
 
+    $allowed_hosts = [];
+    $site_host = parse_url($site_url, PHP_URL_HOST);
+    if (is_string($site_host) && $site_host !== '') {
+        $allowed_hosts[] = strtolower($site_host);
+    }
+
+    if ($upload_baseurl !== '') {
+        $upload_host = parse_url($upload_baseurl, PHP_URL_HOST);
+        if (is_string($upload_host) && $upload_host !== '') {
+            $allowed_hosts[] = strtolower($upload_host);
+        }
+    }
+
+    $allowed_hosts = array_values(array_unique($allowed_hosts));
+    $has_allowed_hosts = !empty($allowed_hosts);
+
     $blog_charset = get_bloginfo('charset');
     if (empty($blog_charset)) { $blog_charset = 'UTF-8'; }
 
@@ -475,13 +491,14 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                 $image_url = trailingslashit(home_url()) . ltrim($image_url, '/');
             }
 
+            if (!$has_allowed_hosts) {
+                continue;
+            }
+
             $image_host = parse_url($image_url, PHP_URL_HOST);
-            if ($image_host === false) { continue; }
+            if ($image_host === false || $image_host === null || $image_host === '') { continue; }
 
-            $site_host  = parse_url($site_url, PHP_URL_HOST);
-            if ($site_host === false) { continue; }
-
-            if (!empty($image_host) && !empty($site_host) && strcasecmp($image_host, $site_host) !== 0) {
+            if (!in_array(strtolower($image_host), $allowed_hosts, true)) {
                 continue;
             }
             if (empty($upload_baseurl) || empty($upload_basedir) || empty($normalized_basedir)) {

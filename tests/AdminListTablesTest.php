@@ -114,13 +114,13 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString("(url LIKE 'https://example.com%')", $wpdb->last_get_var_query);
         $this->assertStringContainsString("(url LIKE 'http://example.com%')", $wpdb->last_get_var_query);
         $this->assertStringContainsString("(url LIKE '//example.com%')", $wpdb->last_get_var_query);
-        $this->assertStringContainsString("(url LIKE '/%')", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("(url LIKE '/%' AND url NOT LIKE '//%')", $wpdb->last_get_var_query);
         $this->assertStringContainsString("(url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_var_query);
 
         $this->assertStringContainsString("(url LIKE 'https://example.com%')", $wpdb->last_get_results_query);
         $this->assertStringContainsString("(url LIKE 'http://example.com%')", $wpdb->last_get_results_query);
         $this->assertStringContainsString("(url LIKE '//example.com%')", $wpdb->last_get_results_query);
-        $this->assertStringContainsString("(url LIKE '/%')", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("(url LIKE '/%' AND url NOT LIKE '//%')", $wpdb->last_get_results_query);
         $this->assertStringContainsString("(url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_results_query);
     }
 
@@ -139,13 +139,13 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString("NOT (url LIKE 'https://example.com%')", $wpdb->last_get_var_query);
         $this->assertStringContainsString("NOT (url LIKE 'http://example.com%')", $wpdb->last_get_var_query);
         $this->assertStringContainsString("NOT (url LIKE '//example.com%')", $wpdb->last_get_var_query);
-        $this->assertStringContainsString("NOT (url LIKE '/%')", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("NOT ((url LIKE '/%' AND url NOT LIKE '//%'))", $wpdb->last_get_var_query);
         $this->assertStringContainsString("NOT ((url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_var_query);
 
         $this->assertStringContainsString("NOT (url LIKE 'https://example.com%')", $wpdb->last_get_results_query);
         $this->assertStringContainsString("NOT (url LIKE 'http://example.com%')", $wpdb->last_get_results_query);
         $this->assertStringContainsString("NOT (url LIKE '//example.com%')", $wpdb->last_get_results_query);
-        $this->assertStringContainsString("NOT (url LIKE '/%')", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("NOT ((url LIKE '/%' AND url NOT LIKE '//%'))", $wpdb->last_get_results_query);
         $this->assertStringContainsString("NOT ((url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_results_query);
         $this->assertStringContainsString('url IS NULL', $wpdb->last_get_results_query);
         $this->assertStringContainsString("url = ''", $wpdb->last_get_results_query);
