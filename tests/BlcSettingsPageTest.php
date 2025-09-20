@@ -1,6 +1,10 @@
 <?php
 
-namespace Tests;
+namespace {
+    require_once __DIR__ . '/translation-stubs.php';
+}
+
+namespace Tests {
 
 use Brain\Monkey;
 use Brain\Monkey\Functions;
@@ -75,18 +79,6 @@ class BlcSettingsPageTest extends TestCase
 
             return '';
         });
-        Functions\when('__')->alias(static fn($text, $domain = null) => $text);
-        Functions\when('esc_html__')->alias(static fn($text, $domain = null) => $text);
-        Functions\when('esc_html_e')->alias(static function ($text, $domain = null) {
-            echo $text;
-        });
-        Functions\when('esc_attr')->alias(static fn($text) => $text);
-        Functions\when('esc_attr__')->alias(static fn($text, $domain = null) => $text);
-        Functions\when('esc_attr_e')->alias(static function ($text, $domain = null) {
-            echo $text;
-        });
-        Functions\when('esc_textarea')->alias(static fn($text) => $text);
-        Functions\when('esc_html')->alias(static fn($text) => $text);
         Functions\when('wp_kses')->alias(static fn($string, $allowed_html = null, $allowed_protocols = []) => $string);
         Functions\when('wp_kses_post')->alias(static fn($string) => $string);
         Functions\when('selected')->alias(static function ($value, $compare, $echo = true) {
@@ -172,5 +164,7 @@ class BlcSettingsPageTest extends TestCase
     {
         $this->options[$name] = $value;
     }
+}
+
 }
 

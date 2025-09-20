@@ -37,6 +37,25 @@ function blc_normalize_link_url($url, $site_url, $site_scheme = null) {
 
     $site_url = rtrim((string) $site_url, '/') . '/';
 
+    $site_origin = '';
+    $site_parts = null;
+
+    if (function_exists('wp_parse_url')) {
+        $site_parts = wp_parse_url($site_url);
+    }
+
+    if (!is_array($site_parts)) {
+        $site_parts = parse_url($site_url);
+    }
+
+    if (is_array($site_parts) && isset($site_parts['scheme'], $site_parts['host'])) {
+        $site_origin = $site_parts['scheme'] . '://' . $site_parts['host'];
+
+        if (isset($site_parts['port']) && $site_parts['port'] !== '') {
+            $site_origin .= ':' . $site_parts['port'];
+        }
+    }
+
     $trimmed_url = ltrim($url);
     $parsed_without_scheme = parse_url('http://' . $trimmed_url);
 
@@ -72,6 +91,10 @@ function blc_normalize_link_url($url, $site_url, $site_scheme = null) {
     }
 
     if (isset($parsed_url['path']) && strpos($parsed_url['path'], '/') === 0) {
+        if ($site_origin !== '') {
+            return $site_origin . $url;
+        }
+
         $base = rtrim($site_url, '/');
         return $base . $url;
     }
