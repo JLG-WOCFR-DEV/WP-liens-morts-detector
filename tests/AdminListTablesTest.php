@@ -1,6 +1,10 @@
 <?php
 
-namespace Tests;
+namespace {
+    require_once __DIR__ . '/translation-stubs.php';
+}
+
+namespace Tests {
 
 use Brain\Monkey;
 use Brain\Monkey\Functions;
@@ -31,8 +35,6 @@ class AdminListTablesTest extends TestCase
             return is_string($value) ? trim($value) : $value;
         });
         Functions\when('wp_unslash')->alias(fn($value) => $value);
-        Functions\when('esc_url')->alias(fn($value) => $value);
-        Functions\when('esc_attr')->alias(fn($value) => $value);
         Functions\when('remove_query_arg')->alias(fn($key, $url = null) => 'admin.php');
         Functions\when('add_query_arg')->alias(function ($key, $value, $url = null) {
             $param = is_array($key) ? $key : [$key => $value];
@@ -236,7 +238,6 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString('OFFSET 0', $wpdb->last_get_results_query);
     }
 }
-
 class DummyWpdb
 {
     public $prefix = 'wp_';
@@ -319,4 +320,5 @@ class DummyWpdb
             'external_count' => 0,
         ];
     }
+}
 }

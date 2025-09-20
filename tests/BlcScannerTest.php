@@ -1,6 +1,8 @@
 <?php
 
 namespace {
+    require_once __DIR__ . '/translation-stubs.php';
+
     if (!class_exists('WP_Query')) {
         class WP_Query
         {
@@ -116,6 +118,13 @@ class BlcScannerTest extends TestCase
 
             return preg_replace('#^[a-z0-9+.-]+://#i', $scheme . '://', $url);
         });
+        Functions\when('wp_parse_url')->alias(function ($url, $component = -1) {
+            if ($component === -1) {
+                return parse_url((string) $url);
+            }
+
+            return parse_url((string) $url, $component);
+        });
         Functions\when('wp_kses_bad_protocol')->alias(function ($string, $allowed_protocols = []) {
             $string = (string) $string;
             $allowed_protocols = array_map('strtolower', (array) $allowed_protocols);
@@ -229,7 +238,6 @@ class BlcScannerTest extends TestCase
 
             return false;
         });
-        Functions\when('esc_url_raw')->alias(fn($url) => is_string($url) ? $url : '');
         Functions\when('update_option')->alias(function (string $option, $value) {
             $this->updatedOptions[$option] = $value;
             return true;
@@ -348,6 +356,14 @@ class BlcScannerTest extends TestCase
                 return vsprintf($query, $escaped);
             }
         };
+    }
+
+    public function test_blc_normalize_link_url_uses_site_origin_for_root_relative_paths(): void
+    {
+        $this->assertSame(
+            'https://example.com/contact',
+            blc_normalize_link_url('/contact', 'https://example.com/blog/', 'https')
+        );
     }
 
     public function test_blc_perform_check_delays_during_rest_period(): void
