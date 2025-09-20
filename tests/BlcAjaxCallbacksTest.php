@@ -54,6 +54,8 @@ class BlcAjaxCallbacksTest extends TestCase
                 if (!in_array($scheme, $allowed_protocols, true)) {
                     return preg_replace('#^[a-z0-9+.-]+:#i', '', $string);
                 }
+
+                return preg_replace('#^[a-z0-9+.-]+:#i', $scheme . ':', $string);
             }
 
             return $string;
@@ -251,6 +253,66 @@ class BlcAjaxCallbacksTest extends TestCase
         }
 
         $this->assertSame($initial, libxml_use_internal_errors());
+    }
+
+    public function test_edit_link_accepts_uppercase_scheme(): void
+    {
+        $_POST['post_id'] = 3;
+        $_POST['old_url'] = 'http://old.com';
+        $_POST['new_url'] = 'HTTPS://example.com/nouvelle-page';
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('current_user_can')->once()->with('edit_post', 3)->andReturn(true);
+
+        $post = (object) ['post_content' => '<a href="http://old.com">Link</a>'];
+        Functions\expect('get_post')->once()->with(3)->andReturn($post);
+        Functions\when('esc_url_raw')->alias(function ($url) {
+            return $url;
+        });
+
+        $captured_update = null;
+        Functions\expect('wp_update_post')->once()->andReturnUsing(function () use (&$captured_update) {
+            $captured_update = func_get_args();
+            return true;
+        });
+
+        global $wpdb;
+        $wpdb = new class {
+            public $prefix = '';
+            public $delete_args = null;
+            public function delete($table, $where, $formats)
+            {
+                $this->delete_args = [$table, $where, $formats];
+
+                return true;
+            }
+        };
+
+        Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
+            throw new \Exception('success');
+        });
+
+        try {
+            blc_ajax_edit_link_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $exception) {
+            $this->assertSame('success', $exception->getMessage());
+        }
+
+        $this->assertIsArray($captured_update);
+        $this->assertCount(2, $captured_update);
+        $this->assertIsArray($captured_update[0]);
+        $this->assertSame(3, $captured_update[0]['ID']);
+        $this->assertMatchesRegularExpression(
+            '/<a href="https:\/\/example\.com\/nouvelle-page">/i',
+            $captured_update[0]['post_content']
+        );
+        $this->assertStringNotContainsString('http://old.com', $captured_update[0]['post_content']);
+
+        $this->assertIsArray($wpdb->delete_args);
+        $this->assertSame('blc_broken_links', $wpdb->delete_args[0]);
+        $this->assertSame(['post_id' => 3, 'url' => 'http://old.com', 'type' => 'link'], $wpdb->delete_args[1]);
+        $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);
     }
 
     public function test_edit_link_accepts_relative_url_and_preserves_href(): void
