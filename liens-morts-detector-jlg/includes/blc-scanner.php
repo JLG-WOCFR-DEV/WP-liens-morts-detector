@@ -37,6 +37,29 @@ function blc_normalize_link_url($url, $site_url, $site_scheme = null) {
 
     $site_url = rtrim((string) $site_url, '/') . '/';
 
+    $trimmed_url = ltrim($url);
+    $authority_candidate = $trimmed_url;
+    $slash_position = strpos($trimmed_url, '/');
+    if ($slash_position !== false) {
+        $authority_candidate = substr($trimmed_url, 0, $slash_position);
+    }
+
+    if (
+        $authority_candidate !== '' &&
+        strpos($authority_candidate, '.') !== false &&
+        preg_match('/^[A-Za-z0-9][A-Za-z0-9.-]*(?::[0-9]+)?$/', $authority_candidate) === 1
+    ) {
+        $last_dot = strrpos($authority_candidate, '.');
+        $tld = $last_dot !== false ? substr($authority_candidate, $last_dot + 1) : '';
+
+        if ($tld !== '' && preg_match('/^[A-Za-z]{2,}$/', $tld) === 1) {
+            $scheme = ($site_scheme !== null && $site_scheme !== '') ? $site_scheme : 'http';
+            $remaining = substr($trimmed_url, strlen($authority_candidate));
+
+            return $scheme . '://' . $authority_candidate . $remaining;
+        }
+    }
+
     if (isset($parsed_url['path']) && strpos($parsed_url['path'], '/') === 0) {
         $base = rtrim($site_url, '/');
         return $base . $url;
