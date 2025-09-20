@@ -38,25 +38,36 @@ function blc_normalize_link_url($url, $site_url, $site_scheme = null) {
     $site_url = rtrim((string) $site_url, '/') . '/';
 
     $trimmed_url = ltrim($url);
-    $authority_candidate = $trimmed_url;
-    $slash_position = strpos($trimmed_url, '/');
-    if ($slash_position !== false) {
-        $authority_candidate = substr($trimmed_url, 0, $slash_position);
-    }
+    $parsed_without_scheme = parse_url('http://' . $trimmed_url);
 
     if (
-        $authority_candidate !== '' &&
-        strpos($authority_candidate, '.') !== false &&
-        preg_match('/^[A-Za-z0-9][A-Za-z0-9.-]*(?::[0-9]+)?$/', $authority_candidate) === 1
+        is_array($parsed_without_scheme) &&
+        isset($parsed_without_scheme['host']) &&
+        $parsed_without_scheme['host'] !== '' &&
+        strpos($parsed_without_scheme['host'], '.') !== false &&
+        preg_match('/^[A-Za-z0-9][A-Za-z0-9.-]*$/', $parsed_without_scheme['host']) === 1
     ) {
-        $last_dot = strrpos($authority_candidate, '.');
-        $tld = $last_dot !== false ? substr($authority_candidate, $last_dot + 1) : '';
+        $host = $parsed_without_scheme['host'];
+        $last_dot = strrpos($host, '.');
+        $tld = $last_dot !== false ? substr($host, $last_dot + 1) : '';
 
         if ($tld !== '' && preg_match('/^[A-Za-z]{2,}$/', $tld) === 1) {
             $scheme = ($site_scheme !== null && $site_scheme !== '') ? $site_scheme : 'http';
-            $remaining = substr($trimmed_url, strlen($authority_candidate));
+            $userinfo = '';
+            if (isset($parsed_without_scheme['user']) && $parsed_without_scheme['user'] !== '') {
+                $userinfo = $parsed_without_scheme['user'];
+                if (isset($parsed_without_scheme['pass']) && $parsed_without_scheme['pass'] !== '') {
+                    $userinfo .= ':' . $parsed_without_scheme['pass'];
+                }
+                $userinfo .= '@';
+            }
 
-            return $scheme . '://' . $authority_candidate . $remaining;
+            $port = isset($parsed_without_scheme['port']) ? ':' . $parsed_without_scheme['port'] : '';
+            $path = $parsed_without_scheme['path'] ?? '';
+            $query = isset($parsed_without_scheme['query']) ? '?' . $parsed_without_scheme['query'] : '';
+            $fragment = isset($parsed_without_scheme['fragment']) ? '#' . $parsed_without_scheme['fragment'] : '';
+
+            return $scheme . '://' . $userinfo . $host . $port . $path . $query . $fragment;
         }
     }
 
