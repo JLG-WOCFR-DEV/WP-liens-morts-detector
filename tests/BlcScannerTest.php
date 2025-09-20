@@ -778,6 +778,64 @@ class BlcScannerTest extends TestCase
         $this->assertSame('CDN Link', $insert['data']['anchor']);
     }
 
+    public function test_blc_perform_check_normalizes_host_with_port_without_scheme(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 415,
+            'post_title' => 'Port Without Scheme',
+            'post_content' => '<a href="www.example.com:8080/path">External Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('GET', 'https://www.example.com:8080/path', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(1, $this->httpRequests, 'Links with explicit ports should trigger one remote request.');
+        $this->assertSame('https://www.example.com:8080/path', $this->httpRequests[0]['url']);
+
+        $this->assertCount(1, $wpdb->inserted, 'A failing external link must be recorded.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('www.example.com:8080/path', $insert['data']['url'], 'Original URL should be preserved for storage.');
+        $this->assertSame('link', $insert['data']['type']);
+    }
+
+    public function test_blc_perform_check_normalizes_host_with_query_without_scheme(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 416,
+            'post_title' => 'Query Without Scheme',
+            'post_content' => '<a href="example.com?foo=bar">External Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('GET', 'https://example.com?foo=bar', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(1, $this->httpRequests, 'Links with a query should trigger one remote request.');
+        $this->assertSame('https://example.com?foo=bar', $this->httpRequests[0]['url']);
+
+        $this->assertCount(1, $wpdb->inserted, 'A failing external link must be recorded.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('example.com?foo=bar', $insert['data']['url'], 'Original URL should be preserved for storage.');
+        $this->assertSame('link', $insert['data']['type']);
+    }
+
     public function test_blc_ajax_edit_link_callback_updates_scheme_relative_url(): void
     {
         global $wpdb;
