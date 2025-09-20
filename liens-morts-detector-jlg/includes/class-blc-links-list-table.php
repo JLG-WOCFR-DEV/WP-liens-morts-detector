@@ -252,8 +252,8 @@ class BLC_Links_List_Table extends WP_List_Table {
         }
 
         $patterns['relative'] = [
-            'sql'    => 'url LIKE %s',
-            'params' => ['/%'],
+            'sql'    => '(url LIKE %s AND url NOT LIKE %s)',
+            'params' => ['/%', '//%'],
         ];
 
         $patterns['path_without_scheme'] = [
