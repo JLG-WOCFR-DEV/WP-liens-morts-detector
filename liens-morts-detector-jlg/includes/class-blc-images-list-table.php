@@ -22,8 +22,8 @@ class BLC_Images_List_Table extends WP_List_Table {
      */
     public function __construct() {
         parent::__construct([
-            'singular' => 'Image cassée',
-            'plural'   => 'Images cassées',
+            'singular' => __('Image cassée', 'liens-morts-detector-jlg'),
+            'plural'   => __('Images cassées', 'liens-morts-detector-jlg'),
             'ajax'     => false
         ]);
     }
@@ -33,9 +33,9 @@ class BLC_Images_List_Table extends WP_List_Table {
      */
     public function get_columns() {
         return [
-            'image_details' => 'Image Cassée',
-            'post_title'    => 'Trouvé dans l\'article/page',
-            'actions'       => 'Actions'
+            'image_details' => __('Image Cassée', 'liens-morts-detector-jlg'),
+            'post_title'    => __('Trouvé dans l\'article/page', 'liens-morts-detector-jlg'),
+            'actions'       => __('Actions', 'liens-morts-detector-jlg')
         ];
     }
 
@@ -45,11 +45,16 @@ class BLC_Images_List_Table extends WP_List_Table {
     protected function column_image_details($item) {
         // L'URL de l'image est maintenant un lien cliquable
         $output = sprintf(
-            '<strong><a href="%s" target="_blank" rel="noopener noreferrer" title="Vérifier cette image (nouvel onglet)">%s</a></strong>',
+            '<strong><a href="%s" target="_blank" rel="noopener noreferrer" title="%s">%s</a></strong>',
             esc_url($item['url']),
+            esc_attr__('Vérifier cette image (nouvel onglet)', 'liens-morts-detector-jlg'),
             esc_html($item['url'])
         );
-        $output .= '<div class="row-actions"><span>Nom du fichier : <em>' . esc_html($item['anchor']) . '</em></span></div>';
+        $output .= sprintf(
+            '<div class="row-actions"><span>%s <em>%s</em></span></div>',
+            esc_html__('Nom du fichier :', 'liens-morts-detector-jlg'),
+            esc_html($item['anchor'])
+        );
         return $output;
     }
 
@@ -60,7 +65,7 @@ class BLC_Images_List_Table extends WP_List_Table {
         $edit_link = get_edit_post_link($item['post_id']);
 
         if ($edit_link === false) {
-            return '&mdash;';
+            return esc_html__('—', 'liens-morts-detector-jlg');
         }
 
         return sprintf('<a href="%s">%s</a>', esc_url($edit_link), esc_html($item['post_title']));
@@ -73,10 +78,14 @@ class BLC_Images_List_Table extends WP_List_Table {
         $edit_link = get_edit_post_link($item['post_id']);
 
         if ($edit_link === false) {
-            return '&mdash;';
+            return esc_html__('—', 'liens-morts-detector-jlg');
         }
 
-        return sprintf('<a href="%s" class="button button-secondary">Modifier l\'article</a>', esc_url($edit_link));
+        return sprintf(
+            '<a href="%s" class="button button-secondary">%s</a>',
+            esc_url($edit_link),
+            esc_html__('Modifier l\'article', 'liens-morts-detector-jlg')
+        );
     }
 
     /**
