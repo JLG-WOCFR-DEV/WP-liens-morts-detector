@@ -16,6 +16,18 @@ if (!defined('ABSPATH')) {
 // Définir les constantes utiles du plugin
 define('BLC_PLUGIN_PATH', plugin_dir_path(__FILE__));
 
+// Charge le domaine de traduction du plugin.
+add_action('plugins_loaded', 'blc_load_textdomain');
+
+/**
+ * Initialise la traduction du plugin.
+ *
+ * @return void
+ */
+function blc_load_textdomain() {
+    load_plugin_textdomain('liens-morts-detector-jlg', false, dirname(plugin_basename(__FILE__)) . '/languages');
+}
+
 // --- Chargement des Fichiers ---
 // On inclut tous les fichiers nécessaires au fonctionnement.
 require_once BLC_PLUGIN_PATH . 'includes/blc-activation.php';
