@@ -245,6 +245,22 @@ function blc_ajax_edit_link_callback() {
         wp_send_json_error(['message' => 'URL invalide.']);
     }
 
+    $final_new_url = $prepared_new_url;
+    $is_explicit_new_url = (
+        preg_match('#^https?://#i', $prepared_new_url) === 1 ||
+        strpos($prepared_new_url, '//') === 0 ||
+        strpos($prepared_new_url, '/') === 0 ||
+        strpos($prepared_new_url, '#') === 0
+    );
+
+    if (!$is_explicit_new_url) {
+        if (!$validated_new_url || $normalized_new_url === '') {
+            wp_send_json_error(['message' => 'URL invalide.']);
+        }
+
+        $final_new_url = $normalized_new_url;
+    }
+
     $post = get_post($post_id);
     if (!$post) {
         $wpdb->delete(
@@ -262,7 +278,7 @@ function blc_ajax_edit_link_callback() {
     }
 
     $old_url = $prepared_old_url;
-    $new_url = $prepared_new_url;
+    $new_url = $final_new_url;
 
     $dom_data = blc_load_dom_from_post($post->post_content);
     if (isset($dom_data['error'])) {
