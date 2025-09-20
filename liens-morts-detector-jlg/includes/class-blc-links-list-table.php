@@ -113,14 +113,26 @@ class BLC_Links_List_Table extends WP_List_Table {
      * Gère le rendu de la colonne "Trouvé dans...".
      */
     protected function column_post_title($item) {
-        return sprintf('<a href="%s">%s</a>', get_edit_post_link($item['post_id']), esc_html($item['post_title']));
+        $edit_link = get_edit_post_link($item['post_id']);
+
+        if ($edit_link === false) {
+            return '&mdash;';
+        }
+
+        return sprintf('<a href="%s">%s</a>', esc_url($edit_link), esc_html($item['post_title']));
     }
 
     /**
      * Gère le rendu de la colonne "Actions".
      */
     protected function column_actions($item) {
-        return sprintf('<a href="%s" class="button button-secondary">Modifier l\'article</a>', get_edit_post_link($item['post_id']));
+        $edit_link = get_edit_post_link($item['post_id']);
+
+        if ($edit_link === false) {
+            return '&mdash;';
+        }
+
+        return sprintf('<a href="%s" class="button button-secondary">Modifier l\'article</a>', esc_url($edit_link));
     }
 
     /**
