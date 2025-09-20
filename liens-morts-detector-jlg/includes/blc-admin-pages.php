@@ -223,8 +223,34 @@ function blc_settings_page() {
     if (isset($_POST['blc_save_settings'])) {
         check_admin_referer('blc_settings_nonce');
 
+        $allowed_frequencies = array('daily', 'weekly', 'monthly');
+        $previous_frequency_option = get_option('blc_frequency', 'daily');
+        $previous_frequency_sanitized = sanitize_text_field($previous_frequency_option);
+        $fallback_frequency = in_array($previous_frequency_sanitized, $allowed_frequencies, true)
+            ? $previous_frequency_sanitized
+            : 'daily';
+
         $frequency_raw = isset($_POST['blc_frequency']) ? wp_unslash($_POST['blc_frequency']) : '';
-        $frequency = sanitize_text_field($frequency_raw);
+        $submitted_frequency = sanitize_text_field($frequency_raw);
+        $frequency_warning = '';
+
+        if (in_array($submitted_frequency, $allowed_frequencies, true)) {
+            $frequency = $submitted_frequency;
+        } else {
+            $frequency = $fallback_frequency;
+            $frequency_labels = array(
+                'daily'   => __('quotidienne', 'liens-morts-detector-jlg'),
+                'weekly'  => __('hebdomadaire', 'liens-morts-detector-jlg'),
+                'monthly' => __('mensuelle', 'liens-morts-detector-jlg'),
+            );
+            $frequency_label = isset($frequency_labels[$frequency]) ? $frequency_labels[$frequency] : $frequency;
+            $frequency_warning = sprintf(
+                /* translators: %s: fallback frequency label. */
+                esc_html__('La fréquence choisie est invalide. La valeur "%s" a été conservée.', 'liens-morts-detector-jlg'),
+                esc_html($frequency_label)
+            );
+        }
+
         update_option('blc_frequency', $frequency);
 
         $previous_rest_start = get_option('blc_rest_start_hour', '08');
@@ -260,6 +286,12 @@ function blc_settings_page() {
 
         wp_clear_scheduled_hook('blc_check_links');
         wp_schedule_event(time(), $frequency, 'blc_check_links');
+        if ($frequency_warning !== '') {
+            printf(
+                '<div class="notice notice-warning is-dismissible"><p>%s</p></div>',
+                $frequency_warning
+            );
+        }
         printf(
             '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
             esc_html__('Réglages enregistrés !', 'liens-morts-detector-jlg')
