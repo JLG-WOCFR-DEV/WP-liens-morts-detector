@@ -1326,6 +1326,48 @@ class BlcScannerTest extends TestCase
         $this->assertSame(91, $insert['data']['post_id']);
     }
 
+    public function test_blc_perform_image_check_records_document_relative_missing_images(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 94,
+            'post_title' => 'Document Relative Image Post',
+            'post_content' => '<img src="images/foo.jpg" />',
+        ];
+
+        Functions\when('get_permalink')->alias(function ($post_arg = null) use ($post) {
+            if (is_object($post_arg) && isset($post_arg->ID)) {
+                if ($post_arg->ID === $post->ID) {
+                    return 'https://example.com/wp-content/uploads/2024/05/sample-post/';
+                }
+
+                return 'https://example.com/post-' . $post_arg->ID . '/';
+            }
+
+            if (is_numeric($post_arg)) {
+                return 'https://example.com/post-' . ((int) $post_arg) . '/';
+            }
+
+            return 'https://example.com/post/';
+        });
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_image_check(0, true);
+
+        $this->assertCount(1, $wpdb->inserted, 'Document-relative upload image should be recorded when file is missing.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('images/foo.jpg', $insert['data']['url']);
+        $this->assertSame('foo.jpg', $insert['data']['anchor']);
+        $this->assertSame(94, $insert['data']['post_id']);
+        $this->assertSame('image', $insert['data']['type']);
+    }
+
     public function test_blc_perform_image_check_handles_uppercase_upload_urls(): void
     {
         global $wpdb;
