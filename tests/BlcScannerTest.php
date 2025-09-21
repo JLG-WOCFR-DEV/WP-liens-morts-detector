@@ -109,6 +109,14 @@ class BlcScannerTest extends TestCase
 
             return $base;
         });
+        Functions\when('site_url')->alias(function ($path = '', $scheme = null) {
+            $base = 'https://example.com';
+            if ($path !== '') {
+                return rtrim($base, '/') . '/' . ltrim($path, '/');
+            }
+
+            return $base;
+        });
         Functions\when('set_url_scheme')->alias(function ($url, $scheme = null) {
             $scheme = $scheme ?: 'http';
 
@@ -564,6 +572,46 @@ class BlcScannerTest extends TestCase
         $this->assertSame('link', $insert['data']['type']);
         $this->assertSame([], $this->scheduledEvents, 'No follow-up batch should be scheduled.');
         $this->assertSame($this->utcNow, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated.');
+    }
+
+    public function test_blc_perform_check_requests_internal_hosts_even_when_dns_points_to_private_network(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_scan_method'] = 'precise';
+
+        Functions\when('dns_get_record')->alias(function (...$args) {
+            return [
+                ['ip' => '127.0.0.1'],
+                ['ipv6' => '::1'],
+            ];
+        });
+        Functions\when('gethostbynamel')->alias(fn(string $hostname) => ['127.0.0.1']);
+
+        $post = (object) [
+            'ID' => 88,
+            'post_title' => 'Local Link Post',
+            'post_content' => '<a href="https://example.com/internal">Internal</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'https://example.com/internal', ['response' => ['code' => 500]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(1, $this->httpRequests, 'Internal links should still be requested despite private DNS resolution.');
+        $this->assertSame('HEAD', $this->httpRequests[0]['method']);
+        $this->assertSame('https://example.com/internal', $this->httpRequests[0]['url']);
+
+        $this->assertCount(1, $wpdb->inserted, 'The failing internal link must be recorded.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('https://example.com/internal', $insert['data']['url']);
+        $this->assertSame('link', $insert['data']['type']);
     }
 
     public function test_blc_perform_check_limits_head_requests_and_falls_back_to_get_when_needed(): void
