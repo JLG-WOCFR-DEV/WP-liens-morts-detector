@@ -334,6 +334,48 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     $scan_method     = get_option('blc_scan_method', 'precise');
     $excluded_domains_raw = get_option('blc_excluded_domains', '');
 
+    $raw_home_url = '';
+    if (function_exists('home_url')) {
+        $maybe_home_url = home_url();
+        if (is_string($maybe_home_url)) {
+            $raw_home_url = $maybe_home_url;
+        }
+    }
+
+    $raw_site_url = '';
+    if (function_exists('site_url')) {
+        $maybe_site_url = site_url();
+        if (is_string($maybe_site_url)) {
+            $raw_site_url = $maybe_site_url;
+        }
+    }
+
+    $safe_internal_hosts = [];
+    $register_internal_host = static function ($url) use (&$safe_internal_hosts) {
+        if (!is_string($url) || $url === '') {
+            return;
+        }
+
+        $host = null;
+
+        if (function_exists('wp_parse_url')) {
+            $host = wp_parse_url($url, PHP_URL_HOST);
+        }
+
+        if (!is_string($host) || $host === '') {
+            $host = parse_url($url, PHP_URL_HOST);
+        }
+
+        if (!is_string($host) || $host === '') {
+            return;
+        }
+
+        $safe_internal_hosts[strtolower($host)] = true;
+    };
+
+    $register_internal_host($raw_home_url);
+    $register_internal_host($raw_site_url);
+
     // --- 2. Contrôles pré-analyse ---
     $current_hour = (int) current_time('H');
     $is_in_rest_window = false;
@@ -499,7 +541,9 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     $upload_dir_info = wp_upload_dir();
     $upload_baseurl  = isset($upload_dir_info['baseurl']) ? trailingslashit($upload_dir_info['baseurl']) : '';
     $upload_basedir  = isset($upload_dir_info['basedir']) ? trailingslashit($upload_dir_info['basedir']) : '';
-    $raw_home_url    = home_url();
+    if ($raw_home_url === '' && function_exists('home_url')) {
+        $raw_home_url = home_url();
+    }
     $site_url        = trailingslashit($raw_home_url);
     $site_scheme     = parse_url($raw_home_url, PHP_URL_SCHEME);
     if (!is_string($site_scheme) || $site_scheme === '') {
@@ -617,7 +661,9 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
             if ($is_excluded) { continue; }
 
-            if (!blc_is_safe_remote_host($host)) {
+            $is_internal_safe_host = isset($safe_internal_hosts[$normalized_host]);
+
+            if (!$is_internal_safe_host && !blc_is_safe_remote_host($host)) {
                 if ($debug_mode) { error_log("  -> Lien ignoré (IP non autorisée) : " . $normalized_url); }
                 continue;
             }
