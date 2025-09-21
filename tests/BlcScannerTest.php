@@ -1170,5 +1170,57 @@ class BlcScannerTest extends TestCase
         $this->assertSame('missing.jpg', $insert['data']['anchor']);
         $this->assertSame(91, $insert['data']['post_id']);
     }
+
+    public function test_blc_perform_image_check_handles_uppercase_upload_urls(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $uploads_dir = sys_get_temp_dir() . '/uploads-test';
+        $image_dir = $uploads_dir . '/2024/05';
+        if (!is_dir($image_dir) && !mkdir($image_dir, 0777, true) && !is_dir($image_dir)) {
+            $this->fail('Unable to create uploads directory for test.');
+        }
+
+        $existing_file = $image_dir . '/PRESENT-UPPER.jpg';
+        if (file_put_contents($existing_file, 'img') === false) {
+            $this->fail('Unable to create uploads image file for test.');
+        }
+
+        $post = (object) [
+            'ID' => 93,
+            'post_title' => 'Uppercase Uploads',
+            'post_content' => '<img src="HTTPS://EXAMPLE.COM/WP-CONTENT/UPLOADS/2024/05/PRESENT-UPPER.jpg" />'
+                . '<img src="HTTPS://EXAMPLE.COM/WP-CONTENT/UPLOADS/2024/05/MISSING-UPPER.jpg" />',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        try {
+            blc_perform_image_check(0, true);
+        } finally {
+            @unlink($existing_file);
+            @rmdir($image_dir);
+            @rmdir(dirname($image_dir));
+        }
+
+        $this->assertCount(
+            1,
+            $wpdb->inserted,
+            'Only the missing uppercase upload should be flagged despite case differences.'
+        );
+
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('image', $insert['data']['type']);
+        $this->assertSame('MISSING-UPPER.jpg', $insert['data']['anchor']);
+        $this->assertSame(
+            'HTTPS://EXAMPLE.COM/WP-CONTENT/UPLOADS/2024/05/MISSING-UPPER.jpg',
+            $insert['data']['url']
+        );
+        $this->assertSame(93, $insert['data']['post_id']);
+    }
 }
 }
