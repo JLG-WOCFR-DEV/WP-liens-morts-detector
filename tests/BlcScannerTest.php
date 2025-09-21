@@ -154,6 +154,17 @@ class BlcScannerTest extends TestCase
         Functions\when('trailingslashit')->alias(function ($value) {
             return rtrim((string) $value, "\\/\t\n\r\f ") . '/';
         });
+        Functions\when('get_permalink')->alias(function ($post = null) {
+            if (is_object($post) && isset($post->ID)) {
+                return 'https://example.com/post-' . $post->ID . '/';
+            }
+
+            if (is_numeric($post)) {
+                return 'https://example.com/post-' . ((int) $post) . '/';
+            }
+
+            return 'https://example.com/post/';
+        });
         Functions\when('wp_timezone')->alias(fn() => new \DateTimeZone('UTC'));
         Functions\when('wp_timezone_string')->alias(fn() => 'UTC');
         Functions\when('plugin_dir_path')->alias(fn($file) => rtrim(dirname((string) $file), '/\\') . '/');
@@ -363,6 +374,26 @@ class BlcScannerTest extends TestCase
         $this->assertSame(
             'https://example.com/contact',
             blc_normalize_link_url('/contact', 'https://example.com/blog/', 'https')
+        );
+    }
+
+    public function test_blc_normalize_link_url_resolves_relative_paths_against_permalink(): void
+    {
+        $permalink = 'https://example.com/blog/articles/mon-post/';
+
+        $this->assertSame(
+            'https://example.com/blog/articles/mon-post/section/page.html',
+            blc_normalize_link_url('section/page.html', 'https://example.com/blog/', 'https', $permalink)
+        );
+    }
+
+    public function test_blc_normalize_link_url_supports_parent_directory_segments(): void
+    {
+        $permalink = 'https://example.com/blog/articles/mon-post/';
+
+        $this->assertSame(
+            'https://example.com/blog/articles/fichier',
+            blc_normalize_link_url('../fichier', 'https://example.com/blog/', 'https', $permalink)
         );
     }
 
@@ -934,6 +965,60 @@ class BlcScannerTest extends TestCase
 
         $this->assertCount(1, $wpdb->deleted, 'Original URL should be removed from the broken links table.');
         $this->assertSame('//cdn.example.com/foo', $wpdb->deleted[0]['where']['url']);
+    }
+
+    public function test_blc_ajax_edit_link_callback_preserves_relative_href_in_dom(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post_id = 742;
+        $original_content = '<p><a href="https://example.com/old">Old</a></p>';
+
+        Functions\when('get_post')->alias(function (int $requested_post_id) use ($post_id, $original_content) {
+            if ($requested_post_id === $post_id) {
+                return (object) ['ID' => $post_id, 'post_content' => $original_content];
+            }
+
+            return null;
+        });
+
+        Functions\when('get_permalink')->alias(function ($post = null) use ($post_id) {
+            if (is_object($post) && isset($post->ID) && $post->ID === $post_id) {
+                return 'https://example.com/blog/articles/mon-post/';
+            }
+
+            if (is_numeric($post) && (int) $post === $post_id) {
+                return 'https://example.com/blog/articles/mon-post/';
+            }
+
+            return 'https://example.com/post/';
+        });
+
+        $_POST = [
+            'post_id'    => (string) $post_id,
+            'old_url'    => 'https://example.com/old',
+            'new_url'    => 'section/page.html',
+            '_ajax_nonce' => 'nonce',
+        ];
+
+        try {
+            blc_ajax_edit_link_callback();
+            $this->fail('Expected wp_send_json_success to terminate execution.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('wp_send_json_success', $exception->getMessage());
+        }
+
+        $this->assertNotNull($this->ajaxResponse, 'AJAX response should be captured.');
+        $this->assertTrue($this->ajaxResponse['success'], 'AJAX call should succeed.');
+
+        $this->assertCount(1, $this->updatedPosts, 'The post content should be updated once.');
+        $update = $this->updatedPosts[0]['data'];
+        $this->assertStringContainsString('section/page.html', $update['post_content']);
+        $this->assertStringNotContainsString('https://example.com/blog/articles/mon-post/section/page.html', $update['post_content']);
+
+        $this->assertCount(1, $wpdb->deleted, 'Original URL should be removed from the broken links table.');
+        $this->assertSame('https://example.com/old', $wpdb->deleted[0]['where']['url']);
     }
 
     public function test_blc_perform_check_batches_and_reschedules_next_batch(): void
