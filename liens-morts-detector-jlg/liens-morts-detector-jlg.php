@@ -170,7 +170,12 @@ function blc_require_post_params(array $required_params) {
 
     foreach ($required_params as $param) {
         if (!isset($_POST[$param])) {
-            wp_send_json_error(['message' => sprintf('Le paramètre requis "%s" est manquant ou vide.', $param)]);
+            wp_send_json_error([
+                'message' => sprintf(
+                    __('Le paramètre requis "%s" est manquant ou vide.', 'liens-morts-detector-jlg'),
+                    $param
+                ),
+            ]);
         }
 
         $raw_value = wp_unslash($_POST[$param]);
@@ -184,7 +189,12 @@ function blc_require_post_params(array $required_params) {
         }
 
         if ($value === '') {
-            wp_send_json_error(['message' => sprintf('Le paramètre requis "%s" est manquant ou vide.', $param)]);
+            wp_send_json_error([
+                'message' => sprintf(
+                    __('Le paramètre requis "%s" est manquant ou vide.', 'liens-morts-detector-jlg'),
+                    $param
+                ),
+            ]);
         }
 
         $values[$param] = $value;
@@ -220,12 +230,12 @@ function blc_ajax_edit_link_callback() {
     $prepared_new_url = blc_prepare_posted_url($raw_new_url);
 
     if ($prepared_new_url === '') {
-        wp_send_json_error(['message' => 'URL invalide.']);
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
     }
 
     $sanitized_new_url = wp_kses_bad_protocol($prepared_new_url, ['http', 'https']);
     if (!is_string($sanitized_new_url) || $sanitized_new_url === '') {
-        wp_send_json_error(['message' => 'URL invalide.']);
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
     }
 
     $normalize_scheme_case = static function ($url) {
@@ -241,7 +251,7 @@ function blc_ajax_edit_link_callback() {
     };
 
     if ($normalize_scheme_case($sanitized_new_url) !== $normalize_scheme_case($prepared_new_url)) {
-        wp_send_json_error(['message' => 'URL invalide.']);
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
     }
 
     $prepared_new_url = $sanitized_new_url;
@@ -272,7 +282,7 @@ function blc_ajax_edit_link_callback() {
         empty($validated_new_parts['scheme']) ||
         !in_array($validated_new_parts['scheme'], ['http', 'https'], true)
     ) {
-        wp_send_json_error(['message' => 'URL invalide.']);
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
     }
 
     $final_new_url = $prepared_new_url;
@@ -285,7 +295,7 @@ function blc_ajax_edit_link_callback() {
 
     if (!$is_explicit_new_url) {
         if (!$validated_new_url || $normalized_new_url === '') {
-            wp_send_json_error(['message' => 'URL invalide.']);
+            wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
         }
 
         $final_new_url = $normalized_new_url;
@@ -304,7 +314,7 @@ function blc_ajax_edit_link_callback() {
     }
 
     if (!current_user_can('edit_post', $post_id)) {
-        wp_send_json_error(['message' => 'Permissions insuffisantes.']);
+        wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')]);
     }
 
     $old_url = $prepared_old_url;
@@ -325,7 +335,7 @@ function blc_ajax_edit_link_callback() {
     $anchors = $xpath->query(sprintf('//a[@href=%s]', blc_xpath_escape($old_url)));
 
     if ($anchors->length === 0) {
-        wp_send_json_error(['message' => 'Le lien n\'a pas été trouvé dans le contenu de l\'article.']);
+        wp_send_json_error(['message' => __('Le lien n\'a pas été trouvé dans le contenu de l\'article.', 'liens-morts-detector-jlg')]);
     }
 
     foreach ($anchors as $a) {
@@ -340,7 +350,7 @@ function blc_ajax_edit_link_callback() {
     ], true);
 
     if (!$update_result || is_wp_error($update_result)) {
-        $error_message = 'La mise à jour de l\'article a échoué.';
+        $error_message = __('La mise à jour de l\'article a échoué.', 'liens-morts-detector-jlg');
         if (is_wp_error($update_result)) {
             $error_message .= ' ' . $update_result->get_error_message();
         }
@@ -357,7 +367,7 @@ function blc_ajax_edit_link_callback() {
     );
 
     if ($delete_result === false || is_wp_error($delete_result)) {
-        $error_message = 'La suppression du lien dans la base de données a échoué.';
+        $error_message = __('La suppression du lien dans la base de données a échoué.', 'liens-morts-detector-jlg');
         if (is_wp_error($delete_result)) {
             $error_message .= ' ' . $delete_result->get_error_message();
         }
@@ -394,7 +404,7 @@ function blc_ajax_unlink_callback() {
 
     $normalized_parts = $normalized_url !== '' ? parse_url($normalized_url) : false;
     if (!$normalized_url || $normalized_parts === false || empty($normalized_parts['scheme']) || !in_array($normalized_parts['scheme'], ['http', 'https'], true)) {
-        wp_send_json_error(['message' => 'URL invalide.']);
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
     }
 
     $post = get_post($post_id);
@@ -410,12 +420,12 @@ function blc_ajax_unlink_callback() {
     }
 
     if (!current_user_can('edit_post', $post_id)) {
-        wp_send_json_error(['message' => 'Permissions insuffisantes.']);
+        wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')]);
     }
 
     $url_to_unlink = blc_prepare_posted_url($raw_url_to_unlink);
     if ($url_to_unlink === '') {
-        wp_send_json_error(['message' => 'URL invalide.']);
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
     }
 
     $dom_data = blc_load_dom_from_post($post->post_content);
@@ -433,7 +443,7 @@ function blc_ajax_unlink_callback() {
     $anchors = $xpath->query(sprintf('//a[@href=%s]', blc_xpath_escape($url_to_unlink)));
 
     if ($anchors->length === 0) {
-        wp_send_json_error(['message' => 'Le lien n\'a pas été trouvé dans le contenu de l\'article.']);
+        wp_send_json_error(['message' => __('Le lien n\'a pas été trouvé dans le contenu de l\'article.', 'liens-morts-detector-jlg')]);
     }
 
     foreach ($anchors as $a) {
@@ -452,7 +462,7 @@ function blc_ajax_unlink_callback() {
     ], true);
 
     if (!$update_result || is_wp_error($update_result)) {
-        $error_message = 'La mise à jour de l\'article a échoué.';
+        $error_message = __('La mise à jour de l\'article a échoué.', 'liens-morts-detector-jlg');
         if (is_wp_error($update_result)) {
             $error_message .= ' ' . $update_result->get_error_message();
         }
@@ -469,7 +479,7 @@ function blc_ajax_unlink_callback() {
     );
 
     if ($delete_result === false || is_wp_error($delete_result)) {
-        $error_message = 'La suppression du lien dans la base de données a échoué.';
+        $error_message = __('La suppression du lien dans la base de données a échoué.', 'liens-morts-detector-jlg');
         if (is_wp_error($delete_result)) {
             $error_message .= ' ' . $delete_result->get_error_message();
         }

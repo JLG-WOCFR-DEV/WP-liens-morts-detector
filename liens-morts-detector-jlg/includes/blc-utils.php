@@ -35,7 +35,7 @@ function blc_load_dom_from_post($post_content) {
     libxml_use_internal_errors($previous);
 
     if (!$loaded) {
-        $message = 'Impossible de charger le contenu HTML de l\'article.';
+        $message = __('Impossible de charger le contenu HTML de l\'article.', 'liens-morts-detector-jlg');
 
         if (!empty($errors)) {
             $first_error = reset($errors);
