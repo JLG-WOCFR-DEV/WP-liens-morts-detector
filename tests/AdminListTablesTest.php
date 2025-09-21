@@ -113,15 +113,15 @@ class AdminListTablesTest extends TestCase
         $table = new \BLC_Links_List_Table();
         $table->prepare_items();
 
-        $this->assertStringContainsString("(url LIKE 'https://example.com%')", $wpdb->last_get_var_query);
-        $this->assertStringContainsString("(url LIKE 'http://example.com%')", $wpdb->last_get_var_query);
-        $this->assertStringContainsString("(url LIKE '//example.com%')", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("(url LIKE 'https://example.com%' AND url REGEXP '^https://example\\\.com(?:[/?#]|$)')", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("(url LIKE 'http://example.com%' AND url REGEXP '^http://example\\\.com(?:[/?#]|$)')", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("(url LIKE '//example.com%' AND url REGEXP '^//example\\\.com(?:[/?#]|$)')", $wpdb->last_get_var_query);
         $this->assertStringContainsString("url LIKE '/%' AND url NOT LIKE '//%'", $wpdb->last_get_var_query);
         $this->assertStringContainsString("(url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_var_query);
 
-        $this->assertStringContainsString("(url LIKE 'https://example.com%')", $wpdb->last_get_results_query);
-        $this->assertStringContainsString("(url LIKE 'http://example.com%')", $wpdb->last_get_results_query);
-        $this->assertStringContainsString("(url LIKE '//example.com%')", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("(url LIKE 'https://example.com%' AND url REGEXP '^https://example\\\.com(?:[/?#]|$)')", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("(url LIKE 'http://example.com%' AND url REGEXP '^http://example\\\.com(?:[/?#]|$)')", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("(url LIKE '//example.com%' AND url REGEXP '^//example\\\.com(?:[/?#]|$)')", $wpdb->last_get_results_query);
         $this->assertStringContainsString("url LIKE '/%' AND url NOT LIKE '//%'", $wpdb->last_get_results_query);
         $this->assertStringContainsString("(url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_results_query);
     }
@@ -138,19 +138,44 @@ class AdminListTablesTest extends TestCase
         $table = new \BLC_Links_List_Table();
         $table->prepare_items();
 
-        $this->assertStringContainsString("NOT (url LIKE 'https://example.com%')", $wpdb->last_get_var_query);
-        $this->assertStringContainsString("NOT (url LIKE 'http://example.com%')", $wpdb->last_get_var_query);
-        $this->assertStringContainsString("NOT (url LIKE '//example.com%')", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("NOT ((url LIKE 'https://example.com%' AND url REGEXP '^https://example\\\.com(?:[/?#]|$)'))", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("NOT ((url LIKE 'http://example.com%' AND url REGEXP '^http://example\\\.com(?:[/?#]|$)'))", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("NOT ((url LIKE '//example.com%' AND url REGEXP '^//example\\\.com(?:[/?#]|$)'))", $wpdb->last_get_var_query);
         $this->assertStringContainsString("NOT ((url LIKE '/%' AND url NOT LIKE '//%'))", $wpdb->last_get_var_query);
         $this->assertStringContainsString("NOT ((url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_var_query);
 
-        $this->assertStringContainsString("NOT (url LIKE 'https://example.com%')", $wpdb->last_get_results_query);
-        $this->assertStringContainsString("NOT (url LIKE 'http://example.com%')", $wpdb->last_get_results_query);
-        $this->assertStringContainsString("NOT (url LIKE '//example.com%')", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("NOT ((url LIKE 'https://example.com%' AND url REGEXP '^https://example\\\.com(?:[/?#]|$)'))", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("NOT ((url LIKE 'http://example.com%' AND url REGEXP '^http://example\\\.com(?:[/?#]|$)'))", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("NOT ((url LIKE '//example.com%' AND url REGEXP '^//example\\\.com(?:[/?#]|$)'))", $wpdb->last_get_results_query);
         $this->assertStringContainsString("NOT ((url LIKE '/%' AND url NOT LIKE '//%'))", $wpdb->last_get_results_query);
         $this->assertStringContainsString("NOT ((url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_results_query);
         $this->assertStringContainsString('url IS NULL', $wpdb->last_get_results_query);
         $this->assertStringContainsString("url = ''", $wpdb->last_get_results_query);
+    }
+
+    public function test_links_prepare_items_external_filter_includes_lookalike_domains(): void
+    {
+        global $wpdb;
+        $wpdb = new DummyWpdb();
+        $wpdb->get_var_return_values = [1];
+
+        $evil_url = 'https://example.com.evil.com/page';
+        $wpdb->results_to_return = [
+            [
+                'url'        => $evil_url,
+                'anchor'     => 'Evil link',
+                'post_id'    => 42,
+                'post_title' => 'Traps',
+            ],
+        ];
+
+        $_GET['link_type'] = 'external';
+
+        $table = new \BLC_Links_List_Table();
+        $table->prepare_items();
+
+        $this->assertSame([$wpdb->results_to_return[0]], $table->items);
+        $this->assertStringContainsString("NOT ((url LIKE 'https://example.com%' AND url REGEXP '^https://example\\\.com(?:[/?#]|$)'))", $wpdb->last_get_results_query);
     }
 
     public function test_links_get_views_counts_internal_patterns(): void
@@ -170,17 +195,20 @@ class AdminListTablesTest extends TestCase
 
         $this->assertArrayHasKey('internal', $views);
         $this->assertArrayHasKey('external', $views);
-        $this->assertStringContainsString("CASE WHEN url LIKE 'https://example.com%' THEN 1", $wpdb->last_get_row_query);
-        $this->assertStringContainsString("WHEN url LIKE 'http://example.com%' THEN 1", $wpdb->last_get_row_query);
-        $this->assertStringContainsString("'//example.com%'", $wpdb->last_get_row_query);
+        $this->assertStringContainsString("CASE WHEN (url LIKE 'https://example.com%' AND url REGEXP '^https://example\\\.com(?:[/?#]|$)') THEN 1", $wpdb->last_get_row_query);
+        $this->assertStringContainsString("WHEN (url LIKE 'http://example.com%' AND url REGEXP '^http://example\\\.com(?:[/?#]|$)') THEN 1", $wpdb->last_get_row_query);
+        $this->assertStringContainsString("(url LIKE '//example.com%' AND url REGEXP '^//example\\\.com(?:[/?#]|$)')", $wpdb->last_get_row_query);
         $this->assertStringContainsString("'/%'", $wpdb->last_get_row_query);
         $this->assertStringContainsString("WHEN (url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_row_query);
         $prepare_call = end($wpdb->prepare_calls);
         $this->assertIsArray($prepare_call);
         $this->assertSame('link', end($prepare_call[1]));
         $this->assertContains('https://example.com%', $prepare_call[1]);
+        $this->assertContains('^https://example\\.com(?:[/?#]|$)', $prepare_call[1]);
         $this->assertContains('http://example.com%', $prepare_call[1]);
+        $this->assertContains('^http://example\\.com(?:[/?#]|$)', $prepare_call[1]);
         $this->assertContains('//example.com%', $prepare_call[1]);
+        $this->assertContains('^//example\\.com(?:[/?#]|$)', $prepare_call[1]);
         $this->assertContains('/%', $prepare_call[1]);
         $this->assertContains('%://%', $prepare_call[1]);
         $this->assertContains('//%', $prepare_call[1]);
