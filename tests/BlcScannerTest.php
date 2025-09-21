@@ -66,11 +66,18 @@ class BlcScannerTest extends TestCase
     /** @var array{success: bool, data: mixed}|null */
     private ?array $ajaxResponse = null;
 
+    /** @var array<int, string> */
+    private array $customPermalinks = [];
+
+    private static ?self $currentInstance = null;
+
     protected function setUp(): void
     {
         parent::setUp();
         require_once __DIR__ . '/../vendor/autoload.php';
         Monkey\setUp();
+
+        self::$currentInstance = $this;
 
         if (!defined('ABSPATH')) {
             define('ABSPATH', __DIR__ . '/../');
@@ -98,6 +105,7 @@ class BlcScannerTest extends TestCase
         $this->utcNow = 1000;
         $GLOBALS['wp_query_queue'] = [];
         $GLOBALS['wp_query_last_args'] = [];
+        $this->customPermalinks = [];
 
         Functions\when('get_option')->alias(fn(string $name, $default = false) => $this->options[$name] ?? $default);
         Functions\when('apply_filters')->alias(fn(string $hook, $value, ...$args) => $value);
@@ -268,12 +276,21 @@ class BlcScannerTest extends TestCase
             throw new \RuntimeException('wp_send_json_error');
         });
 
+        Functions\when('get_permalink')->alias(function ($post = null) {
+            if (!self::$currentInstance instanceof self) {
+                return 'https://example.com/';
+            }
+
+            return self::$currentInstance->resolvePermalink($post);
+        });
+
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-scanner.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/liens-morts-detector-jlg.php';
     }
 
     protected function tearDown(): void
     {
+        self::$currentInstance = null;
         Monkey\tearDown();
         parent::tearDown();
         unset($GLOBALS['wp_query_queue'], $GLOBALS['wp_query_last_args']);
@@ -281,6 +298,35 @@ class BlcScannerTest extends TestCase
         $this->ajaxResponse = null;
         global $wpdb;
         $wpdb = null;
+    }
+
+    /**
+     * @param mixed $post
+     */
+    private function resolvePermalink($post): string
+    {
+        $post_id = 0;
+        if (is_object($post) && isset($post->ID)) {
+            $post_id = (int) $post->ID;
+        } elseif (is_numeric($post)) {
+            $post_id = (int) $post;
+        }
+
+        if ($post_id !== 0 && isset($this->customPermalinks[$post_id])) {
+            return $this->customPermalinks[$post_id];
+        }
+
+        $base = rtrim(home_url(), '/');
+        if ($post_id !== 0) {
+            return $base . '/?p=' . $post_id;
+        }
+
+        return $base . '/';
+    }
+
+    private function setPermalinkForPost(int $post_id, string $permalink): void
+    {
+        $this->customPermalinks[$post_id] = $permalink;
     }
 
     private function mockHttpRequest(string $method, string $url, array $args = []): array
@@ -363,6 +409,32 @@ class BlcScannerTest extends TestCase
         $this->assertSame(
             'https://example.com/contact',
             blc_normalize_link_url('/contact', 'https://example.com/blog/', 'https')
+        );
+    }
+
+    public function test_blc_normalize_link_url_resolves_relative_paths_with_document_permalink(): void
+    {
+        $this->assertSame(
+            'https://example.com/docs/tutorial/section/page.html',
+            blc_normalize_link_url(
+                'section/page.html',
+                'https://example.com/',
+                'https',
+                'https://example.com/docs/tutorial/'
+            )
+        );
+    }
+
+    public function test_blc_normalize_link_url_resolves_parent_directory_segments(): void
+    {
+        $this->assertSame(
+            'https://example.com/docs/fichier',
+            blc_normalize_link_url(
+                '../fichier',
+                'https://example.com/',
+                'https',
+                'https://example.com/docs/tutorial/'
+            )
         );
     }
 
@@ -835,6 +907,38 @@ class BlcScannerTest extends TestCase
         $this->assertSame('CDN Link', $insert['data']['anchor']);
     }
 
+    public function test_blc_perform_check_resolves_relative_links_against_permalink(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post_id = 901;
+        $post = (object) [
+            'ID' => $post_id,
+            'post_title' => 'Relative Link Post',
+            'post_content' => '<a href="section/page.html">Relative Link</a>',
+        ];
+
+        $this->setPermalinkForPost($post_id, 'https://example.com/docs/tutorial/');
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $expected_url = 'https://example.com/docs/tutorial/section/page.html';
+        $this->setHttpResponse('HEAD', $expected_url, ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertNotEmpty($this->httpRequests, 'Relative links should trigger an HTTP request.');
+        $this->assertSame($expected_url, $this->httpRequests[0]['url']);
+
+        $this->assertCount(1, $wpdb->inserted, 'Broken relative link should be recorded.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('section/page.html', $insert['data']['url'], 'Original relative URL should be preserved.');
+    }
+
     public function test_blc_perform_check_normalizes_host_with_port_without_scheme(): void
     {
         global $wpdb;
@@ -934,6 +1038,54 @@ class BlcScannerTest extends TestCase
 
         $this->assertCount(1, $wpdb->deleted, 'Original URL should be removed from the broken links table.');
         $this->assertSame('//cdn.example.com/foo', $wpdb->deleted[0]['where']['url']);
+    }
+
+    public function test_blc_ajax_edit_link_callback_preserves_relative_href_value(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post_id = 613;
+        $original_content = '<p><a href="old.html">Old Link</a></p>';
+
+        Functions\when('get_post')->alias(function (int $requested_post_id) use ($post_id, $original_content) {
+            if ($requested_post_id === $post_id) {
+                return (object) [
+                    'ID' => $post_id,
+                    'post_content' => $original_content,
+                    'post_title' => 'Relative Link Article',
+                ];
+            }
+
+            return null;
+        });
+
+        $this->setPermalinkForPost($post_id, 'https://example.com/docs/tutorial/');
+
+        $_POST = [
+            'post_id'    => (string) $post_id,
+            'old_url'    => 'old.html',
+            'new_url'    => 'section/page.html',
+            '_ajax_nonce' => 'nonce',
+        ];
+
+        try {
+            blc_ajax_edit_link_callback();
+            $this->fail('Expected wp_send_json_success to terminate execution.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('wp_send_json_success', $exception->getMessage());
+        }
+
+        $this->assertNotNull($this->ajaxResponse, 'AJAX response should be captured.');
+        $this->assertTrue($this->ajaxResponse['success'], 'AJAX call should succeed.');
+
+        $this->assertCount(1, $this->updatedPosts, 'Post content should be updated once.');
+        $updated_content = $this->updatedPosts[0]['data']['post_content'];
+        $this->assertStringContainsString('href="section/page.html"', $updated_content, 'Relative URL should be preserved in DOM.');
+        $this->assertStringNotContainsString('https://example.com/docs/tutorial/section/page.html', $updated_content, 'Normalized absolute URL must not be written to DOM.');
+
+        $this->assertCount(1, $wpdb->deleted, 'Original URL should be removed from the broken links table.');
+        $this->assertSame('old.html', $wpdb->deleted[0]['where']['url']);
     }
 
     public function test_blc_perform_check_batches_and_reschedules_next_batch(): void

@@ -9,13 +9,14 @@ if (!function_exists('blc_normalize_hour_option')) {
 /**
  * Normalize a link URL while preserving the original value for storage/display.
  *
- * @param string      $url        Original URL extracted from the content.
- * @param string      $site_url   Site URL with trailing slash.
- * @param string|null $site_scheme Current site scheme (http/https).
+ * @param string      $url          Original URL extracted from the content.
+ * @param string      $site_url     Site URL with trailing slash.
+ * @param string|null $site_scheme  Current site scheme (http/https).
+ * @param string|null $document_url Permalink or base URL of the current document.
  *
  * @return string Normalized URL suitable for validation.
  */
-function blc_normalize_link_url($url, $site_url, $site_scheme = null) {
+function blc_normalize_link_url($url, $site_url, $site_scheme = null, $document_url = null) {
     $url = (string) $url;
     if ($url === '') {
         return '';
@@ -54,6 +55,73 @@ function blc_normalize_link_url($url, $site_url, $site_scheme = null) {
         if (isset($site_parts['port']) && $site_parts['port'] !== '') {
             $site_origin .= ':' . $site_parts['port'];
         }
+    }
+
+    $document_url = is_string($document_url) ? trim($document_url) : '';
+    $document_origin = '';
+    $document_directory = '';
+
+    if ($document_url !== '') {
+        $document_parts = null;
+        if (function_exists('wp_parse_url')) {
+            $document_parts = wp_parse_url($document_url);
+        }
+
+        if (!is_array($document_parts)) {
+            $document_parts = parse_url($document_url);
+        }
+
+        if (is_array($document_parts)) {
+            if (
+                isset($document_parts['scheme'], $document_parts['host']) &&
+                $document_parts['scheme'] !== '' &&
+                $document_parts['host'] !== ''
+            ) {
+                $document_origin = $document_parts['scheme'] . '://' . $document_parts['host'];
+                if (isset($document_parts['port']) && $document_parts['port'] !== '') {
+                    $document_origin .= ':' . $document_parts['port'];
+                }
+            }
+
+            if (isset($document_parts['path'])) {
+                $document_path = (string) $document_parts['path'];
+                if ($document_path !== '') {
+                    if (substr($document_path, -1) === '/') {
+                        $document_directory = $document_path;
+                    } else {
+                        $last_slash = strrpos($document_path, '/');
+                        if ($last_slash === false) {
+                            $document_directory = '/';
+                        } else {
+                            $document_directory = substr($document_path, 0, $last_slash + 1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if ($document_origin === '') {
+        $document_origin = $site_origin;
+    }
+
+    if ($document_directory === '') {
+        $document_directory = '';
+        if (is_array($site_parts) && isset($site_parts['path']) && $site_parts['path'] !== '') {
+            $document_directory = rtrim($site_parts['path'], '/') . '/';
+        }
+
+        if ($document_directory === '') {
+            $document_directory = '/';
+        }
+    }
+
+    if ($document_directory === '') {
+        $document_directory = '/';
+    }
+
+    if ($document_directory[0] !== '/') {
+        $document_directory = '/' . ltrim($document_directory, '/');
     }
 
     $trimmed_url = ltrim($url);
@@ -97,6 +165,52 @@ function blc_normalize_link_url($url, $site_url, $site_scheme = null) {
 
         $base = rtrim($site_url, '/');
         return $base . $url;
+    }
+
+    if (isset($parsed_url['path']) && $parsed_url['path'] !== '' && strpos($parsed_url['path'], '/') !== 0) {
+        $relative_path = $parsed_url['path'];
+        $trailing_slash = substr($relative_path, -1) === '/';
+
+        $base_segments = [];
+        $trimmed_directory = trim($document_directory, '/');
+        if ($trimmed_directory !== '') {
+            $base_segments = explode('/', $trimmed_directory);
+        }
+
+        $relative_segments = explode('/', $relative_path);
+        foreach ($relative_segments as $segment) {
+            if ($segment === '' || $segment === '.') {
+                continue;
+            }
+
+            if ($segment === '..') {
+                if (!empty($base_segments)) {
+                    array_pop($base_segments);
+                }
+                continue;
+            }
+
+            $base_segments[] = $segment;
+        }
+
+        $resolved_path = '/' . implode('/', $base_segments);
+        if ($resolved_path !== '/' && $trailing_slash) {
+            $resolved_path .= '/';
+        }
+
+        $origin = $document_origin !== '' ? $document_origin : $site_origin;
+        if ($origin === '') {
+            $origin = rtrim($site_url, '/');
+        }
+
+        if ($origin === '') {
+            return '';
+        }
+
+        $query = isset($parsed_url['query']) ? '?' . $parsed_url['query'] : '';
+        $fragment = isset($parsed_url['fragment']) ? '#' . $parsed_url['fragment'] : '';
+
+        return $origin . $resolved_path . $query . $fragment;
     }
 
     return $site_url . ltrim($url, '/');
@@ -359,6 +473,11 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
         $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
 
+        $document_permalink = get_permalink($post);
+        if (!is_string($document_permalink) || $document_permalink === '') {
+            $document_permalink = null;
+        }
+
         $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
         if (!$dom instanceof DOMDocument) {
             continue;
@@ -375,7 +494,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             $url_for_storage    = blc_prepare_url_for_storage($original_url);
             $anchor_for_storage = blc_prepare_text_field_for_storage($anchor_text);
 
-            $normalized_url = blc_normalize_link_url($original_url, $site_url, $site_scheme);
+            $normalized_url = blc_normalize_link_url($original_url, $site_url, $site_scheme, $document_permalink);
             if ($normalized_url === '') {
                 continue;
             }
