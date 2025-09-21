@@ -9,13 +9,14 @@ if (!function_exists('blc_normalize_hour_option')) {
 /**
  * Normalize a link URL while preserving the original value for storage/display.
  *
- * @param string      $url        Original URL extracted from the content.
- * @param string      $site_url   Site URL with trailing slash.
- * @param string|null $site_scheme Current site scheme (http/https).
+ * @param string      $url          Original URL extracted from the content.
+ * @param string      $site_url     Site URL with trailing slash.
+ * @param string|null $site_scheme  Current site scheme (http/https).
+ * @param string|null $document_url Absolute permalink of the current document.
  *
  * @return string Normalized URL suitable for validation.
  */
-function blc_normalize_link_url($url, $site_url, $site_scheme = null) {
+function blc_normalize_link_url($url, $site_url, $site_scheme = null, $document_url = null) {
     $url = (string) $url;
     if ($url === '') {
         return '';
@@ -48,13 +49,89 @@ function blc_normalize_link_url($url, $site_url, $site_scheme = null) {
         $site_parts = parse_url($site_url);
     }
 
-    if (is_array($site_parts) && isset($site_parts['scheme'], $site_parts['host'])) {
-        $site_origin = $site_parts['scheme'] . '://' . $site_parts['host'];
+    $site_path = '/';
+    if (is_array($site_parts)) {
+        if (isset($site_parts['scheme'], $site_parts['host'])) {
+            $site_origin = $site_parts['scheme'] . '://' . $site_parts['host'];
 
-        if (isset($site_parts['port']) && $site_parts['port'] !== '') {
-            $site_origin .= ':' . $site_parts['port'];
+            if (isset($site_parts['port']) && $site_parts['port'] !== '') {
+                $site_origin .= ':' . $site_parts['port'];
+            }
+        }
+
+        if (isset($site_parts['path']) && $site_parts['path'] !== '') {
+            $site_path = $site_parts['path'];
         }
     }
+
+    if (!is_string($site_path) || $site_path === '') {
+        $site_path = '/';
+    }
+
+    if ($site_path[0] !== '/') {
+        $site_path = '/' . ltrim($site_path, '/');
+    }
+
+    $document_origin = '';
+    $document_path = '';
+
+    if (is_string($document_url) && $document_url !== '') {
+        $document_parts = null;
+
+        if (function_exists('wp_parse_url')) {
+            $document_parts = wp_parse_url($document_url);
+        }
+
+        if (!is_array($document_parts)) {
+            $document_parts = parse_url($document_url);
+        }
+
+        if (is_array($document_parts)) {
+            if (isset($document_parts['scheme'], $document_parts['host'])) {
+                $document_origin = $document_parts['scheme'] . '://' . $document_parts['host'];
+                if (isset($document_parts['port']) && $document_parts['port'] !== '') {
+                    $document_origin .= ':' . $document_parts['port'];
+                }
+            }
+
+            if (isset($document_parts['path']) && $document_parts['path'] !== '') {
+                $document_path = $document_parts['path'];
+            }
+        }
+    }
+
+    if (!is_string($document_path) || $document_path === '') {
+        $document_path = $site_path;
+    }
+
+    if ($document_path === '') {
+        $document_path = '/';
+    }
+
+    if ($document_path[0] !== '/') {
+        $document_path = '/' . ltrim($document_path, '/');
+    }
+
+    $document_directory = $document_path;
+    if ($document_directory === '' || substr($document_directory, -1) !== '/') {
+        $last_slash = strrpos($document_directory, '/');
+        if ($last_slash === false) {
+            $document_directory = '/';
+        } else {
+            $document_directory = substr($document_directory, 0, $last_slash + 1);
+        }
+    }
+
+    if ($document_directory === '') {
+        $document_directory = '/';
+    }
+
+    $document_default_path = $document_path !== '' ? $document_path : $site_path;
+    if ($document_default_path === '') {
+        $document_default_path = '/';
+    }
+
+    $origin_for_document = $document_origin !== '' ? $document_origin : $site_origin;
 
     $trimmed_url = ltrim($url);
     $parsed_without_scheme = parse_url('http://' . $trimmed_url);
@@ -90,16 +167,82 @@ function blc_normalize_link_url($url, $site_url, $site_scheme = null) {
         }
     }
 
-    if (isset($parsed_url['path']) && strpos($parsed_url['path'], '/') === 0) {
-        if ($site_origin !== '') {
-            return $site_origin . $url;
+    $path = isset($parsed_url['path']) ? $parsed_url['path'] : '';
+    $query = isset($parsed_url['query']) && $parsed_url['query'] !== '' ? '?' . $parsed_url['query'] : '';
+    $fragment = isset($parsed_url['fragment']) && $parsed_url['fragment'] !== '' ? '#' . $parsed_url['fragment'] : '';
+
+    if ($path !== '' && strpos($path, '/') === 0) {
+        $origin = $origin_for_document !== '' ? $origin_for_document : $site_origin;
+        if ($origin === '') {
+            $origin = rtrim($site_url, '/');
         }
 
-        $base = rtrim($site_url, '/');
-        return $base . $url;
+        return $origin . $path . $query . $fragment;
     }
 
-    return $site_url . ltrim($url, '/');
+    $resolve_relative_path = static function ($base_directory, $relative_path) {
+        $base_directory = (string) $base_directory;
+        if ($base_directory === '') {
+            $base_directory = '/';
+        }
+
+        if ($base_directory[0] !== '/') {
+            $base_directory = '/' . ltrim($base_directory, '/');
+        }
+
+        if (substr($base_directory, -1) !== '/') {
+            $base_directory .= '/';
+        }
+
+        $base_segments = $base_directory === '/' ? [] : explode('/', trim($base_directory, '/'));
+        $result_segments = $base_segments;
+        $relative_segments = explode('/', (string) $relative_path);
+        $ends_with_slash = substr((string) $relative_path, -1) === '/';
+
+        foreach ($relative_segments as $segment) {
+            if ($segment === '' || $segment === '.') {
+                continue;
+            }
+
+            if ($segment === '..') {
+                if (!empty($result_segments)) {
+                    array_pop($result_segments);
+                }
+                continue;
+            }
+
+            $result_segments[] = $segment;
+        }
+
+        $resolved = '/' . implode('/', $result_segments);
+        if ($resolved === '/') {
+            return $ends_with_slash ? '/' : '/';
+        }
+
+        if ($ends_with_slash) {
+            $resolved .= '/';
+        }
+
+        return $resolved;
+    };
+
+    $origin = $origin_for_document !== '' ? $origin_for_document : $site_origin;
+    if ($origin === '') {
+        $origin = rtrim($site_url, '/');
+    }
+
+    if ($path === '') {
+        $base_path = $document_default_path !== '' ? $document_default_path : '/';
+        if ($base_path[0] !== '/') {
+            $base_path = '/' . ltrim($base_path, '/');
+        }
+
+        return $origin . $base_path . $query . $fragment;
+    }
+
+    $resolved_path = $resolve_relative_path($document_directory, $path);
+
+    return $origin . $resolved_path . $query . $fragment;
 }
 
 /**
@@ -364,6 +507,14 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             continue;
         }
 
+        $permalink = '';
+        if (function_exists('get_permalink')) {
+            $maybe_permalink = get_permalink($post);
+            if (is_string($maybe_permalink)) {
+                $permalink = $maybe_permalink;
+            }
+        }
+
         foreach ($dom->getElementsByTagName('a') as $link_node) {
             $original_url = trim(wp_kses_decode_entities($link_node->getAttribute('href')));
             if ($original_url === '') { continue; }
@@ -375,7 +526,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             $url_for_storage    = blc_prepare_url_for_storage($original_url);
             $anchor_for_storage = blc_prepare_text_field_for_storage($anchor_text);
 
-            $normalized_url = blc_normalize_link_url($original_url, $site_url, $site_scheme);
+            $normalized_url = blc_normalize_link_url($original_url, $site_url, $site_scheme, $permalink);
             if ($normalized_url === '') {
                 continue;
             }
