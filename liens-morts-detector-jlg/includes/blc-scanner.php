@@ -585,7 +585,11 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                 $normalized_upload_baseurl = set_url_scheme($upload_baseurl, $image_scheme);
             }
 
-            if (strpos($image_url, $normalized_upload_baseurl) !== 0) {
+            $normalized_upload_baseurl_length = strlen($normalized_upload_baseurl);
+            if (
+                $normalized_upload_baseurl_length === 0 ||
+                strncasecmp($image_url, $normalized_upload_baseurl, $normalized_upload_baseurl_length) !== 0
+            ) {
                 continue;
             }
 
@@ -605,13 +609,17 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
             }
 
             $upload_base_path_trimmed = ltrim(trailingslashit($upload_base_path), '/');
+            $upload_base_path_trimmed_length = strlen($upload_base_path_trimmed);
             $image_path_trimmed = ltrim($image_path, '/');
 
-            if ($upload_base_path_trimmed === '' || strpos($image_path_trimmed, $upload_base_path_trimmed) !== 0) {
+            if (
+                $upload_base_path_trimmed_length === 0 ||
+                strncasecmp($image_path_trimmed, $upload_base_path_trimmed, $upload_base_path_trimmed_length) !== 0
+            ) {
                 continue;
             }
 
-            $relative_path = ltrim(substr($image_path_trimmed, strlen($upload_base_path_trimmed)), '/');
+            $relative_path = ltrim(substr($image_path_trimmed, $upload_base_path_trimmed_length), '/');
             if ($relative_path === '') {
                 continue;
             }
