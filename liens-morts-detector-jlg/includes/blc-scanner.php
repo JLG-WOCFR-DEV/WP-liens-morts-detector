@@ -616,5 +616,6 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
         wp_schedule_single_event(time() + 60, 'blc_check_image_batch', array($batch + 1, true));
     } else {
         if ($debug_mode) { error_log("--- Scan IMAGES terminé ---"); }
+        update_option('blc_last_image_check_time', time());
     }
 }
