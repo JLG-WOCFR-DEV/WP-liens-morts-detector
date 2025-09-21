@@ -250,9 +250,16 @@ class BLC_Links_List_Table extends WP_List_Table {
             }
 
             if (!isset($patterns[$value])) {
+                $regex_value = preg_quote($value, '/');
+                $regex_value = str_replace('\/', '/', $regex_value);
+                $regex_value = str_replace('\:', ':', $regex_value);
+
                 $patterns[$value] = [
-                    'sql'    => 'url LIKE %s',
-                    'params' => [$wpdb->esc_like($value) . '%'],
+                    'sql'    => '(url LIKE %s AND url REGEXP %s)',
+                    'params' => [
+                        $wpdb->esc_like($value) . '%',
+                        '^' . $regex_value . '(?:[/?#]|$)',
+                    ],
                 ];
             }
         };
