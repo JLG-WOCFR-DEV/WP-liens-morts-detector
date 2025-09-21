@@ -36,22 +36,55 @@ function blc_normalize_link_url($url, $site_url, $site_scheme = null, $document_
         return $url;
     }
 
-    $site_url = rtrim((string) $site_url, '/') . '/';
+    $ensure_trailing_slash = static function ($value) {
+        $value = (string) $value;
+        if ($value === '') {
+            return '';
+        }
+
+        return rtrim($value, '/') . '/';
+    };
+
+    $parse_url_with_wp = static function ($candidate) {
+        $candidate = (string) $candidate;
+        if ($candidate === '') {
+            return null;
+        }
+
+        if (function_exists('wp_parse_url')) {
+            $parts = wp_parse_url($candidate);
+            if (is_array($parts)) {
+                return $parts;
+            }
+        }
+
+        $parts = parse_url($candidate);
+        return is_array($parts) ? $parts : null;
+    };
+
+    $site_url = (string) $site_url;
+    if ($site_url === '' && function_exists('home_url')) {
+        $fallback_home = home_url();
+        if (is_string($fallback_home) && $fallback_home !== '') {
+            $site_url = $fallback_home;
+        }
+    }
+
+    $site_url = $ensure_trailing_slash($site_url);
+    $site_parts = $parse_url_with_wp($site_url);
+
+    if ((!is_array($site_parts) || empty($site_parts['scheme']) || empty($site_parts['host'])) && function_exists('home_url')) {
+        $fallback_home = home_url();
+        if (is_string($fallback_home) && $fallback_home !== '') {
+            $site_url = $ensure_trailing_slash($fallback_home);
+            $site_parts = $parse_url_with_wp($site_url);
+        }
+    }
 
     $site_origin = '';
-    $site_parts = null;
-
-    if (function_exists('wp_parse_url')) {
-        $site_parts = wp_parse_url($site_url);
-    }
-
-    if (!is_array($site_parts)) {
-        $site_parts = parse_url($site_url);
-    }
-
     $site_path = '/';
     if (is_array($site_parts)) {
-        if (isset($site_parts['scheme'], $site_parts['host'])) {
+        if (isset($site_parts['scheme'], $site_parts['host']) && $site_parts['scheme'] !== '' && $site_parts['host'] !== '') {
             $site_origin = $site_parts['scheme'] . '://' . $site_parts['host'];
 
             if (isset($site_parts['port']) && $site_parts['port'] !== '') {
@@ -76,18 +109,10 @@ function blc_normalize_link_url($url, $site_url, $site_scheme = null, $document_
     $document_path = '';
 
     if (is_string($document_url) && $document_url !== '') {
-        $document_parts = null;
-
-        if (function_exists('wp_parse_url')) {
-            $document_parts = wp_parse_url($document_url);
-        }
-
-        if (!is_array($document_parts)) {
-            $document_parts = parse_url($document_url);
-        }
+        $document_parts = $parse_url_with_wp($document_url);
 
         if (is_array($document_parts)) {
-            if (isset($document_parts['scheme'], $document_parts['host'])) {
+            if (isset($document_parts['scheme'], $document_parts['host']) && $document_parts['scheme'] !== '' && $document_parts['host'] !== '') {
                 $document_origin = $document_parts['scheme'] . '://' . $document_parts['host'];
                 if (isset($document_parts['port']) && $document_parts['port'] !== '') {
                     $document_origin .= ':' . $document_parts['port'];
@@ -104,7 +129,7 @@ function blc_normalize_link_url($url, $site_url, $site_scheme = null, $document_
         $document_path = $site_path;
     }
 
-    if ($document_path === '') {
+    if (!is_string($document_path) || $document_path === '') {
         $document_path = '/';
     }
 
@@ -500,19 +525,19 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     foreach ($posts as $post) {
         if ($debug_mode) { error_log("Analyse LIENS pour : '" . $post->post_title . "'"); }
 
-        $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
-
-        $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
-        if (!$dom instanceof DOMDocument) {
-            continue;
-        }
-
         $permalink = '';
         if (function_exists('get_permalink')) {
             $maybe_permalink = get_permalink($post);
             if (is_string($maybe_permalink)) {
                 $permalink = $maybe_permalink;
             }
+        }
+
+        $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
+
+        $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
+        if (!$dom instanceof DOMDocument) {
+            continue;
         }
 
         foreach ($dom->getElementsByTagName('a') as $link_node) {

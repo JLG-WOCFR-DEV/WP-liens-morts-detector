@@ -397,6 +397,28 @@ class BlcScannerTest extends TestCase
         );
     }
 
+    public function test_blc_perform_check_resolves_relative_links_using_permalink(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 321,
+            'post_title' => 'Relative Link',
+            'post_content' => '<a href="section/page.html">Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 0,
+        ];
+
+        blc_perform_check(0, false);
+
+        $this->assertNotEmpty($this->httpRequests, 'Relative links should trigger an HTTP request with the resolved URL.');
+        $this->assertSame('https://example.com/post-321/section/page.html', $this->httpRequests[0]['url']);
+    }
+
     public function test_blc_perform_check_delays_during_rest_period(): void
     {
         global $wpdb;

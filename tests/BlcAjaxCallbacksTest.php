@@ -527,6 +527,8 @@ class BlcAjaxCallbacksTest extends TestCase
 
         Functions\when('check_ajax_referer')->justReturn(true);
 
+        Functions\expect('get_post')->once()->with(8)->andReturn(null);
+
         global $wpdb;
         $wpdb = new class {
             public $prefix = 'wp_';
