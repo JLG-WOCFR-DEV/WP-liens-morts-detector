@@ -446,7 +446,41 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                 continue;
             }
 
-            $response = ($scan_method === 'precise') ? wp_safe_remote_get($normalized_url, ['timeout' => 10, 'user-agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0', 'method' => 'GET']) : wp_safe_remote_head($normalized_url, ['timeout' => 5]);
+            $head_request_args = [
+                'timeout'             => 5,
+                'limit_response_size' => 1024,
+                'redirection'         => 5,
+            ];
+
+            $get_request_args = [
+                'timeout'             => 10,
+                'user-agent'          => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+                'method'              => 'GET',
+                'limit_response_size' => 131072,
+            ];
+
+            if ($scan_method === 'precise') {
+                $response = null;
+                $head_response = wp_safe_remote_head($normalized_url, $head_request_args);
+                $needs_get_fallback = false;
+
+                if (is_wp_error($head_response)) {
+                    $needs_get_fallback = true;
+                } else {
+                    $head_status = (int) wp_remote_retrieve_response_code($head_response);
+                    if ($head_status === 405 || $head_status === 501) {
+                        $needs_get_fallback = true;
+                    } else {
+                        $response = $head_response;
+                    }
+                }
+
+                if ($needs_get_fallback) {
+                    $response = wp_safe_remote_get($normalized_url, $get_request_args);
+                }
+            } else {
+                $response = wp_safe_remote_head($normalized_url, $head_request_args);
+            }
 
             if (is_wp_error($response) || wp_remote_retrieve_response_code($response) >= 400) {
                 $wpdb->insert(

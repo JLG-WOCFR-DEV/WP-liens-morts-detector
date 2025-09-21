@@ -41,7 +41,7 @@ class BlcScannerTest extends TestCase
     /** @var array<string, mixed> */
     private array $options;
 
-    /** @var array<int, array{method: string, url: string}> */
+    /** @var array<int, array{method: string, url: string, args: array}> */
     private array $httpRequests = [];
 
     /** @var array<string, array<string, mixed>> */
@@ -192,16 +192,16 @@ class BlcScannerTest extends TestCase
         Functions\when('wp_basename')->alias(fn($path, $suffix = '') => basename((string) $path, (string) $suffix));
         Functions\when('wp_strip_all_tags')->alias(fn(string $text) => strip_tags($text));
         Functions\when('wp_remote_get')->alias(function (string $url, array $args = []) {
-            return $this->mockHttpRequest('GET', $url);
+            return $this->mockHttpRequest('GET', $url, $args);
         });
         Functions\when('wp_remote_head')->alias(function (string $url, array $args = []) {
-            return $this->mockHttpRequest('HEAD', $url);
+            return $this->mockHttpRequest('HEAD', $url, $args);
         });
         Functions\when('wp_safe_remote_get')->alias(function (string $url, array $args = []) {
-            return $this->mockHttpRequest('GET', $url);
+            return $this->mockHttpRequest('GET', $url, $args);
         });
         Functions\when('wp_safe_remote_head')->alias(function (string $url, array $args = []) {
-            return $this->mockHttpRequest('HEAD', $url);
+            return $this->mockHttpRequest('HEAD', $url, $args);
         });
         Functions\when('wp_remote_retrieve_response_code')->alias(function ($response) {
             return $response['response']['code'] ?? 0;
@@ -283,9 +283,9 @@ class BlcScannerTest extends TestCase
         $wpdb = null;
     }
 
-    private function mockHttpRequest(string $method, string $url): array
+    private function mockHttpRequest(string $method, string $url, array $args = []): array
     {
-        $this->httpRequests[] = ['method' => $method, 'url' => $url];
+        $this->httpRequests[] = ['method' => $method, 'url' => $url, 'args' => $args];
         $key = $method . ' ' . $url;
 
         return $this->httpResponses[$key] ?? ['response' => ['code' => 200]];
@@ -496,12 +496,13 @@ class BlcScannerTest extends TestCase
             'max_num_pages' => 1,
         ];
 
-        $this->setHttpResponse('GET', 'http://allowed.com/bad', ['response' => ['code' => 404]]);
+        $this->setHttpResponse('HEAD', 'http://allowed.com/bad', ['response' => ['code' => 404]]);
 
         blc_perform_check(0, false);
 
         $this->assertCount(1, $this->httpRequests, 'Only the non-excluded URL should be requested.');
         $this->assertSame('http://allowed.com/bad', $this->httpRequests[0]['url']);
+        $this->assertSame('HEAD', $this->httpRequests[0]['method']);
 
         $this->assertCount(1, $wpdb->inserted, 'Only one broken link should be inserted.');
         $insert = $wpdb->inserted[0];
@@ -510,6 +511,46 @@ class BlcScannerTest extends TestCase
         $this->assertSame('link', $insert['data']['type']);
         $this->assertSame([], $this->scheduledEvents, 'No follow-up batch should be scheduled.');
         $this->assertSame($this->utcNow, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated.');
+    }
+
+    public function test_blc_perform_check_limits_head_requests_and_falls_back_to_get_when_needed(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_scan_method'] = 'precise';
+
+        $post = (object) [
+            'ID' => 43,
+            'post_title' => 'Head Fallback Post',
+            'post_content' => '<a href="http://example.com/no-head">Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'http://example.com/no-head', ['response' => ['code' => 405]]);
+        $this->setHttpResponse('GET', 'http://example.com/no-head', ['response' => ['code' => 200]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(2, $this->httpRequests, 'HEAD followed by GET should be performed when HEAD is not allowed.');
+
+        $headRequest = $this->httpRequests[0];
+        $this->assertSame('HEAD', $headRequest['method']);
+        $this->assertSame('http://example.com/no-head', $headRequest['url']);
+        $this->assertArrayHasKey('limit_response_size', $headRequest['args']);
+        $this->assertSame(1024, $headRequest['args']['limit_response_size']);
+
+        $getRequest = $this->httpRequests[1];
+        $this->assertSame('GET', $getRequest['method']);
+        $this->assertSame('http://example.com/no-head', $getRequest['url']);
+        $this->assertArrayHasKey('limit_response_size', $getRequest['args']);
+        $this->assertSame(131072, $getRequest['args']['limit_response_size']);
+
+        $this->assertCount(0, $wpdb->inserted, 'Successful GET fallback should prevent false positives.');
     }
 
     public function test_blc_perform_check_uses_gmt_dates_for_incremental_scans(): void
@@ -535,7 +576,7 @@ class BlcScannerTest extends TestCase
             'max_num_pages' => 1,
         ];
 
-        $this->setHttpResponse('GET', 'http://example.net/bad', ['response' => ['code' => 404]]);
+        $this->setHttpResponse('HEAD', 'http://example.net/bad', ['response' => ['code' => 404]]);
 
         blc_perform_check(0, false);
 
@@ -573,7 +614,7 @@ class BlcScannerTest extends TestCase
             'max_num_pages' => 1,
         ];
 
-        $this->setHttpResponse('GET', 'http://example.org/missing', ['response' => ['code' => 404]]);
+        $this->setHttpResponse('HEAD', 'http://example.org/missing', ['response' => ['code' => 404]]);
 
         blc_perform_check(0, false);
 
@@ -613,7 +654,7 @@ class BlcScannerTest extends TestCase
             'max_num_pages' => 1,
         ];
 
-        $this->setHttpResponse('GET', 'http://ALLOWED.com/bad', ['response' => ['code' => 404]]);
+        $this->setHttpResponse('HEAD', 'http://ALLOWED.com/bad', ['response' => ['code' => 404]]);
 
         blc_perform_check(0, false);
 
@@ -652,7 +693,7 @@ class BlcScannerTest extends TestCase
             'max_num_pages' => 1,
         ];
 
-        $this->setHttpResponse('GET', 'http://notexample.com/bad', ['response' => ['code' => 404]]);
+        $this->setHttpResponse('HEAD', 'http://notexample.com/bad', ['response' => ['code' => 404]]);
 
         blc_perform_check(0, false);
 
@@ -780,7 +821,7 @@ class BlcScannerTest extends TestCase
             'max_num_pages' => 1,
         ];
 
-        $this->setHttpResponse('GET', 'https://cdn.example.com/foo', ['response' => ['code' => 404]]);
+        $this->setHttpResponse('HEAD', 'https://cdn.example.com/foo', ['response' => ['code' => 404]]);
 
         blc_perform_check(0, false);
 
@@ -810,7 +851,7 @@ class BlcScannerTest extends TestCase
             'max_num_pages' => 1,
         ];
 
-        $this->setHttpResponse('GET', 'https://www.example.com:8080/path', ['response' => ['code' => 404]]);
+        $this->setHttpResponse('HEAD', 'https://www.example.com:8080/path', ['response' => ['code' => 404]]);
 
         blc_perform_check(0, false);
 
@@ -839,7 +880,7 @@ class BlcScannerTest extends TestCase
             'max_num_pages' => 1,
         ];
 
-        $this->setHttpResponse('GET', 'https://example.com?foo=bar', ['response' => ['code' => 404]]);
+        $this->setHttpResponse('HEAD', 'https://example.com?foo=bar', ['response' => ['code' => 404]]);
 
         blc_perform_check(0, false);
 
@@ -986,7 +1027,7 @@ class BlcScannerTest extends TestCase
             'max_num_pages' => 1,
         ];
 
-        $this->setHttpResponse('GET', 'http://cleanup.example.com', ['response' => ['code' => 404]]);
+        $this->setHttpResponse('HEAD', 'http://cleanup.example.com', ['response' => ['code' => 404]]);
 
         blc_perform_check(0, false);
 
