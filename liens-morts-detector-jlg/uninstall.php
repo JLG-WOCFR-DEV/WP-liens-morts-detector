@@ -9,6 +9,7 @@ if (!defined('WP_UNINSTALL_PLUGIN')) {
 // (les liens et images brisés sont stockés dans une table dédiée)
 $options_to_delete = [
     'blc_last_check_time',
+    'blc_last_image_check_time',
     'blc_frequency',
     'blc_rest_start_hour',
     'blc_rest_end_hour',

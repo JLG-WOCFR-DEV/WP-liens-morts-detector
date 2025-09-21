@@ -173,12 +173,14 @@ function blc_dashboard_images_page() {
             'image'
         )
     );
-    $last_check_time     = get_option('blc_last_check_time', 0);
+    $last_image_check_time = get_option('blc_last_image_check_time', 0);
     $option_size_kb      = $option_size_bytes / 1024;
     $size_display        = ($option_size_kb < 1024)
         ? sprintf('%s %s', number_format_i18n($option_size_kb, 2), __('Ko', 'liens-morts-detector-jlg'))
         : sprintf('%s %s', number_format_i18n($option_size_kb / 1024, 2), __('Mo', 'liens-morts-detector-jlg'));
-    $last_check_display  = $last_check_time ? date_i18n('j M Y', $last_check_time) : __('Jamais', 'liens-morts-detector-jlg');
+    $last_check_display  = $last_image_check_time
+        ? date_i18n('j M Y', $last_image_check_time)
+        : __('Jamais', 'liens-morts-detector-jlg');
 
     $list_table = new BLC_Images_List_Table();
     $list_table->prepare_items();
@@ -196,7 +198,7 @@ function blc_dashboard_images_page() {
              </div>
              <div class="blc-stat">
                  <span class="blc-stat-value"><?php echo esc_html($last_check_display); ?></span>
-                 <span class="blc-stat-label"><?php esc_html_e('Dernière analyse de liens', 'liens-morts-detector-jlg'); ?></span>
+                 <span class="blc-stat-label"><?php esc_html_e('Dernière analyse d\'images', 'liens-morts-detector-jlg'); ?></span>
              </div>
         </div>
         <form method="post" style="margin-bottom: 20px;">
