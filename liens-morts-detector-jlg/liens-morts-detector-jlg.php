@@ -224,6 +224,21 @@ function blc_ajax_edit_link_callback() {
     $raw_old_url = $params['old_url'];
     $raw_new_url = $params['new_url'];
 
+    $post = get_post($post_id);
+    $permalink = '';
+    if (function_exists('get_permalink')) {
+        $permalink_candidate = null;
+        if ($post) {
+            $permalink_candidate = get_permalink($post);
+        } else {
+            $permalink_candidate = get_permalink($post_id);
+        }
+
+        if (is_string($permalink_candidate)) {
+            $permalink = $permalink_candidate;
+        }
+    }
+
     $stored_old_url = blc_prepare_url_for_storage($raw_old_url);
 
     $prepared_old_url = blc_prepare_posted_url($raw_old_url);
@@ -250,34 +265,54 @@ function blc_ajax_edit_link_callback() {
         return $url;
     };
 
+    $looks_like_bare_domain = static function ($url) {
+        $trimmed = ltrim((string) $url);
+        if ($trimmed === '') {
+            return false;
+        }
+
+        if (preg_match('#^[a-z0-9+.-]+://#i', $trimmed) === 1) {
+            return false;
+        }
+
+        if (strncmp($trimmed, '//', 2) === 0) {
+            $trimmed = substr($trimmed, 2);
+        }
+
+        $parsed = parse_url('http://' . $trimmed);
+        if (!is_array($parsed) || !isset($parsed['host']) || $parsed['host'] === '') {
+            return false;
+        }
+
+        if (strpos($parsed['host'], '.') === false) {
+            return false;
+        }
+
+        $host = $parsed['host'];
+        $last_dot = strrpos($host, '.');
+        $tld = $last_dot !== false ? substr($host, $last_dot + 1) : '';
+
+        if ($tld === '' || preg_match('/^[A-Za-z]{2,}$/', $tld) !== 1) {
+            return false;
+        }
+
+        return true;
+    };
+
     if ($normalize_scheme_case($sanitized_new_url) !== $normalize_scheme_case($prepared_new_url)) {
         wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
     }
 
-    $prepared_new_url = $sanitized_new_url;
-
-    $post = get_post($post_id);
-    $permalink = '';
-    if (function_exists('get_permalink')) {
-        $permalink_candidate = null;
-        if ($post) {
-            $permalink_candidate = get_permalink($post);
-        } else {
-            $permalink_candidate = get_permalink($post_id);
-        }
-
-        if (is_string($permalink_candidate)) {
-            $permalink = $permalink_candidate;
-        }
-    }
+    $clean_new_url = $sanitized_new_url;
+    $looks_like_domain_input = $looks_like_bare_domain($clean_new_url);
 
     $validated_old_url = wp_http_validate_url($raw_old_url);
     $normalized_old_url = $validated_old_url ?: blc_normalize_link_url($raw_old_url, $site_url, $site_scheme, $permalink);
 
-    $validated_new_url = wp_http_validate_url($prepared_new_url);
+    $validated_new_url = wp_http_validate_url($clean_new_url);
     $normalized_new_url = '';
     if (!$validated_new_url) {
-        $normalized_new_url = blc_normalize_link_url($prepared_new_url, $site_url, $site_scheme, $permalink);
+        $normalized_new_url = blc_normalize_link_url($clean_new_url, $site_url, $site_scheme, $permalink);
         if ($normalized_new_url !== '') {
             $validated_new_url = wp_http_validate_url($normalized_new_url);
         }
@@ -300,17 +335,21 @@ function blc_ajax_edit_link_callback() {
         wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
     }
 
-    $final_new_url = $prepared_new_url;
+    $final_new_url = $clean_new_url;
     $is_explicit_new_url = (
-        preg_match('#^https?://#i', $prepared_new_url) === 1 ||
-        strpos($prepared_new_url, '//') === 0 ||
-        strpos($prepared_new_url, '/') === 0 ||
-        strpos($prepared_new_url, '#') === 0
+        preg_match('#^https?://#i', $clean_new_url) === 1 ||
+        strpos($clean_new_url, '//') === 0 ||
+        strpos($clean_new_url, '/') === 0 ||
+        strpos($clean_new_url, '#') === 0
     );
 
     if (!$is_explicit_new_url) {
         if (!$validated_new_url || $normalized_new_url === '') {
             wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
+        }
+
+        if ($looks_like_domain_input && $normalized_new_url !== '') {
+            $final_new_url = $normalized_new_url;
         }
     }
 
