@@ -9,13 +9,14 @@ if (!function_exists('blc_normalize_hour_option')) {
 /**
  * Normalize a link URL while preserving the original value for storage/display.
  *
- * @param string      $url        Original URL extracted from the content.
- * @param string      $site_url   Site URL with trailing slash.
+ * @param string      $url         Original URL extracted from the content.
+ * @param string      $site_url    Site URL with trailing slash.
  * @param string|null $site_scheme Current site scheme (http/https).
+ * @param string|null $base_url    Optional base URL of the analysed document.
  *
  * @return string Normalized URL suitable for validation.
  */
-function blc_normalize_link_url($url, $site_url, $site_scheme = null) {
+function blc_normalize_link_url($url, $site_url, $site_scheme = null, $base_url = null) {
     $url = (string) $url;
     if ($url === '') {
         return '';
@@ -56,6 +57,103 @@ function blc_normalize_link_url($url, $site_url, $site_scheme = null) {
         }
     }
 
+    $effective_base_url = $base_url;
+    if (!is_string($effective_base_url) || $effective_base_url === '') {
+        $effective_base_url = $site_url;
+    }
+
+    $base_parts = null;
+    if (function_exists('wp_parse_url')) {
+        $base_parts = wp_parse_url($effective_base_url);
+    }
+
+    if (!is_array($base_parts)) {
+        $base_parts = parse_url($effective_base_url);
+    }
+
+    $base_origin = '';
+    $base_path   = '';
+    $base_query  = null;
+
+    if (is_array($base_parts)) {
+        if (isset($base_parts['scheme'], $base_parts['host'])) {
+            $base_origin = $base_parts['scheme'] . '://' . $base_parts['host'];
+            if (isset($base_parts['port']) && $base_parts['port'] !== '') {
+                $base_origin .= ':' . $base_parts['port'];
+            }
+        }
+
+        if (isset($base_parts['path'])) {
+            $base_path = (string) $base_parts['path'];
+        }
+
+        if (array_key_exists('query', $base_parts)) {
+            $base_query = $base_parts['query'];
+        }
+    }
+
+    if ($base_origin === '') {
+        $base_origin = $site_origin;
+    }
+
+    if ($base_path === '') {
+        $base_path = isset($site_parts['path']) ? (string) $site_parts['path'] : '/';
+    }
+
+    $remove_dot_segments = static function ($path) {
+        $segments = explode('/', $path);
+        $output = [];
+
+        foreach ($segments as $segment) {
+            if ($segment === '' || $segment === '.') {
+                continue;
+            }
+
+            if ($segment === '..') {
+                array_pop($output);
+                continue;
+            }
+
+            $output[] = $segment;
+        }
+
+        $leading_slash  = isset($path[0]) && $path[0] === '/';
+        $trailing_slash = ($path !== '') && substr($path, -1) === '/';
+
+        $resolved = implode('/', $output);
+        if ($leading_slash) {
+            $resolved = '/' . $resolved;
+        }
+
+        if ($resolved === '') {
+            $resolved = $leading_slash ? '/' : '';
+        }
+
+        if ($trailing_slash && $resolved !== '' && substr($resolved, -1) !== '/') {
+            $resolved .= '/';
+        }
+
+        return $resolved;
+    };
+
+    $merge_paths = static function ($base_path, $relative_path) {
+        $base_path = (string) $base_path;
+        if ($base_path === '') {
+            return '/' . ltrim($relative_path, '/');
+        }
+
+        if (substr($base_path, -1) === '/') {
+            return $base_path . $relative_path;
+        }
+
+        $last_slash = strrpos($base_path, '/');
+        if ($last_slash === false) {
+            return $relative_path;
+        }
+
+        return substr($base_path, 0, $last_slash + 1) . $relative_path;
+    };
+
     $trimmed_url = ltrim($url);
     $parsed_without_scheme = parse_url('http://' . $trimmed_url);
 
@@ -91,15 +189,66 @@ function blc_normalize_link_url($url, $site_url, $site_scheme = null) {
     }
 
     if (isset($parsed_url['path']) && strpos($parsed_url['path'], '/') === 0) {
-        if ($site_origin !== '') {
-            return $site_origin . $url;
+        $origin_for_root = $base_origin !== '' ? $base_origin : $site_origin;
+        if ($origin_for_root !== '') {
+            return $origin_for_root . $url;
         }
 
         $base = rtrim($site_url, '/');
         return $base . $url;
     }
 
-    return $site_url . ltrim($url, '/');
+    $reference_path = isset($parsed_url['path']) ? (string) $parsed_url['path'] : '';
+    $reference_query = array_key_exists('query', $parsed_url) ? $parsed_url['query'] : null;
+    $reference_fragment = array_key_exists('fragment', $parsed_url) ? $parsed_url['fragment'] : null;
+
+    $base_path_for_merge = $base_path !== '' ? $base_path : '/';
+    $target_path = '';
+    $target_query = null;
+
+    if ($reference_path === '') {
+        $target_path = $base_path_for_merge;
+        if ($target_path === '') {
+            $target_path = '/';
+        }
+
+        $target_query = $reference_query !== null ? $reference_query : $base_query;
+    } else {
+        if ($reference_path[0] === '/') {
+            $target_path = $remove_dot_segments($reference_path);
+        } else {
+            $merged_path = $merge_paths($base_path_for_merge, $reference_path);
+            $target_path = $remove_dot_segments($merged_path);
+        }
+
+        $target_query = $reference_query;
+    }
+
+    if ($target_path === '') {
+        $target_path = '/';
+    }
+
+    $query_string = '';
+    if ($target_query !== null && $target_query !== '') {
+        $query_string = '?' . $target_query;
+    } elseif ($target_query === '0') {
+        $query_string = '?0';
+    }
+
+    $fragment_string = '';
+    if ($reference_fragment !== null && $reference_fragment !== '') {
+        $fragment_string = '#' . $reference_fragment;
+    } elseif ($reference_fragment === '0') {
+        $fragment_string = '#0';
+    }
+
+    $origin_for_relative = $base_origin !== '' ? $base_origin : $site_origin;
+    if ($origin_for_relative !== '') {
+        return $origin_for_relative . $target_path . $query_string . $fragment_string;
+    }
+
+    $base = rtrim($site_url, '/');
+    return $base . $target_path . $query_string . $fragment_string;
 }
 
 /**
@@ -357,6 +506,17 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     foreach ($posts as $post) {
         if ($debug_mode) { error_log("Analyse LIENS pour : '" . $post->post_title . "'"); }
 
+        $permalink = '';
+        if (function_exists('get_permalink')) {
+            $maybe_permalink = get_permalink($post);
+            if (is_string($maybe_permalink)) {
+                $maybe_permalink = trim($maybe_permalink);
+                if ($maybe_permalink !== '') {
+                    $permalink = $maybe_permalink;
+                }
+            }
+        }
+
         $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
 
         $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
@@ -375,7 +535,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             $url_for_storage    = blc_prepare_url_for_storage($original_url);
             $anchor_for_storage = blc_prepare_text_field_for_storage($anchor_text);
 
-            $normalized_url = blc_normalize_link_url($original_url, $site_url, $site_scheme);
+            $normalized_url = blc_normalize_link_url($original_url, $site_url, $site_scheme, $permalink);
             if ($normalized_url === '') {
                 continue;
             }

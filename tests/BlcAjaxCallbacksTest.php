@@ -1,6 +1,10 @@
 <?php
 
-namespace Tests;
+namespace {
+    require_once __DIR__ . '/translation-stubs.php';
+}
+
+namespace Tests {
 
 use PHPUnit\Framework\TestCase;
 use Brain\Monkey;
@@ -29,6 +33,21 @@ class BlcAjaxCallbacksTest extends TestCase
         Functions\when('home_url')->justReturn('https://example.com');
         Functions\when('trailingslashit')->alias(function ($value) {
             return rtrim((string) $value, "\\/\t\n\r\f ") . '/';
+        });
+        Functions\when('get_permalink')->alias(function ($post = null) {
+            if (is_object($post) && isset($post->permalink)) {
+                return $post->permalink;
+            }
+
+            if (is_object($post) && isset($post->ID)) {
+                return 'https://example.com/?p=' . $post->ID;
+            }
+
+            if (is_numeric($post)) {
+                return 'https://example.com/?p=' . (int) $post;
+            }
+
+            return 'https://example.com/';
         });
         Functions\when('set_url_scheme')->alias(function ($url, $scheme = null) {
             $scheme = $scheme ?: 'http';
@@ -526,6 +545,9 @@ class BlcAjaxCallbacksTest extends TestCase
         $_POST['new_url'] = 'javascript:alert(1)';
 
         Functions\when('check_ajax_referer')->justReturn(true);
+
+        $post = (object) ['post_content' => '<a href="http://old.com">Link</a>'];
+        Functions\expect('get_post')->once()->with(8)->andReturn($post);
 
         global $wpdb;
         $wpdb = new class {
@@ -1034,4 +1056,6 @@ class BlcAjaxCallbacksTest extends TestCase
         );
         $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);
     }
+}
+
 }

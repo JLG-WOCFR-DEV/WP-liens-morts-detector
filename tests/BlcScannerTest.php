@@ -109,6 +109,21 @@ class BlcScannerTest extends TestCase
 
             return $base;
         });
+        Functions\when('get_permalink')->alias(function ($post = null) {
+            if (is_object($post) && isset($post->permalink)) {
+                return $post->permalink;
+            }
+
+            if (is_object($post) && isset($post->ID)) {
+                return 'https://example.com/?p=' . $post->ID;
+            }
+
+            if (is_numeric($post)) {
+                return 'https://example.com/?p=' . (int) $post;
+            }
+
+            return 'https://example.com/';
+        });
         Functions\when('set_url_scheme')->alias(function ($url, $scheme = null) {
             $scheme = $scheme ?: 'http';
 
@@ -363,6 +378,32 @@ class BlcScannerTest extends TestCase
         $this->assertSame(
             'https://example.com/contact',
             blc_normalize_link_url('/contact', 'https://example.com/blog/', 'https')
+        );
+    }
+
+    public function test_blc_normalize_link_url_resolves_relative_paths_using_permalink(): void
+    {
+        $this->assertSame(
+            'https://example.com/blog/post/section/page.html',
+            blc_normalize_link_url(
+                'section/page.html',
+                'https://example.com/blog/',
+                'https',
+                'https://example.com/blog/post/'
+            )
+        );
+    }
+
+    public function test_blc_normalize_link_url_resolves_parent_directory_segments(): void
+    {
+        $this->assertSame(
+            'https://example.com/actualites/2024/fichier',
+            blc_normalize_link_url(
+                '../fichier',
+                'https://example.com/',
+                'https',
+                'https://example.com/actualites/2024/article/'
+            )
         );
     }
 
@@ -934,6 +975,56 @@ class BlcScannerTest extends TestCase
 
         $this->assertCount(1, $wpdb->deleted, 'Original URL should be removed from the broken links table.');
         $this->assertSame('//cdn.example.com/foo', $wpdb->deleted[0]['where']['url']);
+    }
+
+    public function test_blc_ajax_edit_link_callback_preserves_relative_href_in_dom(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post_id = 620;
+        $permalink = 'https://example.com/actualites/2024/article/';
+        $original_content = '<p><a href="section/page.html">Relative Link</a></p>';
+
+        $post_object = (object) [
+            'ID' => $post_id,
+            'post_content' => $original_content,
+            'permalink' => $permalink,
+        ];
+
+        Functions\when('get_post')->alias(function (int $requested_post_id) use ($post_id, $post_object) {
+            if ($requested_post_id === $post_id) {
+                return $post_object;
+            }
+
+            return null;
+        });
+
+        $_POST = [
+            'post_id'    => (string) $post_id,
+            'old_url'    => 'section/page.html',
+            'new_url'    => '../fichier',
+            '_ajax_nonce' => 'nonce',
+        ];
+
+        try {
+            blc_ajax_edit_link_callback();
+            $this->fail('Expected wp_send_json_success to terminate execution.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('wp_send_json_success', $exception->getMessage());
+        }
+
+        $this->assertNotNull($this->ajaxResponse, 'AJAX response should be captured.');
+        $this->assertTrue($this->ajaxResponse['success'], 'AJAX call should succeed.');
+
+        $this->assertCount(1, $this->updatedPosts, 'The post content should be updated once.');
+        $update = $this->updatedPosts[0]['data'];
+        $this->assertSame($post_id, $update['ID']);
+        $this->assertStringContainsString('../fichier', $update['post_content']);
+        $this->assertStringNotContainsString('https://example.com/actualites/2024/fichier', $update['post_content']);
+
+        $this->assertCount(1, $wpdb->deleted, 'Original URL should be removed from the broken links table.');
+        $this->assertSame('section/page.html', $wpdb->deleted[0]['where']['url']);
     }
 
     public function test_blc_perform_check_batches_and_reschedules_next_batch(): void
