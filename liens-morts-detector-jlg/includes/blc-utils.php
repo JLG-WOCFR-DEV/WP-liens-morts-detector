@@ -19,8 +19,20 @@ function blc_load_dom_from_post($post_content) {
 
     $dom = new DOMDocument();
 
+    $source_charset = 'UTF-8';
+    if (function_exists('get_bloginfo')) {
+        $blog_charset = get_bloginfo('charset');
+        if (is_string($blog_charset)) {
+            $blog_charset = trim($blog_charset);
+        }
+
+        if (!empty($blog_charset)) {
+            $source_charset = $blog_charset;
+        }
+    }
+
     if (function_exists('mb_convert_encoding')) {
-        $converted_content = mb_convert_encoding($post_content, 'HTML-ENTITIES', 'UTF-8');
+        $converted_content = mb_convert_encoding($post_content, 'HTML-ENTITIES', $source_charset);
         if ($converted_content === false) {
             $converted_content = $post_content;
         }

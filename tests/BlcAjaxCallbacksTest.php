@@ -66,6 +66,13 @@ class BlcAjaxCallbacksTest extends TestCase
         Functions\when('wp_slash')->alias(function ($value) {
             return $value;
         });
+        Functions\when('get_bloginfo')->alias(function ($show = '', $filter = 'raw') {
+            if ($show === 'charset') {
+                return 'UTF-8';
+            }
+
+            return '';
+        });
         Functions\when('wp_http_validate_url')->alias(function ($url) {
             return filter_var($url, FILTER_VALIDATE_URL) ? $url : false;
         });
@@ -253,6 +260,94 @@ class BlcAjaxCallbacksTest extends TestCase
         }
 
         $this->assertSame($initial, libxml_use_internal_errors());
+    }
+
+    public function test_edit_link_uses_blog_charset_when_loading_dom(): void
+    {
+        $_POST['post_id'] = 22;
+        $_POST['old_url'] = 'http://old.com';
+        $_POST['new_url'] = 'http://nouveau.com';
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('current_user_can')->once()->with('edit_post', 22)->andReturn(true);
+
+        $original_content = '<a href="http://old.com">Café</a>';
+        if (function_exists('mb_convert_encoding')) {
+            $post_content = mb_convert_encoding($original_content, 'ISO-8859-1', 'UTF-8');
+        } else {
+            $post_content = utf8_decode($original_content);
+        }
+
+        $post = (object) ['post_content' => $post_content];
+        Functions\expect('get_post')->once()->with(22)->andReturn($post);
+        Functions\when('esc_url_raw')->alias(function ($url) {
+            return $url;
+        });
+
+        $default_charset_stub = function ($show = '', $filter = 'raw') {
+            if ($show === 'charset') {
+                return 'UTF-8';
+            }
+
+            return '';
+        };
+
+        Functions\when('get_bloginfo')->alias(function ($show = '', $filter = 'raw') {
+            if ($show === 'charset') {
+                return 'ISO-8859-1';
+            }
+
+            return '';
+        });
+
+        $captured_update = null;
+        Functions\expect('wp_update_post')->once()->andReturnUsing(function () use (&$captured_update) {
+            $captured_update = func_get_args();
+
+            return true;
+        });
+
+        global $wpdb;
+        $wpdb = new class {
+            public $prefix = '';
+            public $delete_args = null;
+            public function delete($table, $where, $formats)
+            {
+                $this->delete_args = [$table, $where, $formats];
+
+                return true;
+            }
+        };
+
+        Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
+            throw new \Exception('success');
+        });
+
+        $initial = libxml_use_internal_errors();
+
+        try {
+            blc_ajax_edit_link_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $exception) {
+            $this->assertSame('success', $exception->getMessage());
+        } finally {
+            Functions\when('get_bloginfo')->alias($default_charset_stub);
+        }
+
+        $this->assertSame($initial, libxml_use_internal_errors());
+
+        $this->assertIsArray($captured_update);
+        $this->assertCount(2, $captured_update);
+        $this->assertIsArray($captured_update[0]);
+        $this->assertSame(22, $captured_update[0]['ID']);
+        $this->assertSame('http://nouveau.com', $_POST['new_url']);
+        $this->assertStringContainsString('href="http://nouveau.com"', $captured_update[0]['post_content']);
+        $this->assertMatchesRegularExpression('/Caf(é|&eacute;)/u', $captured_update[0]['post_content']);
+
+        $this->assertIsArray($wpdb->delete_args);
+        $this->assertSame('blc_broken_links', $wpdb->delete_args[0]);
+        $this->assertSame(['post_id' => 22, 'url' => 'http://old.com', 'type' => 'link'], $wpdb->delete_args[1]);
+        $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);
     }
 
     public function test_edit_link_accepts_uppercase_scheme(): void
