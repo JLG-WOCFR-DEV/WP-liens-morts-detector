@@ -30,6 +30,17 @@ class BlcAjaxCallbacksTest extends TestCase
         Functions\when('trailingslashit')->alias(function ($value) {
             return rtrim((string) $value, "\\/\t\n\r\f ") . '/';
         });
+        Functions\when('get_permalink')->alias(static function ($post = null) {
+            if (is_object($post) && isset($post->ID)) {
+                return sprintf('https://example.com/post/%d/', $post->ID);
+            }
+
+            if (is_numeric($post)) {
+                return sprintf('https://example.com/post/%d/', (int) $post);
+            }
+
+            return 'https://example.com/post/0/';
+        });
         Functions\when('set_url_scheme')->alias(function ($url, $scheme = null) {
             $scheme = $scheme ?: 'http';
 

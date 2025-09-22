@@ -105,11 +105,51 @@ class BLC_Links_List_Table extends WP_List_Table {
      * Gère le rendu de la colonne "URL Cassée".
      */
     protected function column_url($item) {
+        $original_url = isset($item['url']) ? (string) $item['url'] : '';
+        $href = $original_url;
+
+        $permalink = '';
+        if (!empty($item['post_id'])) {
+            $permalink_candidate = get_permalink($item['post_id']);
+            if (is_string($permalink_candidate)) {
+                $permalink = $permalink_candidate;
+            }
+        }
+
+        $home_url = home_url();
+        $site_url = is_string($home_url) ? $home_url : '';
+        if (function_exists('trailingslashit')) {
+            $site_url = trailingslashit($site_url);
+        } else {
+            $site_url = rtrim($site_url, '/') . '/';
+        }
+
+        if (function_exists('blc_normalize_link_url')) {
+            $normalized = blc_normalize_link_url($original_url, $site_url, null, $permalink);
+            if (is_string($normalized) && $normalized !== '') {
+                $parsed = null;
+                if (function_exists('wp_parse_url')) {
+                    $parsed = wp_parse_url($normalized);
+                }
+                if (!is_array($parsed)) {
+                    $parsed = parse_url($normalized);
+                }
+
+                if (
+                    is_array($parsed) &&
+                    isset($parsed['scheme']) &&
+                    in_array(strtolower($parsed['scheme']), ['http', 'https'], true)
+                ) {
+                    $href = $normalized;
+                }
+            }
+        }
+
         $output = sprintf(
             '<strong><a href="%s" target="_blank" rel="noopener noreferrer" title="%s">%s</a></strong>',
-            esc_url($item['url']),
+            esc_url($href),
             esc_attr__('Vérifier ce lien (nouvel onglet)', 'liens-morts-detector-jlg'),
-            esc_html($item['url'])
+            esc_html($original_url)
         );
         
         // Les actions rapides (Modifier, Dissocier) sont ajoutées sous la colonne principale

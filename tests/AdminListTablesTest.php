@@ -35,12 +35,22 @@ class AdminListTablesTest extends TestCase
             return is_string($value) ? trim($value) : $value;
         });
         Functions\when('wp_unslash')->alias(fn($value) => $value);
+        Functions\when('trailingslashit')->alias(static function ($value) {
+            $value = (string) $value;
+            if ($value === '') {
+                return '/';
+            }
+
+            return rtrim($value, '/') . '/';
+        });
+        Functions\when('get_permalink')->alias(static fn($post_id) => sprintf('https://example.com/post-%d/', $post_id));
         Functions\when('remove_query_arg')->alias(fn($key, $url = null) => 'admin.php');
         Functions\when('add_query_arg')->alias(function ($key, $value, $url = null) {
             $param = is_array($key) ? $key : [$key => $value];
             return 'admin.php?' . http_build_query($param);
         });
 
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-scanner.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/class-blc-links-list-table.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/class-blc-images-list-table.php';
     }
@@ -68,6 +78,36 @@ class AdminListTablesTest extends TestCase
         }
 
         return $items;
+    }
+
+    public function test_links_column_url_normalizes_relative_href(): void
+    {
+        $table = new class() extends \BLC_Links_List_Table {
+            public function renderColumnUrl(array $item)
+            {
+                return parent::column_url($item);
+            }
+
+            protected function get_row_actions($item)
+            {
+                return [];
+            }
+
+            public function row_actions($actions, $always_visible = false)
+            {
+                return '';
+            }
+        };
+
+        $html = $table->renderColumnUrl([
+            'url'        => 'images/photo.jpg',
+            'anchor'     => 'Photo',
+            'post_id'    => 12,
+            'post_title' => 'Sample Post',
+        ]);
+
+        $this->assertStringContainsString('href="https://example.com/post-12/images/photo.jpg"', $html);
+        $this->assertStringContainsString('>images/photo.jpg<', $html);
     }
 
     public function test_links_prepare_items_supports_injected_data_with_pagination(): void
