@@ -648,6 +648,54 @@ class BlcScannerTest extends TestCase
         $this->assertSame('link', $insert['data']['type']);
     }
 
+    public function test_blc_perform_check_records_unsafe_external_hosts_without_http_requests(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_scan_method'] = 'precise';
+
+        Functions\when('dns_get_record')->alias(function (string $hostname, $type = null) {
+            if ($hostname === 'no-ip.test') {
+                return [];
+            }
+
+            return [
+                ['ip' => '93.184.216.34'],
+                ['ipv6' => '2001:4860:4860::8888'],
+            ];
+        });
+        Functions\when('gethostbynamel')->alias(function (string $hostname) {
+            if ($hostname === 'no-ip.test') {
+                return [];
+            }
+
+            return ['93.184.216.34'];
+        });
+
+        $post = (object) [
+            'ID' => 501,
+            'post_title' => 'Unsafe Host Post',
+            'post_content' => '<a href="http://no-ip.test/missing">Broken</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 0,
+        ];
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(0, $this->httpRequests, 'Unsafe hosts must not trigger outbound HTTP requests.');
+        $this->assertCount(1, $wpdb->inserted, 'Unsafe hosts should be recorded as broken links.');
+
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('wp_blc_broken_links', $insert['table']);
+        $this->assertSame('http://no-ip.test/missing', $insert['data']['url']);
+        $this->assertSame('link', $insert['data']['type']);
+        $this->assertSame(501, $insert['data']['post_id']);
+    }
+
     public function test_blc_is_safe_remote_host_rejects_private_only_ipv6_records(): void
     {
         Functions\when('dns_get_record')->alias(function (string $hostname, ?int $type = null) {

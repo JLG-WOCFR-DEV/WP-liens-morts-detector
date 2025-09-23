@@ -673,10 +673,26 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             if ($is_excluded) { continue; }
 
             $is_internal_safe_host = isset($safe_internal_hosts[$normalized_host]);
+            $is_safe_remote_host = true;
 
-            if (!$is_internal_safe_host && !blc_is_safe_remote_host($host)) {
-                if ($debug_mode) { error_log("  -> Lien ignoré (IP non autorisée) : " . $normalized_url); }
-                continue;
+            if (!$is_internal_safe_host) {
+                $is_safe_remote_host = blc_is_safe_remote_host($host);
+
+                if (!$is_safe_remote_host) {
+                    if ($debug_mode) { error_log("  -> Lien ignoré (IP non autorisée) : " . $normalized_url); }
+                    $wpdb->insert(
+                        $table_name,
+                        [
+                            'url'        => $url_for_storage,
+                            'anchor'     => $anchor_for_storage,
+                            'post_id'    => $post->ID,
+                            'post_title' => $post_title_for_storage,
+                            'type'       => 'link',
+                        ],
+                        ['%s', '%s', '%d', '%s', '%s']
+                    );
+                    continue;
+                }
             }
 
             $head_request_args = [
