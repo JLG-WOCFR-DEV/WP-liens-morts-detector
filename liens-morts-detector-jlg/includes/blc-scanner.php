@@ -673,7 +673,8 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             if ($is_excluded) { continue; }
 
             $is_internal_safe_host = isset($safe_internal_hosts[$normalized_host]);
-            $is_safe_remote_host = true;
+            $is_safe_remote_host   = true;
+            $should_skip_remote_request = false;
 
             if (!$is_internal_safe_host) {
                 $is_safe_remote_host = blc_is_safe_remote_host($host);
@@ -691,8 +692,13 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                         ],
                         ['%s', '%s', '%d', '%s', '%s']
                     );
-                    continue;
+                    $should_skip_remote_request = true;
                 }
+            }
+
+            if ($should_skip_remote_request) {
+                usleep($link_delay_ms * 1000);
+                continue;
             }
 
             $head_request_args = [
