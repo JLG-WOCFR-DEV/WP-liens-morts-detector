@@ -18,7 +18,27 @@ namespace {
                     $scenario = array_shift($GLOBALS['wp_query_queue']);
                 }
 
-                $this->posts = $scenario['posts'] ?? [];
+                $posts = $scenario['posts'] ?? [];
+
+                if (!empty($args['date_query'][0]['after'])) {
+                    $afterTimestamp = strtotime($args['date_query'][0]['after']);
+                    if ($afterTimestamp !== false) {
+                        $posts = array_values(array_filter($posts, static function ($post) use ($afterTimestamp) {
+                            if (is_object($post) && isset($post->post_modified_gmt)) {
+                                $postModified = strtotime((string) $post->post_modified_gmt);
+                                if ($postModified === false) {
+                                    return true;
+                                }
+
+                                return $postModified > $afterTimestamp;
+                            }
+
+                            return true;
+                        }));
+                    }
+                }
+
+                $this->posts = $posts;
                 $this->max_num_pages = $scenario['max_num_pages'] ?? 0;
 
                 if (!isset($GLOBALS['wp_query_last_args'])) {
@@ -60,6 +80,8 @@ class BlcScannerTest extends TestCase
 
     private int $utcNow = 1000;
 
+    private int $timezoneOffsetSeconds = 0;
+
     /** @var array<int, array<string, mixed>> */
     private array $updatedPosts = [];
 
@@ -96,6 +118,7 @@ class BlcScannerTest extends TestCase
         $this->updatedPosts = [];
         $this->ajaxResponse = null;
         $this->utcNow = 1000;
+        $this->timezoneOffsetSeconds = 0;
         $GLOBALS['wp_query_queue'] = [];
         $GLOBALS['wp_query_last_args'] = [];
 
@@ -171,12 +194,15 @@ class BlcScannerTest extends TestCase
         });
         $testCase = $this;
         Functions\when('current_time')->alias(function (string $type, $gmt = 0) use ($testCase) {
+            $useGmt = (bool) $gmt;
+            $timestamp = $testCase->utcNow + ($useGmt ? 0 : $testCase->timezoneOffsetSeconds);
+
             if ($type === 'timestamp') {
-                return $testCase->utcNow;
+                return $timestamp;
             }
 
             if ($type === 'mysql') {
-                return '1970-01-01 00:00:00';
+                return gmdate('Y-m-d H:i:s', $timestamp);
             }
 
             return $testCase->currentHour;
@@ -281,6 +307,7 @@ class BlcScannerTest extends TestCase
         });
         Functions\when('update_option')->alias(function (string $option, $value) {
             $this->updatedOptions[$option] = $value;
+            $this->options[$option] = $value;
             return true;
         });
         Functions\when('wp_update_post')->alias(function (array $data, $wp_error = false) {
@@ -330,6 +357,11 @@ class BlcScannerTest extends TestCase
         $key = $method . ' ' . $url;
 
         return $this->httpResponses[$key] ?? ['response' => ['code' => 200]];
+    }
+
+    private function setTimezoneOffsetSeconds(int $offset): void
+    {
+        $this->timezoneOffsetSeconds = $offset;
     }
 
     private function setHttpResponse(string $method, string $url, array $response): void
@@ -701,12 +733,14 @@ class BlcScannerTest extends TestCase
         global $wpdb;
         $wpdb = $this->createWpdbStub();
 
+        $this->setTimezoneOffsetSeconds(2 * 3600);
         Functions\when('wp_timezone')->alias(fn() => new \DateTimeZone('Europe/Paris'));
         Functions\when('wp_timezone_string')->alias(fn() => 'Europe/Paris');
 
         $this->utcNow = 7200;
         $this->options['blc_last_check_time'] = $this->utcNow - 3600;
         $this->options['blc_scan_method'] = 'precise';
+        $previousScanTime = $this->options['blc_last_check_time'];
 
         $post = (object) [
             'ID' => 404,
@@ -727,7 +761,7 @@ class BlcScannerTest extends TestCase
         $lastArgs = end($GLOBALS['wp_query_last_args']);
         $this->assertIsArray($lastArgs, 'WP_Query arguments should be an array.');
 
-        $expectedThreshold = gmdate('Y-m-d H:i:s', $this->options['blc_last_check_time']);
+        $expectedThreshold = gmdate('Y-m-d H:i:s', $previousScanTime);
         $this->assertArrayHasKey('date_query', $lastArgs, 'Incremental scans should set a date_query clause.');
         $this->assertSame('post_modified_gmt', $lastArgs['date_query'][0]['column']);
         $this->assertSame($expectedThreshold, $lastArgs['date_query'][0]['after']);
@@ -740,11 +774,13 @@ class BlcScannerTest extends TestCase
         global $wpdb;
         $wpdb = $this->createWpdbStub();
 
+        $this->setTimezoneOffsetSeconds(-5 * 3600);
         Functions\when('wp_timezone')->alias(fn() => new \DateTimeZone('America/New_York'));
         Functions\when('wp_timezone_string')->alias(fn() => 'America/New_York');
 
         $this->options['blc_last_check_time'] = $this->utcNow - 600;
         $this->options['blc_scan_method'] = 'precise';
+        $previousScanTime = $this->options['blc_last_check_time'];
 
         $post = (object) [
             'ID' => 405,
@@ -770,12 +806,63 @@ class BlcScannerTest extends TestCase
         $lastArgs = end($GLOBALS['wp_query_last_args']);
         $this->assertIsArray($lastArgs, 'WP_Query arguments should be an array for incremental scans.');
 
-        $expectedThreshold = gmdate('Y-m-d H:i:s', $this->options['blc_last_check_time']);
+        $expectedThreshold = gmdate('Y-m-d H:i:s', $previousScanTime);
         $this->assertArrayHasKey('date_query', $lastArgs, 'Incremental scans must restrict posts by modification date in GMT.');
         $this->assertSame('post_modified_gmt', $lastArgs['date_query'][0]['column']);
         $this->assertSame($expectedThreshold, $lastArgs['date_query'][0]['after']);
 
         $this->assertSame($this->utcNow, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated in GMT after the scan.');
+    }
+
+    public function test_blc_perform_check_rescans_posts_modified_after_previous_run_with_offset(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->setTimezoneOffsetSeconds(2 * 3600);
+        Functions\when('wp_timezone')->alias(fn() => new \DateTimeZone('Europe/Berlin'));
+        Functions\when('wp_timezone_string')->alias(fn() => 'Europe/Berlin');
+
+        $this->options['blc_scan_method'] = 'precise';
+
+        $this->utcNow = 12000;
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [],
+            'max_num_pages' => 0,
+        ];
+
+        blc_perform_check(0, false);
+
+        $initialRunTime = $this->options['blc_last_check_time'];
+        $this->assertSame($initialRunTime, $this->updatedOptions['blc_last_check_time'] ?? null, 'Initial run should record the GMT timestamp.');
+
+        $this->httpRequests = [];
+        $this->utcNow = $initialRunTime + 30;
+
+        $recentPost = (object) [
+            'ID' => 512,
+            'post_title' => 'Recently Edited',
+            'post_content' => '<a href="http://example.com/recently-edited">Recent</a>',
+            'post_modified_gmt' => gmdate('Y-m-d H:i:s', $initialRunTime + 5),
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$recentPost],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'http://example.com/recently-edited', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertNotEmpty($this->httpRequests, 'Incremental scans should include posts modified shortly after the previous run.');
+
+        $lastArgs = end($GLOBALS['wp_query_last_args']);
+        $this->assertIsArray($lastArgs, 'WP_Query arguments should be available for the incremental run.');
+
+        $expectedThreshold = gmdate('Y-m-d H:i:s', $initialRunTime);
+        $this->assertSame($expectedThreshold, $lastArgs['date_query'][0]['after']);
+        $this->assertSame($this->utcNow, $this->updatedOptions['blc_last_check_time'] ?? null, 'Second run should also store the GMT timestamp.');
     }
 
     public function test_blc_perform_check_skips_excluded_domains_case_insensitively(): void
