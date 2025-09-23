@@ -648,6 +648,49 @@ class BlcScannerTest extends TestCase
         $this->assertSame('link', $insert['data']['type']);
     }
 
+    public function test_blc_perform_check_allows_existing_upload_with_encoded_url(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $uploads_dir = sys_get_temp_dir() . '/uploads-test';
+        $encoded_dir = $uploads_dir . '/2024/05';
+        if (!is_dir($encoded_dir) && !mkdir($encoded_dir, 0777, true) && !is_dir($encoded_dir)) {
+            $this->fail('Unable to create uploads directory for test.');
+        }
+
+        $encoded_filename = 'sample file #1.pdf';
+        $encoded_path = $encoded_dir . '/' . $encoded_filename;
+        if (file_put_contents($encoded_path, 'pdf') === false) {
+            $this->fail('Unable to create uploads file for test.');
+        }
+
+        $encoded_url = 'https://example.com/wp-content/uploads/2024/05/sample%20file%20%231.pdf';
+
+        $post = (object) [
+            'ID' => 402,
+            'post_title' => 'Encoded Upload Link',
+            'post_content' => '<a href="' . $encoded_url . '">Download</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', $encoded_url, ['response' => ['code' => 200]]);
+
+        try {
+            blc_perform_check(0, false);
+        } finally {
+            @unlink($encoded_path);
+            @rmdir($encoded_dir);
+            @rmdir(dirname($encoded_dir));
+        }
+
+        $this->assertCount(0, $wpdb->inserted, 'Existing uploads with encoded URLs should not be marked as missing.');
+    }
+
     public function test_blc_perform_check_records_domain_without_ip_without_http_requests(): void
     {
         global $wpdb;
@@ -1585,6 +1628,47 @@ class BlcScannerTest extends TestCase
             'https://example.com/wp-content/uploads/2024/05/missing-query.jpg?ver=456',
             $insert['data']['url']
         );
+    }
+
+    public function test_blc_perform_image_check_allows_existing_upload_with_encoded_url(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $uploads_dir = sys_get_temp_dir() . '/uploads-test';
+        $image_dir = $uploads_dir . '/2024/06';
+        if (!is_dir($image_dir) && !mkdir($image_dir, 0777, true) && !is_dir($image_dir)) {
+            $this->fail('Unable to create uploads directory for test.');
+        }
+
+        $encoded_filename = 'encoded image #1.png';
+        $image_file = $image_dir . '/' . $encoded_filename;
+        if (file_put_contents($image_file, 'img') === false) {
+            $this->fail('Unable to create encoded uploads image file for test.');
+        }
+
+        $encoded_url = 'https://example.com/wp-content/uploads/2024/06/encoded%20image%20%231.png';
+
+        $post = (object) [
+            'ID' => 193,
+            'post_title' => 'Uploads Image Encoded URL',
+            'post_content' => '<img src="' . $encoded_url . '" />',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        try {
+            blc_perform_image_check(0, true);
+        } finally {
+            @unlink($image_file);
+            @rmdir($image_dir);
+            @rmdir(dirname($image_dir));
+        }
+
+        $this->assertCount(0, $wpdb->inserted, 'Existing uploads with encoded URLs should not be reported as missing images.');
     }
 
     public function test_blc_perform_image_check_ignores_traversal_urls(): void
