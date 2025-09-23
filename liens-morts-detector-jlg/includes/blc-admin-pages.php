@@ -86,7 +86,9 @@ function blc_dashboard_links_page() {
     $size_display       = ($option_size_kb < 1024)
         ? sprintf('%s %s', number_format_i18n($option_size_kb, 2), __('Ko', 'liens-morts-detector-jlg'))
         : sprintf('%s %s', number_format_i18n($option_size_kb / 1024, 2), __('Mo', 'liens-morts-detector-jlg'));
-    $last_check_display = $last_check_time ? date_i18n('j M Y', $last_check_time) : __('Jamais', 'liens-morts-detector-jlg');
+    $last_check_display = $last_check_time
+        ? wp_date('j M Y', $last_check_time)
+        : __('Jamais', 'liens-morts-detector-jlg');
 
     $list_table = new BLC_Links_List_Table();
     $list_table->prepare_items();
