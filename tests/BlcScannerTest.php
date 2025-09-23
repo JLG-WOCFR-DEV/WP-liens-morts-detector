@@ -648,7 +648,7 @@ class BlcScannerTest extends TestCase
         $this->assertSame('link', $insert['data']['type']);
     }
 
-    public function test_blc_perform_check_records_unsafe_external_hosts_without_http_requests(): void
+    public function test_blc_perform_check_records_domain_without_ip_without_http_requests(): void
     {
         global $wpdb;
         $wpdb = $this->createWpdbStub();
@@ -692,6 +692,7 @@ class BlcScannerTest extends TestCase
         $insert = $wpdb->inserted[0];
         $this->assertSame('wp_blc_broken_links', $insert['table']);
         $this->assertSame('http://no-ip.test/missing', $insert['data']['url']);
+        $this->assertSame('Broken', $insert['data']['anchor']);
         $this->assertSame('link', $insert['data']['type']);
         $this->assertSame(501, $insert['data']['post_id']);
     }
