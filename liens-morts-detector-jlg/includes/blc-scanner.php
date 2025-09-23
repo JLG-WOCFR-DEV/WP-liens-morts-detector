@@ -566,6 +566,17 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     $blog_charset = get_bloginfo('charset');
     if (empty($blog_charset)) { $blog_charset = 'UTF-8'; }
 
+    $temporary_http_statuses = apply_filters(
+        'blc_temporary_http_statuses',
+        [403, 429, 503]
+    );
+    if (!is_array($temporary_http_statuses)) {
+        $temporary_http_statuses = [];
+    }
+    $temporary_http_statuses = array_values(array_unique(array_map('intval', $temporary_http_statuses)));
+
+    $temporary_retry_scheduled = false;
+
     foreach ($posts as $post) {
         if ($debug_mode) { error_log("Analyse LIENS pour : '" . $post->post_title . "'"); }
 
@@ -685,12 +696,16 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                 $response = null;
                 $head_response = wp_safe_remote_head($normalized_url, $head_request_args);
                 $needs_get_fallback = false;
+                $fallback_due_to_temporary_status = false;
 
                 if (is_wp_error($head_response)) {
                     $needs_get_fallback = true;
                 } else {
                     $head_status = (int) wp_remote_retrieve_response_code($head_response);
-                    if ($head_status === 405 || $head_status === 501) {
+                    if (in_array($head_status, $temporary_http_statuses, true)) {
+                        $needs_get_fallback = true;
+                        $fallback_due_to_temporary_status = true;
+                    } elseif ($head_status === 405 || $head_status === 501) {
                         $needs_get_fallback = true;
                     } else {
                         $response = $head_response;
@@ -702,9 +717,50 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                 }
             } else {
                 $response = wp_safe_remote_head($normalized_url, $head_request_args);
+                $fallback_due_to_temporary_status = false;
             }
 
-            if (is_wp_error($response) || wp_remote_retrieve_response_code($response) >= 400) {
+            $should_insert_broken_link = false;
+            $should_retry_later = false;
+            $response_code = null;
+
+            if (is_wp_error($response)) {
+                if ($fallback_due_to_temporary_status) {
+                    $should_retry_later = true;
+                } else {
+                    $should_insert_broken_link = true;
+                }
+            } else {
+                $response_code = (int) wp_remote_retrieve_response_code($response);
+                if ($response_code >= 400) {
+                    if (in_array($response_code, $temporary_http_statuses, true)) {
+                        $should_retry_later = true;
+                    } else {
+                        $should_insert_broken_link = true;
+                    }
+                }
+            }
+
+            if ($should_retry_later) {
+                if (!$temporary_retry_scheduled) {
+                    $retry_delay = (int) apply_filters(
+                        'blc_temporary_retry_delay',
+                        max(60, $batch_delay_s),
+                        $normalized_url,
+                        $response_code
+                    );
+                    if ($retry_delay < 0) {
+                        $retry_delay = 0;
+                    }
+
+                    wp_schedule_single_event(
+                        time() + $retry_delay,
+                        'blc_check_batch',
+                        array($batch, $is_full_scan, $bypass_rest_window)
+                    );
+                    $temporary_retry_scheduled = true;
+                }
+            } elseif ($should_insert_broken_link) {
                 $wpdb->insert(
                     $table_name,
                     [
@@ -722,6 +778,11 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     }
 
     // --- 5. Sauvegarde et planification ---
+    if ($temporary_retry_scheduled) {
+        if ($debug_mode) { error_log('Scan reporté : statut HTTP temporaire détecté, nouveau passage planifié.'); }
+        return;
+    }
+
     if ($wp_query->max_num_pages > ($batch + 1)) {
         wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan, $bypass_rest_window));
     } else {

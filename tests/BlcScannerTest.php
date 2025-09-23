@@ -936,6 +936,57 @@ class BlcScannerTest extends TestCase
         $this->assertSame('CDN Link', $insert['data']['anchor']);
     }
 
+    /**
+     * @return array<string, array{int}>
+     */
+    public function temporaryHeadStatusProvider(): array
+    {
+        return [
+            'forbidden' => [403],
+            'rate_limited' => [429],
+        ];
+    }
+
+    /**
+     * @dataProvider temporaryHeadStatusProvider
+     */
+    public function test_blc_perform_check_recovers_from_temporary_head_status(int $headStatus): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_scan_method'] = 'precise';
+
+        $post = (object) [
+            'ID' => 777,
+            'post_title' => 'Temporary Protection',
+            'post_content' => '<a href="http://temp.example.com/protected">Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'http://temp.example.com/protected', ['response' => ['code' => $headStatus]]);
+        $this->setHttpResponse('GET', 'http://temp.example.com/protected', ['response' => ['code' => 200]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(2, $this->httpRequests, 'HEAD fallbacks should trigger a follow-up GET request.');
+        $this->assertSame('HEAD', $this->httpRequests[0]['method']);
+        $this->assertSame('GET', $this->httpRequests[1]['method']);
+        $this->assertSame('http://temp.example.com/protected', $this->httpRequests[1]['url']);
+
+        $this->assertCount(0, $wpdb->inserted, 'Temporary responses must not be stored as broken links.');
+        $this->assertSame([], $this->scheduledEvents, 'No retry should be scheduled when the GET request succeeds.');
+        $this->assertSame(
+            $this->utcNow,
+            $this->updatedOptions['blc_last_check_time'] ?? null,
+            'Successful recovery should update the last check timestamp.'
+        );
+    }
+
     public function test_blc_perform_check_normalizes_host_with_port_without_scheme(): void
     {
         global $wpdb;
