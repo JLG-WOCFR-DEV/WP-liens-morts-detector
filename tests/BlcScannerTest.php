@@ -172,7 +172,19 @@ class BlcScannerTest extends TestCase
         $testCase = $this;
         Functions\when('current_time')->alias(function (string $type, $gmt = 0) use ($testCase) {
             if ($type === 'timestamp') {
-                return $testCase->utcNow;
+                $timestamp = $testCase->utcNow;
+
+                if ($gmt) {
+                    return $timestamp;
+                }
+
+                $timezone = function_exists('wp_timezone') ? \wp_timezone() : null;
+                if ($timezone instanceof \DateTimeZone) {
+                    $offset = $timezone->getOffset(new \DateTimeImmutable('@' . $timestamp));
+                    return $timestamp + $offset;
+                }
+
+                return $timestamp;
             }
 
             if ($type === 'mysql') {
@@ -776,6 +788,73 @@ class BlcScannerTest extends TestCase
         $this->assertSame($expectedThreshold, $lastArgs['date_query'][0]['after']);
 
         $this->assertSame($this->utcNow, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated in GMT after the scan.');
+    }
+
+    public function test_blc_perform_check_records_and_uses_utc_timestamps_with_positive_timezone_offset(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        Functions\when('wp_timezone')->alias(fn() => new \DateTimeZone('Europe/Paris'));
+        Functions\when('wp_timezone_string')->alias(fn() => 'Europe/Paris');
+
+        $this->utcNow = 10000;
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_check(0, true);
+
+        $this->assertSame(
+            $this->utcNow,
+            $this->updatedOptions['blc_last_check_time'] ?? null,
+            'The last check time must be stored as a UTC timestamp regardless of the site timezone.'
+        );
+
+        $this->options['blc_last_check_time'] = $this->updatedOptions['blc_last_check_time'];
+        $this->options['blc_scan_method'] = 'precise';
+        $this->updatedOptions = [];
+        $this->httpRequests = [];
+        $this->scheduledEvents = [];
+        $GLOBALS['wp_query_last_args'] = [];
+        $GLOBALS['wp_query_queue'] = [[
+            'posts' => [
+                (object) [
+                    'ID' => 501,
+                    'post_title' => 'Recently Updated With Offset',
+                    'post_content' => '<a href="http://example.org/fail">Broken</a>',
+                    'post_modified_gmt' => gmdate('Y-m-d H:i:s', $this->options['blc_last_check_time'] + 60),
+                ],
+            ],
+            'max_num_pages' => 1,
+        ]];
+
+        $this->setHttpResponse('HEAD', 'http://example.org/fail', ['response' => ['code' => 404]]);
+
+        $this->utcNow += 120;
+
+        blc_perform_check(0, false);
+
+        $this->assertNotEmpty(
+            $this->httpRequests,
+            'Incremental scans must request links from posts modified after the previous run even with positive timezone offsets.'
+        );
+        $this->assertSame('http://example.org/fail', $this->httpRequests[0]['url']);
+
+        $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should run during the incremental scan.');
+        $queryArgs = end($GLOBALS['wp_query_last_args']);
+        $this->assertIsArray($queryArgs, 'WP_Query arguments should be available for assertions.');
+
+        $expectedThreshold = gmdate('Y-m-d H:i:s', $this->options['blc_last_check_time']);
+        $this->assertArrayHasKey('date_query', $queryArgs, 'Incremental scans must filter posts using GMT thresholds.');
+        $this->assertSame('post_modified_gmt', $queryArgs['date_query'][0]['column']);
+        $this->assertSame(
+            $expectedThreshold,
+            $queryArgs['date_query'][0]['after'],
+            'The GMT threshold should rely on the UTC timestamp recorded after the previous run.'
+        );
     }
 
     public function test_blc_perform_check_skips_excluded_domains_case_insensitively(): void

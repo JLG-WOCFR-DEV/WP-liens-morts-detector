@@ -786,7 +786,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     if ($wp_query->max_num_pages > ($batch + 1)) {
         wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan, $bypass_rest_window));
     } else {
-        update_option('blc_last_check_time', current_time('timestamp'));
+        update_option('blc_last_check_time', current_time('timestamp', true));
     }
 
     if ($debug_mode) { error_log("--- Fin du scan LIENS (Lot #$batch) ---"); }
