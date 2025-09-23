@@ -352,27 +352,55 @@ function blc_is_safe_remote_host($host) {
         $ip_addresses[] = $host;
     } else {
         if (function_exists('dns_get_record')) {
-            $record_types = 0;
+            $dns_records = [];
+            $fallback_records = null;
+
             if (defined('DNS_A')) {
-                $record_types |= DNS_A;
-            }
-            if (defined('DNS_AAAA')) {
-                $record_types |= DNS_AAAA;
-            }
-
-            if ($record_types !== 0) {
-                $records = @dns_get_record($host, $record_types);
+                $records = @dns_get_record($host, DNS_A);
+                if (is_array($records)) {
+                    $dns_records = array_merge($dns_records, $records);
+                }
             } else {
-                $records = false;
+                $fallback_records = @dns_get_record($host);
+                if (is_array($fallback_records)) {
+                    foreach ($fallback_records as $record) {
+                        $type = isset($record['type']) ? strtoupper((string) $record['type']) : '';
+                        if ($type === 'A' || isset($record['ip'])) {
+                            $dns_records[] = $record;
+                        }
+                    }
+                } else {
+                    $fallback_records = [];
+                }
             }
 
-            if (is_array($records)) {
-                foreach ($records as $record) {
-                    if (isset($record['ip'])) {
-                        $ip_addresses[] = $record['ip'];
-                    } elseif (isset($record['ipv6'])) {
-                        $ip_addresses[] = $record['ipv6'];
+            if (defined('DNS_AAAA')) {
+                $records = @dns_get_record($host, DNS_AAAA);
+                if (is_array($records)) {
+                    $dns_records = array_merge($dns_records, $records);
+                }
+            } else {
+                if ($fallback_records === null) {
+                    $fallback_records = @dns_get_record($host);
+                    if (!is_array($fallback_records)) {
+                        $fallback_records = [];
                     }
+                }
+
+                foreach ($fallback_records as $record) {
+                    $type = isset($record['type']) ? strtoupper((string) $record['type']) : '';
+                    if ($type === 'AAAA' || isset($record['ipv6'])) {
+                        $dns_records[] = $record;
+                    }
+                }
+            }
+
+            foreach ($dns_records as $record) {
+                if (isset($record['ip']) && $record['ip'] !== '') {
+                    $ip_addresses[] = $record['ip'];
+                }
+                if (isset($record['ipv6']) && $record['ipv6'] !== '') {
+                    $ip_addresses[] = $record['ipv6'];
                 }
             }
         }
@@ -388,7 +416,7 @@ function blc_is_safe_remote_host($host) {
     }
 
     if (empty($ip_addresses)) {
-        return true; // Unable to resolve, let WordPress handle the failure.
+        return false;
     }
 
     $ip_addresses = array_unique($ip_addresses);
