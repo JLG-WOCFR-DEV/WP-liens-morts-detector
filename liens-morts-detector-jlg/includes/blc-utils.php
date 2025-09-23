@@ -351,6 +351,31 @@ function blc_is_safe_remote_host($host) {
     if (filter_var($host, FILTER_VALIDATE_IP)) {
         $ip_addresses[] = $host;
     } else {
+        $lookup_host = $host;
+
+        if (function_exists('idn_to_ascii')) {
+            $decoded_host = $host;
+
+            if (function_exists('wp_specialchars_decode')) {
+                $decoded = wp_specialchars_decode($decoded_host);
+                if (is_string($decoded) && $decoded !== '') {
+                    $decoded_host = $decoded;
+                }
+            }
+
+            if ($decoded_host !== '' && preg_match('/[^\x00-\x7F]/', $decoded_host) === 1) {
+                if (defined('INTL_IDNA_VARIANT_UTS46')) {
+                    $converted = @idn_to_ascii($decoded_host, 0, INTL_IDNA_VARIANT_UTS46);
+                } else {
+                    $converted = @idn_to_ascii($decoded_host);
+                }
+
+                if (is_string($converted) && $converted !== '') {
+                    $lookup_host = $converted;
+                }
+            }
+        }
+
         if (function_exists('dns_get_record')) {
             $all_records = null;
 
@@ -398,12 +423,12 @@ function blc_is_safe_remote_host($host) {
             };
 
             if (defined('DNS_A')) {
-                $records = @dns_get_record($host, DNS_A);
+                $records = @dns_get_record($lookup_host, DNS_A);
                 if (is_array($records)) {
                     $collect_ipv4($records);
                 }
             } else {
-                $all_records = @dns_get_record($host);
+                $all_records = @dns_get_record($lookup_host);
                 if (!is_array($all_records)) {
                     $all_records = [];
                 }
@@ -414,7 +439,7 @@ function blc_is_safe_remote_host($host) {
             $found_ipv6 = false;
 
             if (defined('DNS_AAAA')) {
-                $records = @dns_get_record($host, DNS_AAAA);
+                $records = @dns_get_record($lookup_host, DNS_AAAA);
                 if (is_array($records)) {
                     $found_ipv6 = $collect_ipv6($records);
                 }
@@ -422,7 +447,7 @@ function blc_is_safe_remote_host($host) {
 
             if (!$found_ipv6) {
                 if ($all_records === null) {
-                    $all_records = @dns_get_record($host);
+                    $all_records = @dns_get_record($lookup_host);
                     if (!is_array($all_records)) {
                         $all_records = [];
                     }
@@ -435,7 +460,7 @@ function blc_is_safe_remote_host($host) {
         }
 
         if (empty($ip_addresses)) {
-            $ipv4_records = @gethostbynamel($host);
+            $ipv4_records = @gethostbynamel($lookup_host);
             if (is_array($ipv4_records)) {
                 foreach ($ipv4_records as $ip) {
                     if ($ip !== '') {
