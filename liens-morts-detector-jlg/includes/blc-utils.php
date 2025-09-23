@@ -352,55 +352,84 @@ function blc_is_safe_remote_host($host) {
         $ip_addresses[] = $host;
     } else {
         if (function_exists('dns_get_record')) {
-            $dns_records = [];
-            $fallback_records = null;
+            $all_records = null;
+
+            $collect_ipv4 = static function (array $records) use (&$ip_addresses): void {
+                foreach ($records as $record) {
+                    $ip = isset($record['ip']) ? trim((string) $record['ip']) : '';
+                    if ($ip !== '') {
+                        $ip_addresses[] = $ip;
+                        continue;
+                    }
+
+                    $type = isset($record['type']) ? strtoupper((string) $record['type']) : '';
+                    if ($type === 'A' && isset($record['target'])) {
+                        $target_ip = trim((string) $record['target']);
+                        if (filter_var($target_ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                            $ip_addresses[] = $target_ip;
+                        }
+                    }
+                }
+            };
+
+            $collect_ipv6 = static function (array $records) use (&$ip_addresses): bool {
+                $added = false;
+
+                foreach ($records as $record) {
+                    $ipv6 = isset($record['ipv6']) ? trim((string) $record['ipv6']) : '';
+
+                    if ($ipv6 === '') {
+                        $type = isset($record['type']) ? strtoupper((string) $record['type']) : '';
+                        if ($type === 'AAAA' && isset($record['target'])) {
+                            $candidate = trim((string) $record['target']);
+                            if (filter_var($candidate, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+                                $ipv6 = $candidate;
+                            }
+                        }
+                    }
+
+                    if ($ipv6 !== '') {
+                        $ip_addresses[] = $ipv6;
+                        $added      = true;
+                    }
+                }
+
+                return $added;
+            };
 
             if (defined('DNS_A')) {
                 $records = @dns_get_record($host, DNS_A);
                 if (is_array($records)) {
-                    $dns_records = array_merge($dns_records, $records);
+                    $collect_ipv4($records);
                 }
             } else {
-                $fallback_records = @dns_get_record($host);
-                if (is_array($fallback_records)) {
-                    foreach ($fallback_records as $record) {
-                        $type = isset($record['type']) ? strtoupper((string) $record['type']) : '';
-                        if ($type === 'A' || isset($record['ip'])) {
-                            $dns_records[] = $record;
-                        }
-                    }
-                } else {
-                    $fallback_records = [];
+                $all_records = @dns_get_record($host);
+                if (!is_array($all_records)) {
+                    $all_records = [];
                 }
+
+                $collect_ipv4($all_records);
             }
+
+            $found_ipv6 = false;
 
             if (defined('DNS_AAAA')) {
                 $records = @dns_get_record($host, DNS_AAAA);
                 if (is_array($records)) {
-                    $dns_records = array_merge($dns_records, $records);
-                }
-            } else {
-                if ($fallback_records === null) {
-                    $fallback_records = @dns_get_record($host);
-                    if (!is_array($fallback_records)) {
-                        $fallback_records = [];
-                    }
-                }
-
-                foreach ($fallback_records as $record) {
-                    $type = isset($record['type']) ? strtoupper((string) $record['type']) : '';
-                    if ($type === 'AAAA' || isset($record['ipv6'])) {
-                        $dns_records[] = $record;
-                    }
+                    $found_ipv6 = $collect_ipv6($records);
                 }
             }
 
-            foreach ($dns_records as $record) {
-                if (isset($record['ip']) && $record['ip'] !== '') {
-                    $ip_addresses[] = $record['ip'];
+            if (!$found_ipv6) {
+                if ($all_records === null) {
+                    $all_records = @dns_get_record($host);
+                    if (!is_array($all_records)) {
+                        $all_records = [];
+                    }
                 }
-                if (isset($record['ipv6']) && $record['ipv6'] !== '') {
-                    $ip_addresses[] = $record['ipv6'];
+
+                if (!empty($all_records)) {
+                    $collect_ipv6($all_records);
                 }
             }
         }
@@ -409,7 +438,9 @@ function blc_is_safe_remote_host($host) {
             $ipv4_records = @gethostbynamel($host);
             if (is_array($ipv4_records)) {
                 foreach ($ipv4_records as $ip) {
-                    $ip_addresses[] = $ip;
+                    if ($ip !== '') {
+                        $ip_addresses[] = $ip;
+                    }
                 }
             }
         }
