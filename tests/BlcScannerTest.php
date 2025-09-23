@@ -133,6 +133,28 @@ class BlcScannerTest extends TestCase
 
             return parse_url((string) $url, $component);
         });
+        Functions\when('dns_get_record')->alias(function (string $hostname, ?int $type = null) {
+            $records = [];
+
+            $wants_ipv4 = true;
+            $wants_ipv6 = true;
+
+            if ($type !== null) {
+                $wants_ipv4 = !defined('DNS_A') || ($type & DNS_A) === DNS_A;
+                $wants_ipv6 = !defined('DNS_AAAA') || ($type & DNS_AAAA) === DNS_AAAA;
+            }
+
+            if ($wants_ipv4) {
+                $records[] = ['ip' => '93.184.216.34'];
+            }
+
+            if ($wants_ipv6) {
+                $records[] = ['ipv6' => '2001:4860:4860::8888'];
+            }
+
+            return $records;
+        });
+        Functions\when('gethostbynamel')->alias(fn(string $hostname) => ['93.184.216.34']);
         Functions\when('wp_kses_bad_protocol')->alias(function ($string, $allowed_protocols = []) {
             $string = (string) $string;
             $allowed_protocols = array_map('strtolower', (array) $allowed_protocols);
@@ -612,6 +634,36 @@ class BlcScannerTest extends TestCase
         $insert = $wpdb->inserted[0];
         $this->assertSame('https://example.com/internal', $insert['data']['url']);
         $this->assertSame('link', $insert['data']['type']);
+    }
+
+    public function test_blc_is_safe_remote_host_rejects_private_only_ipv6_records(): void
+    {
+        Functions\when('dns_get_record')->alias(function (string $hostname, ?int $type = null) {
+            if ($type === null) {
+                return [
+                    ['type' => 'AAAA', 'ipv6' => '::1'],
+                ];
+            }
+
+            if (defined('DNS_A') && ($type & DNS_A) === DNS_A) {
+                return [];
+            }
+
+            if (defined('DNS_AAAA') && ($type & DNS_AAAA) === DNS_AAAA) {
+                return [
+                    ['ipv6' => '::1'],
+                ];
+            }
+
+            return [];
+        });
+
+        Functions\when('gethostbynamel')->alias(fn(string $hostname) => []);
+
+        $this->assertFalse(
+            blc_is_safe_remote_host('ipv6-only.test'),
+            'Hosts resolving exclusively to private IPv6 addresses must be rejected.'
+        );
     }
 
     public function test_blc_perform_check_limits_head_requests_and_falls_back_to_get_when_needed(): void
