@@ -717,6 +717,52 @@ class BlcScannerTest extends TestCase
         );
     }
 
+    public function test_blc_is_safe_remote_host_accepts_idn_hosts(): void
+    {
+        if (!function_exists('idn_to_ascii')) {
+            $this->markTestSkipped('idn_to_ascii() is required to validate IDN hostnames.');
+        }
+
+        $queriedHosts = [];
+
+        Functions\when('dns_get_record')->alias(function (string $hostname, ?int $type = null) use (&$queriedHosts) {
+            $queriedHosts[] = [
+                'function' => 'dns_get_record',
+                'type'     => $type,
+                'host'     => $hostname,
+            ];
+
+            return [
+                ['ip' => '93.184.216.34'],
+            ];
+        });
+
+        Functions\when('gethostbynamel')->alias(function (string $hostname) use (&$queriedHosts) {
+            $queriedHosts[] = [
+                'function' => 'gethostbynamel',
+                'host'     => $hostname,
+            ];
+
+            return ['93.184.216.34'];
+        });
+
+        $this->assertTrue(
+            blc_is_safe_remote_host('bücher.example'),
+            'IDN hostnames should resolve successfully when they map to public IP addresses.'
+        );
+
+        $queriedHostnames = array_map(
+            static fn(array $entry): string => $entry['host'],
+            $queriedHosts
+        );
+
+        $this->assertContains(
+            'xn--bcher-kva.example',
+            $queriedHostnames,
+            'IDN hostnames must be converted to ASCII before performing DNS lookups.'
+        );
+    }
+
     public function test_blc_perform_check_limits_head_requests_and_falls_back_to_get_when_needed(): void
     {
         global $wpdb;
