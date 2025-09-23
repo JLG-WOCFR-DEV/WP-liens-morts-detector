@@ -645,16 +645,6 @@ class BlcScannerTest extends TestCase
                 ];
             }
 
-            if (defined('DNS_A') && ($type & DNS_A) === DNS_A) {
-                return [];
-            }
-
-            if (defined('DNS_AAAA') && ($type & DNS_AAAA) === DNS_AAAA) {
-                return [
-                    ['ipv6' => '::1'],
-                ];
-            }
-
             return [];
         });
 
