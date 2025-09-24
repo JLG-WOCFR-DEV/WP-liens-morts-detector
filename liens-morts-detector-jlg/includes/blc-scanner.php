@@ -293,6 +293,9 @@ function blc_create_dom_from_content($content, $charset = 'UTF-8') {
 
     if (function_exists('mb_convert_encoding')) {
         $content_for_dom = mb_convert_encoding($content, 'HTML-ENTITIES', $charset);
+        if ($content_for_dom === false) {
+            $content_for_dom = $content;
+        }
     } else {
         $content_for_dom = $content;
     }
