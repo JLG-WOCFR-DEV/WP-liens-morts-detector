@@ -57,7 +57,7 @@ function blc_dashboard_links_page() {
         $is_full = isset($_POST['blc_full_scan']);
         $bypass_rest_window = $is_full;
         wp_clear_scheduled_hook('blc_manual_check_batch');
-        wp_schedule_single_event(time(), 'blc_manual_check_batch', array(0, $is_full, $bypass_rest_window));
+        wp_schedule_single_event(time(), 'blc_manual_check_batch', array(0, $is_full, $bypass_rest_window, array()));
         printf(
             '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
             esc_html__("La vérification des liens a été programmée et s'exécute en arrière-plan.", 'liens-morts-detector-jlg')
@@ -288,6 +288,13 @@ function blc_settings_page() {
         $debug_mode = isset($_POST['blc_debug_mode']);
         update_option('blc_debug_mode', $debug_mode);
 
+        $email_notifications_enabled = isset($_POST['blc_email_notifications_enabled']);
+        update_option('blc_email_notifications_enabled', (bool) $email_notifications_enabled);
+
+        $email_recipients_raw = isset($_POST['blc_email_recipients']) ? wp_unslash($_POST['blc_email_recipients']) : '';
+        $email_recipients = sanitize_textarea_field($email_recipients_raw);
+        update_option('blc_email_recipients', $email_recipients);
+
         wp_clear_scheduled_hook('blc_check_links');
         wp_schedule_event(time(), $frequency, 'blc_check_links');
         if ($frequency_warning !== '') {
@@ -337,6 +344,8 @@ function blc_settings_page() {
     $scan_method = get_option('blc_scan_method', 'precise');
     $excluded_domains = get_option('blc_excluded_domains', "x.com\ntwitter.com\nlinkedin.com");
     $debug_mode = get_option('blc_debug_mode', false);
+    $email_notifications_enabled = (bool) get_option('blc_email_notifications_enabled', false);
+    $email_recipients = get_option('blc_email_recipients', '');
     ?>
     <div class="wrap">
         <h1><?php esc_html_e('Réglages des liens morts', 'liens-morts-detector-jlg'); ?></h1>
@@ -441,6 +450,28 @@ function blc_settings_page() {
                         <td>
                            <textarea name="blc_excluded_domains" id="blc_excluded_domains" rows="5" class="large-text"><?php echo esc_textarea($excluded_domains); ?></textarea>
                            <p class="description"><?php esc_html_e('Domaines à ignorer pendant l\'analyse. Un domaine par ligne (ex: amazon.fr).', 'liens-morts-detector-jlg'); ?></p>
+                        </td>
+                    </tr>
+                 </tbody>
+            </table>
+            <h2><?php esc_html_e('Notifications', 'liens-morts-detector-jlg'); ?></h2>
+            <table class="form-table" role="presentation">
+                 <tbody>
+                    <tr>
+                        <th scope="row"><?php esc_html_e('Alertes par e-mail', 'liens-morts-detector-jlg'); ?></th>
+                        <td>
+                            <label for="blc_email_notifications_enabled">
+                                <input type="checkbox" name="blc_email_notifications_enabled" id="blc_email_notifications_enabled" <?php checked($email_notifications_enabled, true); ?>>
+                                <?php esc_html_e('Envoyer un rapport après chaque analyse terminée.', 'liens-morts-detector-jlg'); ?>
+                            </label>
+                            <p class="description"><?php esc_html_e('Le rapport récapitule le nombre de liens ou d\'images cassés détectés et les éléments les plus récents.', 'liens-morts-detector-jlg'); ?></p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><label for="blc_email_recipients"><?php esc_html_e('Destinataires', 'liens-morts-detector-jlg'); ?></label></th>
+                        <td>
+                            <textarea name="blc_email_recipients" id="blc_email_recipients" rows="4" class="large-text"><?php echo esc_textarea($email_recipients); ?></textarea>
+                            <p class="description"><?php esc_html_e('Une adresse e-mail par ligne. L\'adresse de l\'administrateur du site sera utilisée par défaut si ce champ est vide.', 'liens-morts-detector-jlg'); ?></p>
                         </td>
                     </tr>
                  </tbody>

@@ -18,6 +18,8 @@ $options_to_delete = [
     'blc_scan_method',
     'blc_excluded_domains',
     'blc_debug_mode',
+    'blc_email_notifications_enabled',
+    'blc_email_recipients',
     'blc_plugin_db_version'
 ];
 
@@ -34,5 +36,6 @@ $wpdb->query("DROP TABLE IF EXISTS $table_name");
 // Nettoyage final des tâches planifiées (par sécurité, même si la désactivation le fait déjà)
 wp_clear_scheduled_hook('blc_check_links');
 wp_clear_scheduled_hook('blc_check_batch');
+wp_clear_scheduled_hook('blc_manual_check_batch');
 wp_clear_scheduled_hook('blc_check_image_batch');
 
