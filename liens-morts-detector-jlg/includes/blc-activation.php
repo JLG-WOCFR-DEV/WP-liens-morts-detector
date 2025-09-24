@@ -6,7 +6,7 @@ if (!defined('ABSPATH')) {
 }
 
 if (!defined('BLC_DB_VERSION')) {
-    define('BLC_DB_VERSION', '1.4.0');
+    define('BLC_DB_VERSION', '1.5.0');
 }
 
 if (!defined('BLC_TEXT_FIELD_LENGTH')) {
@@ -44,6 +44,13 @@ function blc_maybe_upgrade_database() {
 
     if (!$installed_version || version_compare($installed_version, '1.4.0', '<')) {
         blc_maybe_add_index($table_name, 'url_prefix', 'url', 191);
+    }
+
+    if (!$installed_version || version_compare($installed_version, '1.5.0', '<')) {
+        blc_maybe_add_column($table_name, 'url_host', 'varchar(191) NULL');
+        blc_maybe_add_column($table_name, 'is_internal', 'tinyint(1) NOT NULL DEFAULT 0');
+        blc_maybe_add_index($table_name, 'url_host', 'url_host');
+        blc_maybe_add_index($table_name, 'is_internal', 'is_internal');
     }
 
     update_option('blc_plugin_db_version', BLC_DB_VERSION);
@@ -96,9 +103,11 @@ function blc_migrate_column_to_varchar($table_name, $column_name, $target_length
     if ($target_length > 0) {
         $wpdb->query(
             sprintf(
-                "UPDATE `%s` SET `%s` = LEFT(`%s`, %d)",
+                "UPDATE `%s` SET `%s` = LEFT(`%s`, %d) WHERE CHAR_LENGTH(`%s`) > %d",
                 $table,
                 $column,
+                $column,
+                $target_length,
                 $column,
                 $target_length
             )
@@ -174,6 +183,38 @@ function blc_migrate_column_to_text($table_name, $column_name, $target_type = 'l
 }
 
 /**
+ * Add a column to the specified table when it does not already exist.
+ *
+ * @param string $table_name Database table name.
+ * @param string $column_name Column name to add.
+ * @param string $definition Column definition (type, nullability, default, etc.).
+ */
+function blc_maybe_add_column($table_name, $column_name, $definition) {
+    global $wpdb;
+
+    $table   = esc_sql($table_name);
+    $column  = esc_sql($column_name);
+    $pattern = $wpdb->esc_like($column_name);
+
+    $existing = $wpdb->get_var(
+        $wpdb->prepare("SHOW COLUMNS FROM `$table` LIKE %s", $pattern)
+    );
+
+    if ($existing) {
+        return;
+    }
+
+    $wpdb->query(
+        sprintf(
+            "ALTER TABLE `%s` ADD COLUMN `%s` %s",
+            $table,
+            $column,
+            $definition
+        )
+    );
+}
+
+/**
  * Add an index to the specified table when it does not already exist.
  *
  * @param string   $table_name    Database table name.
@@ -230,10 +271,14 @@ function blc_activation() {
         post_id bigint(20) unsigned NOT NULL,
         post_title varchar(" . BLC_TEXT_FIELD_LENGTH . ") NULL,
         type varchar(20) NOT NULL,
+        url_host varchar(191) NULL,
+        is_internal tinyint(1) NOT NULL DEFAULT 0,
         PRIMARY KEY  (id),
         KEY type (type),
         KEY post_id (post_id),
-        KEY url_prefix (url(191))
+        KEY url_prefix (url(191)),
+        KEY url_host (url_host),
+        KEY is_internal (is_internal)
     ) $charset_collate;";
 
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';

@@ -41,25 +41,28 @@ class BLC_Links_List_Table extends WP_List_Table {
         global $wpdb;
         $table_name = $wpdb->prefix . 'blc_broken_links';
         $internal_condition = $this->build_internal_url_condition();
-        $internal_case      = $internal_condition['case_template'];
-        $internal_case_params = $internal_condition['case_params'];
+        $legacy_case        = $internal_condition['case_template'];
+        $legacy_params      = $internal_condition['case_params'];
 
-        $counts = $wpdb->get_row(
-            $wpdb->prepare(
-                "SELECT
-                    COUNT(*) AS total,
-                    COALESCE(SUM($internal_case), 0) AS internal_count,
-                    (COUNT(*) - COALESCE(SUM($internal_case), 0)) AS external_count
-                 FROM $table_name
-                 WHERE type = %s",
-                array_merge($internal_case_params, $internal_case_params, ['link'])
-            ),
-            ARRAY_A
+        $counts_query = $wpdb->prepare(
+            "SELECT
+                COUNT(*) AS total,
+                SUM(
+                    CASE
+                        WHEN is_internal IS NOT NULL THEN is_internal
+                        ELSE $legacy_case
+                    END
+                ) AS internal_count
+             FROM $table_name
+             WHERE type = %s",
+            array_merge($legacy_params, ['link'])
         );
+
+        $counts = $wpdb->get_row($counts_query, ARRAY_A);
 
         $total_count    = isset($counts['total']) ? (int) $counts['total'] : 0;
         $internal_count = isset($counts['internal_count']) ? (int) $counts['internal_count'] : 0;
-        $external_count = isset($counts['external_count']) ? (int) $counts['external_count'] : max(0, $total_count - $internal_count);
+        $external_count = max(0, $total_count - $internal_count);
 
         $all_class = ($current == 'all' ? 'current' : '');
         $views['all'] = sprintf(
@@ -250,10 +253,11 @@ class BLC_Links_List_Table extends WP_List_Table {
         $params = ['link'];
 
         if ($current_view === 'internal') {
-            $where[] = $internal_sql;
+            $where[] = '(is_internal = 1 OR (is_internal IS NULL AND ' . $internal_sql . '))';
             $params  = array_merge($params, $internal_params);
         } elseif ($current_view === 'external') {
-            $where[] = "({$external_sql} OR url IS NULL OR url = '')";
+            $external_clause = '(is_internal = 0 OR (is_internal IS NULL AND (' . $external_sql . " OR url IS NULL OR url = ''" . ')))';
+            $where[] = $external_clause;
             $params  = array_merge($params, $external_params);
         }
 

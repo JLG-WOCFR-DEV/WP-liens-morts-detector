@@ -314,13 +314,36 @@ function blc_ajax_edit_link_callback() {
             wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')]);
         }
 
-        $wpdb->delete(
+        $row_to_delete = null;
+        if (method_exists($wpdb, 'get_row')) {
+            $row_to_delete = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT url, anchor, post_title FROM $table_name WHERE post_id = %d AND url = %s AND type = %s",
+                    $post_id,
+                    $stored_old_url,
+                    'link'
+                ),
+                ARRAY_A
+            );
+        }
+
+        $deleted = $wpdb->delete(
             $table_name,
             ['post_id' => $post_id, 'url' => $stored_old_url, 'type' => 'link'],
             ['%d', '%s', '%s']
         );
 
-        blc_flush_dataset_size_cache('link');
+        if ($deleted && is_array($row_to_delete)) {
+            $row_bytes = blc_calculate_row_storage_footprint_bytes(
+                $row_to_delete['url'] ?? '',
+                $row_to_delete['anchor'] ?? '',
+                $row_to_delete['post_title'] ?? ''
+            );
+            if ($row_bytes > 0) {
+                blc_adjust_dataset_storage_footprint('link', -$row_bytes);
+            }
+        }
+
         wp_send_json_success(['purged' => true]);
         return;
     }
@@ -360,6 +383,19 @@ function blc_ajax_edit_link_callback() {
     }
 
     // Supprimer le lien de la table dédiée
+    $row_to_delete = null;
+    if (method_exists($wpdb, 'get_row')) {
+        $row_to_delete = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT url, anchor, post_title FROM $table_name WHERE post_id = %d AND url = %s AND type = %s",
+                $post_id,
+                $stored_old_url,
+                'link'
+            ),
+            ARRAY_A
+        );
+    }
+
     $delete_result = $wpdb->delete(
         $table_name,
         ['post_id' => $post_id, 'url' => $stored_old_url, 'type' => 'link'],
@@ -376,7 +412,17 @@ function blc_ajax_edit_link_callback() {
         return;
     }
 
-    blc_flush_dataset_size_cache('link');
+    if ($delete_result > 0 && is_array($row_to_delete)) {
+        $row_bytes = blc_calculate_row_storage_footprint_bytes(
+            $row_to_delete['url'] ?? '',
+            $row_to_delete['anchor'] ?? '',
+            $row_to_delete['post_title'] ?? ''
+        );
+        if ($row_bytes > 0) {
+            blc_adjust_dataset_storage_footprint('link', -$row_bytes);
+        }
+    }
+
     wp_send_json_success();
 }
 
@@ -425,13 +471,36 @@ function blc_ajax_unlink_callback() {
             wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')]);
         }
 
-        $wpdb->delete(
+        $row_to_delete = null;
+        if (method_exists($wpdb, 'get_row')) {
+            $row_to_delete = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT url, anchor, post_title FROM $table_name WHERE post_id = %d AND url = %s AND type = %s",
+                    $post_id,
+                    $stored_url_to_unlink,
+                    'link'
+                ),
+                ARRAY_A
+            );
+        }
+
+        $deleted = $wpdb->delete(
             $table_name,
             ['post_id' => $post_id, 'url' => $stored_url_to_unlink, 'type' => 'link'],
             ['%d', '%s', '%s']
         );
 
-        blc_flush_dataset_size_cache('link');
+        if ($deleted && is_array($row_to_delete)) {
+            $row_bytes = blc_calculate_row_storage_footprint_bytes(
+                $row_to_delete['url'] ?? '',
+                $row_to_delete['anchor'] ?? '',
+                $row_to_delete['post_title'] ?? ''
+            );
+            if ($row_bytes > 0) {
+                blc_adjust_dataset_storage_footprint('link', -$row_bytes);
+            }
+        }
+
         wp_send_json_success(['purged' => true]);
         return;
     }
@@ -464,6 +533,19 @@ function blc_ajax_unlink_callback() {
     }
 
     // Supprimer le lien de la table dédiée
+    $row_to_delete = null;
+    if (method_exists($wpdb, 'get_row')) {
+        $row_to_delete = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT url, anchor, post_title FROM $table_name WHERE post_id = %d AND url = %s AND type = %s",
+                $post_id,
+                $stored_url_to_unlink,
+                'link'
+            ),
+            ARRAY_A
+        );
+    }
+
     $delete_result = $wpdb->delete(
         $table_name,
         ['post_id' => $post_id, 'url' => $stored_url_to_unlink, 'type' => 'link'],
@@ -480,6 +562,16 @@ function blc_ajax_unlink_callback() {
         return;
     }
 
-    blc_flush_dataset_size_cache('link');
+    if ($delete_result > 0 && is_array($row_to_delete)) {
+        $row_bytes = blc_calculate_row_storage_footprint_bytes(
+            $row_to_delete['url'] ?? '',
+            $row_to_delete['anchor'] ?? '',
+            $row_to_delete['post_title'] ?? ''
+        );
+        if ($row_bytes > 0) {
+            blc_adjust_dataset_storage_footprint('link', -$row_bytes);
+        }
+    }
+
     wp_send_json_success();
 }
