@@ -346,9 +346,7 @@ class BlcScannerTest extends TestCase
         });
         Functions\when('update_option')->alias(function (string $option, $value) {
             $this->updatedOptions[$option] = $value;
-            if (in_array($option, ['blc_active_link_scan_key', 'blc_active_image_scan_key'], true)) {
-                $this->options[$option] = $value;
-            }
+            $this->options[$option] = $value;
 
             return true;
         });
@@ -939,13 +937,15 @@ class BlcScannerTest extends TestCase
 
         $this->setHttpResponse('HEAD', 'http://example.net/bad', ['response' => ['code' => 404]]);
 
+        $previousLastCheckTime = $this->options['blc_last_check_time'];
+
         blc_perform_check(0, false);
 
         $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should be instantiated for incremental scans.');
         $lastArgs = end($GLOBALS['wp_query_last_args']);
         $this->assertIsArray($lastArgs, 'WP_Query arguments should be an array.');
 
-        $expectedThreshold = gmdate('Y-m-d H:i:s', $this->options['blc_last_check_time']);
+        $expectedThreshold = gmdate('Y-m-d H:i:s', $previousLastCheckTime);
         $this->assertArrayHasKey('date_query', $lastArgs, 'Incremental scans should set a date_query clause.');
         $this->assertSame('post_modified_gmt', $lastArgs['date_query'][0]['column']);
         $this->assertSame($expectedThreshold, $lastArgs['date_query'][0]['after']);
@@ -977,6 +977,8 @@ class BlcScannerTest extends TestCase
 
         $this->setHttpResponse('HEAD', 'http://example.org/missing', ['response' => ['code' => 404]]);
 
+        $previousLastCheckTime = $this->options['blc_last_check_time'];
+
         blc_perform_check(0, false);
 
         $this->assertNotEmpty($this->httpRequests, 'Incremental scans should request links from recently modified posts.');
@@ -988,7 +990,7 @@ class BlcScannerTest extends TestCase
         $lastArgs = end($GLOBALS['wp_query_last_args']);
         $this->assertIsArray($lastArgs, 'WP_Query arguments should be an array for incremental scans.');
 
-        $expectedThreshold = gmdate('Y-m-d H:i:s', $this->options['blc_last_check_time']);
+        $expectedThreshold = gmdate('Y-m-d H:i:s', $previousLastCheckTime);
         $this->assertArrayHasKey('date_query', $lastArgs, 'Incremental scans must restrict posts by modification date in GMT.');
         $this->assertSame('post_modified_gmt', $lastArgs['date_query'][0]['column']);
         $this->assertSame($expectedThreshold, $lastArgs['date_query'][0]['after']);
@@ -1040,6 +1042,7 @@ class BlcScannerTest extends TestCase
         $this->setHttpResponse('HEAD', 'http://example.org/fail', ['response' => ['code' => 404]]);
 
         $this->utcNow += 120;
+        $previousLastCheckTime = $this->options['blc_last_check_time'];
 
         blc_perform_check(0, false);
 
@@ -1053,7 +1056,7 @@ class BlcScannerTest extends TestCase
         $queryArgs = end($GLOBALS['wp_query_last_args']);
         $this->assertIsArray($queryArgs, 'WP_Query arguments should be available for assertions.');
 
-        $expectedThreshold = gmdate('Y-m-d H:i:s', $this->options['blc_last_check_time']);
+        $expectedThreshold = gmdate('Y-m-d H:i:s', $previousLastCheckTime);
         $this->assertArrayHasKey('date_query', $queryArgs, 'Incremental scans must filter posts using GMT thresholds.');
         $this->assertSame('post_modified_gmt', $queryArgs['date_query'][0]['column']);
         $this->assertSame(
@@ -1712,7 +1715,13 @@ class BlcScannerTest extends TestCase
         $this->assertSame($this->utcNow + 60, $event['timestamp']);
         $this->assertSame('blc_check_image_batch', $event['hook']);
         $this->assertSame([1, true], $event['args']);
-        $this->assertSame([], $this->updatedOptions, 'Image scan should not update options.');
+        $this->assertArrayHasKey('blc_image_scan_lock', $this->updatedOptions, 'Image scan should acquire a concurrency lock.');
+        $this->assertArrayHasKey('blc_image_scan_lock_token', $this->updatedOptions, 'Lock token should be stored for subsequent batches.');
+        $lock_state = $this->updatedOptions['blc_image_scan_lock'];
+        $this->assertIsArray($lock_state);
+        $this->assertArrayHasKey('token', $lock_state);
+        $this->assertArrayHasKey('locked_at', $lock_state);
+        $this->assertSame($lock_state['token'], $this->updatedOptions['blc_image_scan_lock_token']);
     }
 
     public function test_blc_perform_image_check_records_missing_cdn_upload_image(): void
