@@ -18,6 +18,8 @@ class BLC_Links_List_Table extends WP_List_Table {
 
     private $site_url;
 
+    private $internal_url_condition_cache = null;
+
     /**
      * Constructeur de la classe.
      */
@@ -280,6 +282,10 @@ class BLC_Links_List_Table extends WP_List_Table {
     }
 
     private function build_internal_url_condition() {
+        if (is_array($this->internal_url_condition_cache)) {
+            return $this->internal_url_condition_cache;
+        }
+
         global $wpdb;
 
         $patterns = [];
@@ -359,7 +365,7 @@ class BLC_Links_List_Table extends WP_List_Table {
             $not_params      = array_merge($not_params, $pattern['params']);
         }
 
-        return [
+        $this->internal_url_condition_cache = [
             'sql'           => '(' . implode(' OR ', $or_conditions) . ')',
             'params'        => $case_params,
             'case_template' => 'CASE ' . implode(' ', $case_clauses) . ' ELSE 0 END',
@@ -367,5 +373,7 @@ class BLC_Links_List_Table extends WP_List_Table {
             'not_sql'       => '(' . implode(' AND ', $not_clauses) . ')',
             'not_params'    => $not_params,
         ];
+
+        return $this->internal_url_condition_cache;
     }
 }

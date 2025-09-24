@@ -21,19 +21,29 @@ $options_to_delete = [
     'blc_plugin_db_version'
 ];
 
-// Boucle sur chaque option pour la supprimer
-foreach ($options_to_delete as $option_name) {
-    delete_option($option_name);
+$cleanup_site = static function () use ($options_to_delete) {
+    global $wpdb;
+    foreach ($options_to_delete as $option_name) {
+        delete_option($option_name);
+        delete_site_option($option_name);
+    }
+
+    $table_name = $wpdb->prefix . 'blc_broken_links';
+    $wpdb->query("DROP TABLE IF EXISTS $table_name");
+
+    wp_clear_scheduled_hook('blc_check_links');
+    wp_clear_scheduled_hook('blc_check_batch');
+    wp_clear_scheduled_hook('blc_manual_check_batch');
+    wp_clear_scheduled_hook('blc_check_image_batch');
+};
+
+if (is_multisite()) {
+    $sites = function_exists('get_sites') ? get_sites(['fields' => 'ids']) : [];
+    foreach ($sites as $site_id) {
+        switch_to_blog((int) $site_id);
+        $cleanup_site();
+        restore_current_blog();
+    }
+} else {
+    $cleanup_site();
 }
-
-// Suppression de la table personnalisée
-global $wpdb;
-$table_name = $wpdb->prefix . 'blc_broken_links';
-$wpdb->query("DROP TABLE IF EXISTS $table_name");
-
-// Nettoyage final des tâches planifiées (par sécurité, même si la désactivation le fait déjà)
-wp_clear_scheduled_hook('blc_check_links');
-wp_clear_scheduled_hook('blc_check_batch');
-wp_clear_scheduled_hook('blc_manual_check_batch');
-wp_clear_scheduled_hook('blc_check_image_batch');
-

@@ -87,6 +87,9 @@ class BlcAjaxCallbacksTest extends TestCase
         Functions\when('wp_http_validate_url')->alias(function ($url) {
             return filter_var($url, FILTER_VALIDATE_URL) ? $url : false;
         });
+        Functions\when('esc_url_raw')->alias(static function ($url) {
+            return (string) $url;
+        });
         Functions\when('is_wp_error')->alias(function () {
             return false;
         });
@@ -577,7 +580,7 @@ class BlcAjaxCallbacksTest extends TestCase
 
         Functions\when('check_ajax_referer')->justReturn(true);
         Functions\expect('get_post')->once()->with(11)->andReturn(null);
-        Functions\expect('current_user_can')->never();
+        Functions\expect('current_user_can')->once()->with('manage_options')->andReturn(true);
 
         global $wpdb;
         $wpdb = new class {
@@ -870,7 +873,11 @@ class BlcAjaxCallbacksTest extends TestCase
 
         Functions\when('check_ajax_referer')->justReturn(true);
         Functions\expect('get_post')->once()->with(21)->andReturn(null);
-        Functions\expect('current_user_can')->never();
+        Functions\expect('current_user_can')->once()->with('manage_options')->andReturn(true);
+
+        Functions\when('esc_url_raw')->alias(function ($url) {
+            return $url;
+        });
 
         global $wpdb;
         $wpdb = new class {

@@ -211,7 +211,7 @@ function blc_ajax_edit_link_callback() {
 
     $params = blc_require_post_params(['post_id', 'old_url', 'new_url']);
 
-    $post_id = intval($params['post_id']);
+    $post_id = absint($params['post_id']);
     global $wpdb;
     $table_name = $wpdb->prefix . 'blc_broken_links';
 
@@ -356,6 +356,10 @@ function blc_ajax_edit_link_callback() {
     }
 
     if (!$post) {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')]);
+        }
+
         $wpdb->delete(
             $table_name,
             ['post_id' => $post_id, 'url' => $stored_old_url, 'type' => 'link'],
@@ -371,7 +375,10 @@ function blc_ajax_edit_link_callback() {
     }
 
     $old_url = $prepared_old_url;
-    $new_url = $final_new_url;
+    $new_url = esc_url_raw($final_new_url);
+    if ($new_url === '') {
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
+    }
 
     $normalized_content = blc_normalize_post_content_encoding($post->post_content);
     $replacement = blc_replace_link_href_in_content($normalized_content, $old_url, $new_url);
@@ -424,7 +431,7 @@ function blc_ajax_unlink_callback() {
 
     $params = blc_require_post_params(['post_id', 'url_to_unlink']);
 
-    $post_id = intval($params['post_id']);
+    $post_id = absint($params['post_id']);
     global $wpdb;
     $table_name = $wpdb->prefix . 'blc_broken_links';
 
@@ -440,6 +447,13 @@ function blc_ajax_unlink_callback() {
         wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
     }
 
+    $sanitized_url_to_unlink = esc_url_raw($prepared_url_to_unlink);
+    if ($sanitized_url_to_unlink === '') {
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
+    }
+
+    $prepared_url_to_unlink = $sanitized_url_to_unlink;
+
     $stored_url_to_unlink = blc_prepare_url_for_storage($prepared_url_to_unlink);
     $validated_url = wp_http_validate_url($prepared_url_to_unlink);
     $normalized_url = $validated_url ?: blc_normalize_link_url($prepared_url_to_unlink, $site_url, $site_scheme);
@@ -451,6 +465,10 @@ function blc_ajax_unlink_callback() {
 
     $post = get_post($post_id);
     if (!$post) {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')]);
+        }
+
         $wpdb->delete(
             $table_name,
             ['post_id' => $post_id, 'url' => $stored_url_to_unlink, 'type' => 'link'],
