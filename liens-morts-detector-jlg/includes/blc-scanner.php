@@ -819,6 +819,8 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     }
 
     // --- 5. Sauvegarde et planification ---
+    wp_reset_postdata();
+
     if ($temporary_retry_scheduled) {
         if ($debug_mode) { error_log('Scan reporté : statut HTTP temporaire détecté, nouveau passage planifié.'); }
         return;
@@ -1001,6 +1003,8 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
             }
         }
     }
+
+    wp_reset_postdata();
 
     if ($query->max_num_pages > ($batch + 1)) {
         // On utilise un hook de batch différent pour ne pas interférer
