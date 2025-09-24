@@ -67,6 +67,70 @@ function blc_load_dom_from_post($post_content) {
 
 
 /**
+ * Load a DOMDocument/XPath pair from an UTF-8 HTML fragment.
+ *
+ * @param string $html HTML fragment encoded in UTF-8.
+ *
+ * @return array{dom: DOMDocument, xpath: DOMXPath, root: DOMElement}|array{error: string}
+ */
+function blc_load_dom_from_html_fragment($html) {
+    $html = (string) $html;
+
+    $previous = libxml_use_internal_errors(true);
+
+    $dom = new DOMDocument('1.0', 'UTF-8');
+    $wrapped_html = '<!DOCTYPE html><html><body><div id="blc-fragment-root">' . $html . '</div></body></html>';
+    $loaded = $dom->loadHTML('<?xml encoding="UTF-8"?>' . $wrapped_html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+    $errors = libxml_get_errors();
+
+    libxml_clear_errors();
+    libxml_use_internal_errors($previous);
+
+    if (!$loaded) {
+        $message = __('Impossible de charger le contenu HTML.', 'liens-morts-detector-jlg');
+
+        if (!empty($errors)) {
+            $first_error = reset($errors);
+            if ($first_error instanceof \LibXMLError) {
+                $message .= ' ' . trim($first_error->message);
+            }
+        }
+
+        return ['error' => $message];
+    }
+
+    $body = $dom->getElementsByTagName('div')->item(0);
+    if (!$body instanceof DOMElement) {
+        return ['error' => __('Impossible de localiser le fragment HTML.', 'liens-morts-detector-jlg')];
+    }
+
+    return [
+        'dom'   => $dom,
+        'xpath' => new DOMXPath($dom),
+        'root'  => $body,
+    ];
+}
+
+
+/**
+ * Export the inner HTML of a DOMElement.
+ *
+ * @param DOMElement $element Element whose children will be serialized.
+ *
+ * @return string Serialized HTML.
+ */
+function blc_dom_element_inner_html(DOMElement $element) {
+    $html = '';
+
+    foreach ($element->childNodes as $child) {
+        $html .= $element->ownerDocument->saveHTML($child);
+    }
+
+    return $html;
+}
+
+
+/**
  * Convert stored post content from the blog charset to UTF-8 for safe inline manipulation.
  *
  * @param string $post_content Raw post content as retrieved from the database.
@@ -172,56 +236,43 @@ function blc_replace_link_href_in_content($html, $target_href, $replacement_href
         return ['content' => $html, 'updated' => false];
     }
 
-    $updated = false;
-
-    $result = preg_replace_callback(
-        '#<a\b[^>]*>#is',
-        function ($matches) use (&$updated, $target_href, $replacement_href) {
-            $tag = $matches[0];
-
-            $href_match = [];
-            if (!preg_match('#\bhref\s*=\s*("([^"]*)"|\'([^\']*)\'|([^\s>]+))#i', $tag, $href_match, PREG_OFFSET_CAPTURE)) {
-                return $tag;
-            }
-
-            $raw_value = '';
-            $quote      = '';
-            if ($href_match[2][0] !== '') {
-                $raw_value = $href_match[2][0];
-                $quote     = '"';
-            } elseif (isset($href_match[3]) && $href_match[3][0] !== '') {
-                $raw_value = $href_match[3][0];
-                $quote     = '\'';
-            } else {
-                $raw_value = $href_match[4][0];
-                $quote     = '';
-            }
-
-            $decoded_href = blc_prepare_posted_url(wp_kses_decode_entities($raw_value));
-            if ($decoded_href !== $target_href) {
-                return $tag;
-            }
-
-            $updated = true;
-
-            if ($quote === '') {
-                $quote = '"';
-            }
-
-            $new_attribute = 'href=' . $quote . esc_attr($replacement_href) . $quote;
-            $attribute_start = $href_match[0][1];
-            $attribute_length = strlen($href_match[0][0]);
-
-            return substr($tag, 0, $attribute_start) . $new_attribute . substr($tag, $attribute_start + $attribute_length);
-        },
-        $html
-    );
-
-    if (!is_string($result)) {
+    $dom_result = blc_load_dom_from_html_fragment($html);
+    if (isset($dom_result['error'])) {
         return ['content' => $html, 'updated' => false];
     }
 
-    return ['content' => $result, 'updated' => $updated];
+    /** @var DOMXPath $xpath */
+    $xpath = $dom_result['xpath'];
+    /** @var DOMElement $root */
+    $root  = $dom_result['root'];
+
+    $updated = false;
+
+    $links = $xpath->query('.//a[@href]');
+    if ($links instanceof DOMNodeList) {
+        foreach ($links as $link) {
+            if (!$link instanceof DOMElement) {
+                continue;
+            }
+
+            $href_value = blc_prepare_posted_url($link->getAttribute('href'));
+            if ($href_value !== $target_href) {
+                continue;
+            }
+
+            $link->setAttribute('href', $replacement_href);
+            $updated = true;
+        }
+    }
+
+    if (!$updated) {
+        return ['content' => $html, 'updated' => false];
+    }
+
+    return [
+        'content' => blc_dom_element_inner_html($root),
+        'updated' => true,
+    ];
 }
 
 /**
@@ -240,54 +291,51 @@ function blc_remove_link_wrappers_from_content($html, $target_href) {
         return ['content' => $html, 'removed' => false];
     }
 
-    $removed = false;
-
-    $result = preg_replace_callback(
-        '#<a\b[^>]*>.*?</a>#is',
-        function ($matches) use (&$removed, $target_href) {
-            $fragment = $matches[0];
-
-            $href_match = [];
-            if (!preg_match('#\bhref\s*=\s*("([^"]*)"|\'([^\']*)\'|([^\s>]+))#i', $fragment, $href_match)) {
-                return $fragment;
-            }
-
-            $raw_value = '';
-            if ($href_match[2] !== '') {
-                $raw_value = $href_match[2];
-            } elseif (isset($href_match[3]) && $href_match[3] !== '') {
-                $raw_value = $href_match[3];
-            } else {
-                $raw_value = $href_match[4];
-            }
-
-            $decoded_href = blc_prepare_posted_url(wp_kses_decode_entities($raw_value));
-            if ($decoded_href !== $target_href) {
-                return $fragment;
-            }
-
-            $closing_position = strripos($fragment, '</a>');
-            if ($closing_position === false) {
-                $closing_position = strripos($fragment, '</A>');
-            }
-
-            $open_position = strpos($fragment, '>');
-            if ($closing_position === false || $open_position === false) {
-                return $fragment;
-            }
-
-            $removed = true;
-
-            return substr($fragment, $open_position + 1, $closing_position - $open_position - 1);
-        },
-        $html
-    );
-
-    if (!is_string($result)) {
+    $dom_result = blc_load_dom_from_html_fragment($html);
+    if (isset($dom_result['error'])) {
         return ['content' => $html, 'removed' => false];
     }
 
-    return ['content' => $result, 'removed' => $removed];
+    /** @var DOMXPath $xpath */
+    $xpath = $dom_result['xpath'];
+    /** @var DOMElement $root */
+    $root  = $dom_result['root'];
+
+    $removed = false;
+
+    $links = $xpath->query('.//a[@href]');
+    if ($links instanceof DOMNodeList) {
+        /** @var DOMElement[] $anchors */
+        $anchors = [];
+        foreach ($links as $link) {
+            if ($link instanceof DOMElement) {
+                $anchors[] = $link;
+            }
+        }
+
+        foreach ($anchors as $anchor) {
+            $href_value = blc_prepare_posted_url($anchor->getAttribute('href'));
+            if ($href_value !== $target_href) {
+                continue;
+            }
+
+            while ($anchor->firstChild) {
+                $anchor->parentNode->insertBefore($anchor->firstChild, $anchor);
+            }
+
+            $anchor->parentNode->removeChild($anchor);
+            $removed = true;
+        }
+    }
+
+    if (!$removed) {
+        return ['content' => $html, 'removed' => false];
+    }
+
+    return [
+        'content' => blc_dom_element_inner_html($root),
+        'removed' => true,
+    ];
 }
 
 
@@ -359,6 +407,104 @@ function blc_prepare_text_field_for_storage($text) {
     $max_length = defined('BLC_TEXT_FIELD_LENGTH') ? (int) BLC_TEXT_FIELD_LENGTH : 255;
 
     return blc_truncate_for_storage($text, $max_length, true);
+}
+
+
+/**
+ * Build the transient key used to cache dataset sizes.
+ *
+ * @param string $type Dataset type (link/image).
+ *
+ * @return string
+ */
+function blc_get_dataset_size_cache_key($type) {
+    if (!function_exists('sanitize_key')) {
+        return '';
+    }
+
+    $normalized = sanitize_key($type);
+
+    if ($normalized === '') {
+        return '';
+    }
+
+    return 'blc_dataset_size_' . $normalized;
+}
+
+
+/**
+ * Retrieve the cached dataset footprint in bytes.
+ *
+ * @param string $type Dataset type stored in the blc_broken_links table.
+ *
+ * @return int
+ */
+function blc_get_dataset_storage_footprint_bytes($type) {
+    $cache_key = blc_get_dataset_size_cache_key($type);
+    if ($cache_key === '') {
+        return 0;
+    }
+
+    if (function_exists('get_transient')) {
+        $cached = get_transient($cache_key);
+        if ($cached !== false && is_numeric($cached)) {
+            return (int) $cached;
+        }
+    }
+
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'blc_broken_links';
+
+    $size = (int) $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0))
+             FROM $table_name
+             WHERE type = %s",
+            $type
+        )
+    );
+
+    if (function_exists('set_transient')) {
+        $expiration = defined('MINUTE_IN_SECONDS') ? (int) MINUTE_IN_SECONDS * 10 : 600;
+        set_transient($cache_key, $size, $expiration);
+    }
+
+    return $size;
+}
+
+
+/**
+ * Clear cached dataset footprints.
+ *
+ * @param string|string[]|null $types Dataset types to clear. Null clears the default set.
+ */
+function blc_flush_dataset_size_cache($types = null) {
+    static $flushed = [];
+
+    if ($types === null) {
+        $types = ['link', 'image'];
+    }
+
+    if (!is_array($types)) {
+        $types = [$types];
+    }
+
+    foreach ($types as $type) {
+        $cache_key = blc_get_dataset_size_cache_key($type);
+        if ($cache_key === '') {
+            continue;
+        }
+
+        if (isset($flushed[$cache_key])) {
+            continue;
+        }
+
+        if (function_exists('delete_transient')) {
+            delete_transient($cache_key);
+        }
+
+        $flushed[$cache_key] = true;
+    }
 }
 
 
@@ -727,4 +873,66 @@ function blc_prepare_posted_url($url) {
     $url = wp_kses_decode_entities((string) $url);
 
     return trim($url);
+}
+
+
+/**
+ * Normalize the scheme casing of a URL while leaving the rest untouched.
+ *
+ * @param string $url Raw URL to normalize.
+ *
+ * @return string
+ */
+function blc_normalize_url_scheme_case($url) {
+    if (!is_string($url) || $url === '') {
+        return $url;
+    }
+
+    if (preg_match('#^([a-z0-9+.-]+):(.*)$#i', $url, $matches)) {
+        return strtolower($matches[1]) . ':' . $matches[2];
+    }
+
+    return $url;
+}
+
+
+/**
+ * Detect if the provided URL resembles a bare domain without scheme.
+ *
+ * @param string $url Raw URL to inspect.
+ *
+ * @return bool
+ */
+function blc_url_looks_like_bare_domain($url) {
+    $trimmed = ltrim((string) $url);
+    if ($trimmed === '') {
+        return false;
+    }
+
+    if (preg_match('#^[a-z0-9+.-]+://#i', $trimmed) === 1) {
+        return false;
+    }
+
+    if (strncmp($trimmed, '//', 2) === 0) {
+        $trimmed = substr($trimmed, 2);
+    }
+
+    $parsed = parse_url('http://' . $trimmed);
+    if (!is_array($parsed) || !isset($parsed['host']) || $parsed['host'] === '') {
+        return false;
+    }
+
+    if (strpos($parsed['host'], '.') === false) {
+        return false;
+    }
+
+    $host    = $parsed['host'];
+    $lastDot = strrpos($host, '.');
+    $tld     = $lastDot !== false ? substr($host, $lastDot + 1) : '';
+
+    if ($tld === '' || preg_match('/^[A-Za-z]{2,}$/', $tld) !== 1) {
+        return false;
+    }
+
+    return true;
 }

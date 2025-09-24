@@ -110,7 +110,7 @@ class RequirePostParamsTest extends TestCase
 
         Functions\expect('wp_send_json_error')
             ->once()
-            ->with(['message' => sprintf('Le paramètre requis "%s" est manquant ou vide.', $missing_param)])
+            ->with(['message' => sprintf('Le paramètre requis "%s" est manquant ou vide.', $missing_param)], 400)
             ->andReturnUsing(static function () {
                 throw new \RuntimeException('wp_send_json_error called');
             });

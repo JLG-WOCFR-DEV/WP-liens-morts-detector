@@ -176,7 +176,7 @@ function blc_require_post_params(array $required_params) {
                     __('Le paramètre requis "%s" est manquant ou vide.', 'liens-morts-detector-jlg'),
                     $param
                 ),
-            ]);
+            ], 400);
         }
 
         $raw_value = wp_unslash($_POST[$param]);
@@ -195,7 +195,7 @@ function blc_require_post_params(array $required_params) {
                     __('Le paramètre requis "%s" est manquant ou vide.', 'liens-morts-detector-jlg'),
                     $param
                 ),
-            ]);
+            ], 400);
         }
 
         $values[$param] = $value;
@@ -255,58 +255,12 @@ function blc_ajax_edit_link_callback() {
         wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
     }
 
-    $normalize_scheme_case = static function ($url) {
-        if (!is_string($url) || $url === '') {
-            return $url;
-        }
-
-        if (preg_match('#^([a-z0-9+.-]+):(.*)$#i', $url, $matches)) {
-            return strtolower($matches[1]) . ':' . $matches[2];
-        }
-
-        return $url;
-    };
-
-    $looks_like_bare_domain = static function ($url) {
-        $trimmed = ltrim((string) $url);
-        if ($trimmed === '') {
-            return false;
-        }
-
-        if (preg_match('#^[a-z0-9+.-]+://#i', $trimmed) === 1) {
-            return false;
-        }
-
-        if (strncmp($trimmed, '//', 2) === 0) {
-            $trimmed = substr($trimmed, 2);
-        }
-
-        $parsed = parse_url('http://' . $trimmed);
-        if (!is_array($parsed) || !isset($parsed['host']) || $parsed['host'] === '') {
-            return false;
-        }
-
-        if (strpos($parsed['host'], '.') === false) {
-            return false;
-        }
-
-        $host = $parsed['host'];
-        $last_dot = strrpos($host, '.');
-        $tld = $last_dot !== false ? substr($host, $last_dot + 1) : '';
-
-        if ($tld === '' || preg_match('/^[A-Za-z]{2,}$/', $tld) !== 1) {
-            return false;
-        }
-
-        return true;
-    };
-
-    if ($normalize_scheme_case($sanitized_new_url) !== $normalize_scheme_case($prepared_new_url)) {
+    if (blc_normalize_url_scheme_case($sanitized_new_url) !== blc_normalize_url_scheme_case($prepared_new_url)) {
         wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
     }
 
     $clean_new_url = $sanitized_new_url;
-    $looks_like_domain_input = $looks_like_bare_domain($clean_new_url);
+    $looks_like_domain_input = blc_url_looks_like_bare_domain($clean_new_url);
 
     $validated_old_url = wp_http_validate_url($prepared_old_url);
     $normalized_old_url = $validated_old_url ?: blc_normalize_link_url($prepared_old_url, $site_url, $site_scheme, $permalink);
@@ -366,6 +320,7 @@ function blc_ajax_edit_link_callback() {
             ['%d', '%s', '%s']
         );
 
+        blc_flush_dataset_size_cache('link');
         wp_send_json_success(['purged' => true]);
         return;
     }
@@ -421,6 +376,7 @@ function blc_ajax_edit_link_callback() {
         return;
     }
 
+    blc_flush_dataset_size_cache('link');
     wp_send_json_success();
 }
 
@@ -475,6 +431,7 @@ function blc_ajax_unlink_callback() {
             ['%d', '%s', '%s']
         );
 
+        blc_flush_dataset_size_cache('link');
         wp_send_json_success(['purged' => true]);
         return;
     }
@@ -490,7 +447,7 @@ function blc_ajax_unlink_callback() {
         wp_send_json_error(['message' => __('Le lien n\'a pas été trouvé dans le contenu de l\'article.', 'liens-morts-detector-jlg')]);
     }
 
-    $new_content = $removal['content'];
+    $new_content = blc_restore_post_content_encoding($removal['content']);
     $update_result = wp_update_post([
         'ID' => $post_id,
         'post_content' => wp_slash($new_content),
@@ -523,5 +480,6 @@ function blc_ajax_unlink_callback() {
         return;
     }
 
+    blc_flush_dataset_size_cache('link');
     wp_send_json_success();
 }

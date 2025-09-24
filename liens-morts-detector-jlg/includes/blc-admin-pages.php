@@ -73,14 +73,7 @@ function blc_dashboard_links_page() {
             'link'
         )
     );
-    $option_size_bytes = (int) $wpdb->get_var(
-        $wpdb->prepare(
-            "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0))
-             FROM $table_name
-             WHERE type = %s",
-            'link'
-        )
-    );
+    $option_size_bytes = blc_get_dataset_storage_footprint_bytes('link');
     $last_check_time    = get_option('blc_last_check_time', 0);
     $option_size_kb     = $option_size_bytes / 1024;
     $size_display       = ($option_size_kb < 1024)
@@ -167,14 +160,7 @@ function blc_dashboard_images_page() {
             'image'
         )
     );
-    $option_size_bytes = (int) $wpdb->get_var(
-        $wpdb->prepare(
-            "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0))
-             FROM $table_name
-             WHERE type = %s",
-            'image'
-        )
-    );
+    $option_size_bytes = blc_get_dataset_storage_footprint_bytes('image');
     $last_image_check_time = get_option('blc_last_image_check_time', 0);
     $option_size_kb      = $option_size_bytes / 1024;
     $size_display        = ($option_size_kb < 1024)

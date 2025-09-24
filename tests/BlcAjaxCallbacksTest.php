@@ -158,7 +158,7 @@ class BlcAjaxCallbacksTest extends TestCase
         Functions\expect('check_ajax_referer')->once()->with('blc_edit_link_nonce')->andReturn(true);
 
         $expected_message = sprintf('Le paramètre requis "%s" est manquant ou vide.', $missing_param);
-        Functions\expect('wp_send_json_error')->once()->with(['message' => $expected_message])->andReturnUsing(function () {
+        Functions\expect('wp_send_json_error')->once()->with(['message' => $expected_message], 400)->andReturnUsing(function () {
             throw new \Exception('error');
         });
 
@@ -206,7 +206,7 @@ class BlcAjaxCallbacksTest extends TestCase
         Functions\expect('check_ajax_referer')->once()->with('blc_unlink_nonce')->andReturn(true);
 
         $expected_message = sprintf('Le paramètre requis "%s" est manquant ou vide.', $missing_param);
-        Functions\expect('wp_send_json_error')->once()->with(['message' => $expected_message])->andReturnUsing(function () {
+        Functions\expect('wp_send_json_error')->once()->with(['message' => $expected_message], 400)->andReturnUsing(function () {
             throw new \Exception('error');
         });
 
