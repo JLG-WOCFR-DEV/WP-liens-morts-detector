@@ -377,8 +377,8 @@ class BlcScannerTest extends TestCase
             $this->ajaxResponse = ['success' => true, 'data' => $data];
             throw new \RuntimeException('wp_send_json_success');
         });
-        Functions\when('wp_send_json_error')->alias(function ($data = null) {
-            $this->ajaxResponse = ['success' => false, 'data' => $data];
+        Functions\when('wp_send_json_error')->alias(function ($data = null, $status_code = null) {
+            $this->ajaxResponse = ['success' => false, 'data' => $data, 'status' => $status_code];
             throw new \RuntimeException('wp_send_json_error');
         });
 

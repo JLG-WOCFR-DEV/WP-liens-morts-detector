@@ -692,6 +692,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
     $cleanup_sql = "DELETE blc FROM $table_name AS blc LEFT JOIN {$wpdb->posts} AS posts ON blc.post_id = posts.ID WHERE blc.type = %s AND posts.ID IS NULL";
     $wpdb->query($wpdb->prepare($cleanup_sql, 'link'));
+    blc_flush_dataset_size_cache('link');
 
     $post_ids_in_batch = wp_list_pluck($posts, 'ID');
     if (!empty($post_ids_in_batch)) {
@@ -699,6 +700,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         $placeholders = implode(',', array_fill(0, count($post_ids_in_batch), '%d'));
         $delete_sql = "DELETE FROM $table_name WHERE post_id IN ($placeholders) AND type = %s";
         $wpdb->query($wpdb->prepare($delete_sql, array_merge($post_ids_in_batch, ['link'])));
+        blc_flush_dataset_size_cache('link');
     }
 
     // --- 4. Boucle d'analyse des LIENS <a> ---
@@ -817,6 +819,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                             ],
                             ['%s', '%s', '%d', '%s', '%s']
                         );
+                        blc_flush_dataset_size_cache('link');
                         continue;
                     }
                 }
@@ -870,6 +873,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                         ],
                         ['%s', '%s', '%d', '%s', '%s']
                     );
+                    blc_flush_dataset_size_cache('link');
                     $should_skip_remote_request = true;
                 }
             }
@@ -1057,6 +1061,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                     ],
                     ['%s', '%s', '%d', '%s', '%s']
                 );
+                blc_flush_dataset_size_cache('link');
             }
 
             if (!$should_use_cache && $cache_entry_key !== '') {
@@ -1280,6 +1285,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                     ],
                     ['%s', '%s', '%d', '%s', '%s']
                 );
+                blc_flush_dataset_size_cache('image');
             }
         }
     }
