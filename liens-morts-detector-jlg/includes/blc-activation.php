@@ -213,8 +213,9 @@ function blc_activation() {
 function blc_deactivation() {
     // Supprime la tâche planifiée principale pour les liens
     wp_clear_scheduled_hook('blc_check_links');
-    
+
     // Supprime également toute tâche de lot qui aurait pu rester en attente
     wp_clear_scheduled_hook('blc_check_batch');
+    wp_clear_scheduled_hook('blc_manual_check_batch');
     wp_clear_scheduled_hook('blc_check_image_batch');
 }

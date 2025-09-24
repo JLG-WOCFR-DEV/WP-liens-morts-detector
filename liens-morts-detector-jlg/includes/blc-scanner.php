@@ -920,6 +920,13 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
             if (!$hosts_match_site && !$hosts_match_upload) {
                 continue;
             }
+            if (!$hosts_match_site && $hosts_match_upload) {
+                $is_safe_remote_host = blc_is_safe_remote_host($image_host);
+                if (!$is_safe_remote_host) {
+                    if ($debug_mode) { error_log("  -> Image ignorée (IP non autorisée) : " . $normalized_image_url); }
+                    continue;
+                }
+            }
             if (empty($upload_baseurl) || empty($upload_basedir) || empty($normalized_basedir)) {
                 continue;
             }
