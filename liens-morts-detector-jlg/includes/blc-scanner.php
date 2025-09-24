@@ -423,6 +423,134 @@ function blc_clear_scan_cache(array $context) {
 }
 
 /**
+ * Generate a token suitable for locking mechanisms.
+ *
+ * @return string
+ */
+function blc_generate_lock_token() {
+    if (function_exists('wp_generate_uuid4')) {
+        return wp_generate_uuid4();
+    }
+
+    try {
+        return bin2hex(random_bytes(16));
+    } catch (Exception $e) { // phpcs:ignore Generic.CodeAnalysis.EmptyStatement.DetectedCatch
+        // Fallback below.
+    }
+
+    return uniqid('', true);
+}
+
+/**
+ * Retrieve the current image scan lock data.
+ *
+ * @return array
+ */
+function blc_get_image_scan_lock_state() {
+    $state = get_option('blc_image_scan_lock', []);
+    return is_array($state) ? $state : [];
+}
+
+/**
+ * Determine if an image scan lock is still considered active.
+ *
+ * @param array $state   Lock state array.
+ * @param int   $timeout Timeout in seconds.
+ *
+ * @return bool
+ */
+function blc_is_image_scan_lock_active(array $state, $timeout) {
+    $token     = isset($state['token']) ? (string) $state['token'] : '';
+    $locked_at = isset($state['locked_at']) ? (int) $state['locked_at'] : 0;
+
+    if ($token === '') {
+        return false;
+    }
+
+    if (!is_int($timeout) || $timeout <= 0) {
+        return true;
+    }
+
+    return ($locked_at + $timeout) > time();
+}
+
+/**
+ * Acquire the image scan lock if possible.
+ *
+ * @param int $timeout Timeout in seconds.
+ *
+ * @return string Lock token on success, empty string otherwise.
+ */
+function blc_acquire_image_scan_lock($timeout) {
+    $state = blc_get_image_scan_lock_state();
+    if (blc_is_image_scan_lock_active($state, $timeout)) {
+        return '';
+    }
+
+    $token = blc_generate_lock_token();
+    update_option('blc_image_scan_lock', [
+        'token'     => $token,
+        'locked_at' => time(),
+    ]);
+    update_option('blc_image_scan_lock_token', $token);
+
+    return $token;
+}
+
+/**
+ * Refresh the lock timestamp for the current token.
+ *
+ * @param string $token   Lock token.
+ * @param int    $timeout Timeout in seconds.
+ *
+ * @return void
+ */
+function blc_refresh_image_scan_lock($token, $timeout) {
+    if ($token === '') {
+        return;
+    }
+
+    $state = blc_get_image_scan_lock_state();
+    $current_token = isset($state['token']) ? (string) $state['token'] : '';
+    if ($current_token !== $token) {
+        return;
+    }
+
+    update_option('blc_image_scan_lock', [
+        'token'     => $token,
+        'locked_at' => time(),
+    ]);
+
+    // Keep the helper option in sync in case it was deleted externally.
+    $stored_token = get_option('blc_image_scan_lock_token', '');
+    if ($stored_token !== $token) {
+        update_option('blc_image_scan_lock_token', $token);
+    }
+}
+
+/**
+ * Release the image scan lock if the token matches.
+ *
+ * @param string $token Lock token.
+ *
+ * @return void
+ */
+function blc_release_image_scan_lock($token) {
+    if ($token === '') {
+        return;
+    }
+
+    $state = blc_get_image_scan_lock_state();
+    $current_token = isset($state['token']) ? (string) $state['token'] : '';
+    if ($current_token !== '' && $current_token !== $token) {
+        return;
+    }
+
+    delete_option('blc_image_scan_lock');
+    delete_option('blc_image_scan_lock_token');
+}
+
+/**
  * Helper to build a DOMDocument instance from raw post content.
  *
  * @param string $content Raw HTML content from the post.
@@ -488,6 +616,26 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     $batch_delay_s   = max(0, (int) get_option('blc_batch_delay', 60));
     $scan_method     = get_option('blc_scan_method', 'precise');
     $excluded_domains_raw = get_option('blc_excluded_domains', '');
+    $last_remote_request_completed_at = 0.0;
+
+    $wait_for_remote_slot = static function () use (&$last_remote_request_completed_at, $link_delay_ms) {
+        if ($link_delay_ms <= 0) {
+            return;
+        }
+
+        $delay_seconds = $link_delay_ms / 1000;
+        if ($last_remote_request_completed_at > 0) {
+            $elapsed = microtime(true) - $last_remote_request_completed_at;
+            $remaining = $delay_seconds - $elapsed;
+            if ($remaining > 0) {
+                usleep((int) round($remaining * 1000000));
+            }
+        }
+    };
+
+    $mark_remote_request_complete = static function () use (&$last_remote_request_completed_at) {
+        $last_remote_request_completed_at = microtime(true);
+    };
 
     $raw_home_url = '';
     if (function_exists('home_url')) {
@@ -922,7 +1070,6 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             }
 
             if ($should_skip_remote_request) {
-                usleep($link_delay_ms * 1000);
                 continue;
             }
 
@@ -982,7 +1129,9 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
                 if ($scan_method === 'precise') {
                     $response = null;
+                    $wait_for_remote_slot();
                     $head_response = wp_safe_remote_head($normalized_url, $head_request_args);
+                    $mark_remote_request_complete();
                     $needs_get_fallback = false;
 
                     if (is_wp_error($head_response)) {
@@ -1002,10 +1151,14 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                     }
 
                     if ($needs_get_fallback) {
+                        $wait_for_remote_slot();
                         $response = wp_safe_remote_get($normalized_url, $get_request_args);
+                        $mark_remote_request_complete();
                     }
                 } else {
+                    $wait_for_remote_slot();
                     $response = wp_safe_remote_head($normalized_url, $head_request_args);
+                    $mark_remote_request_complete();
                 }
 
                 if (is_wp_error($response)) {
@@ -1132,8 +1285,6 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                 $scan_cache_data[$cache_entry_key] = $new_cache_entry;
                 $scan_cache_dirty = true;
             }
-
-            usleep($link_delay_ms * 1000);
         }
     }
 
@@ -1171,6 +1322,60 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     if ($debug_mode) { error_log("--- Début du scan IMAGES (Lot #$batch) ---"); }
 
     $table_name = $wpdb->prefix . 'blc_broken_links';
+    $batch_delay_s = max(0, (int) get_option('blc_batch_delay', 60));
+    $default_lock_timeout = defined('MINUTE_IN_SECONDS') ? 15 * MINUTE_IN_SECONDS : 900;
+    $lock_timeout = apply_filters('blc_image_scan_lock_timeout', $default_lock_timeout);
+    if (!is_int($lock_timeout)) {
+        $lock_timeout = (int) $lock_timeout;
+    }
+    if ($lock_timeout < 0) {
+        $lock_timeout = 0;
+    }
+
+    $lock_token = '';
+    if ($batch === 0) {
+        $lock_token = blc_acquire_image_scan_lock($lock_timeout);
+        if ($lock_token === '') {
+            if ($debug_mode) { error_log('Analyse d\'images déjà en cours, reprogrammation du lot initial.'); }
+            $retry_delay = max(60, $batch_delay_s);
+            wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array(0, true));
+            return;
+        }
+    } else {
+        $stored_token = get_option('blc_image_scan_lock_token', '');
+        if (!is_string($stored_token)) {
+            $stored_token = '';
+        }
+        $lock_state = blc_get_image_scan_lock_state();
+        $active_token = isset($lock_state['token']) ? (string) $lock_state['token'] : '';
+        $lock_active  = blc_is_image_scan_lock_active($lock_state, $lock_timeout);
+
+        if ($stored_token === '' || $active_token === '') {
+            $lock_token = blc_acquire_image_scan_lock($lock_timeout);
+            if ($lock_token === '') {
+                if ($debug_mode) { error_log('Impossible de reprendre le scan d\'images (verrou indisponible).'); }
+                $retry_delay = max(60, $batch_delay_s);
+                wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
+                return;
+            }
+        } elseif ($active_token !== $stored_token) {
+            if ($lock_active) {
+                if ($debug_mode) { error_log('Analyse d\'images ignorée : un autre processus détient le verrou.'); }
+                return;
+            }
+
+            $lock_token = blc_acquire_image_scan_lock($lock_timeout);
+            if ($lock_token === '') {
+                if ($debug_mode) { error_log('Impossible de rafraîchir le verrou du scan d\'images.'); }
+                $retry_delay = max(60, $batch_delay_s);
+                wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
+                return;
+            }
+        } else {
+            $lock_token = $stored_token;
+            blc_refresh_image_scan_lock($lock_token, $lock_timeout);
+        }
+    }
 
     // Si c'est le premier lot, on nettoie les anciens résultats
     if ($batch === 0) {
@@ -1192,6 +1397,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     $args = ['post_type' => 'any', 'post_status' => 'publish', 'posts_per_page' => $batch_size, 'paged' => $batch + 1];
     $query = new WP_Query($args);
     $posts = $query->posts;
+    $checked_local_paths = [];
 
     $upload_dir_info = wp_upload_dir();
     $upload_baseurl = isset($upload_dir_info['baseurl']) ? trailingslashit($upload_dir_info['baseurl']) : '';
@@ -1332,29 +1538,35 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                 continue;
             }
 
-            if (!file_exists($file_path)) {
-                if ($debug_mode) { error_log("  -> Image Cassée Trouvée : " . $image_url); }
-                $url_for_storage    = blc_prepare_url_for_storage($original_image_url);
-                $image_filename = wp_basename($decoded_relative_path);
-                $anchor_for_storage = blc_prepare_text_field_for_storage($image_filename);
-                $metadata  = blc_get_url_metadata_for_storage($original_image_url, $normalized_image_url, $site_host_for_metadata);
-                $row_bytes = blc_calculate_row_storage_footprint_bytes($url_for_storage, $anchor_for_storage, $post_title_for_storage);
-                $inserted = $wpdb->insert(
-                    $table_name,
-                    [
-                        'url'         => $url_for_storage,
-                        'anchor'      => $anchor_for_storage,
-                        'post_id'     => $post->ID,
-                        'post_title'  => $post_title_for_storage,
-                        'type'        => 'image',
-                        'url_host'    => $metadata['host'],
-                        'is_internal' => $metadata['is_internal'],
-                    ],
-                    ['%s', '%s', '%d', '%s', '%s', '%s', '%d']
-                );
-                if ($inserted) {
-                    blc_adjust_dataset_storage_footprint('image', $row_bytes);
-                }
+            if (!isset($checked_local_paths[$file_path])) {
+                $checked_local_paths[$file_path] = file_exists($file_path);
+            }
+
+            if ($checked_local_paths[$file_path]) {
+                continue;
+            }
+
+            if ($debug_mode) { error_log("  -> Image Cassée Trouvée : " . $image_url); }
+            $url_for_storage    = blc_prepare_url_for_storage($original_image_url);
+            $image_filename = wp_basename($decoded_relative_path);
+            $anchor_for_storage = blc_prepare_text_field_for_storage($image_filename);
+            $metadata  = blc_get_url_metadata_for_storage($original_image_url, $normalized_image_url, $site_host_for_metadata);
+            $row_bytes = blc_calculate_row_storage_footprint_bytes($url_for_storage, $anchor_for_storage, $post_title_for_storage);
+            $inserted = $wpdb->insert(
+                $table_name,
+                [
+                    'url'         => $url_for_storage,
+                    'anchor'      => $anchor_for_storage,
+                    'post_id'     => $post->ID,
+                    'post_title'  => $post_title_for_storage,
+                    'type'        => 'image',
+                    'url_host'    => $metadata['host'],
+                    'is_internal' => $metadata['is_internal'],
+                ],
+                ['%s', '%s', '%d', '%s', '%s', '%s', '%d']
+            );
+            if ($inserted) {
+                blc_adjust_dataset_storage_footprint('image', $row_bytes);
             }
         }
     }
@@ -1363,9 +1575,11 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
 
     if ($query->max_num_pages > ($batch + 1)) {
         // On utilise un hook de batch différent pour ne pas interférer
-        wp_schedule_single_event(time() + 60, 'blc_check_image_batch', array($batch + 1, true));
+        blc_refresh_image_scan_lock($lock_token, $lock_timeout);
+        wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_image_batch', array($batch + 1, true));
     } else {
         if ($debug_mode) { error_log("--- Scan IMAGES terminé ---"); }
-        update_option('blc_last_image_check_time', current_time('timestamp'));
+        update_option('blc_last_image_check_time', current_time('timestamp', true));
+        blc_release_image_scan_lock($lock_token);
     }
 }
