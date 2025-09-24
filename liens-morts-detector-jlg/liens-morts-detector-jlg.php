@@ -58,6 +58,7 @@ add_filter('cron_schedules', 'blc_add_cron_schedules');
 // Lie nos fonctions de scan aux tâches planifiées
 add_action('blc_check_links', 'blc_perform_check');
 add_action('blc_check_batch', 'blc_perform_check', 10, 3);
+add_action('blc_manual_check_batch', 'blc_perform_check', 10, 3);
 add_action('blc_check_image_batch', 'blc_perform_image_check', 10, 2);
 
 // Ajoute nos fichiers CSS et JS dans l'administration
@@ -379,6 +380,7 @@ function blc_ajax_edit_link_callback() {
     }
 
     $new_content = $replacement['content'];
+    $new_content = blc_restore_post_content_encoding($new_content);
     $update_result = wp_update_post([
         'ID' => $post_id,
         'post_content' => wp_slash($new_content),

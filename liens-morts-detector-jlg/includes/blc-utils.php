@@ -111,6 +111,50 @@ function blc_normalize_post_content_encoding($post_content) {
 
 
 /**
+ * Convert UTF-8 content back to the blog charset for storage in the database.
+ *
+ * @param string $utf8_content Content encoded in UTF-8.
+ *
+ * @return string Content converted to the configured blog charset when possible.
+ */
+function blc_restore_post_content_encoding($utf8_content) {
+    $utf8_content = (string) $utf8_content;
+
+    $target_charset = 'UTF-8';
+    if (function_exists('get_bloginfo')) {
+        $blog_charset = get_bloginfo('charset');
+        if (is_string($blog_charset)) {
+            $blog_charset = trim($blog_charset);
+        }
+
+        if (!empty($blog_charset)) {
+            $target_charset = $blog_charset;
+        }
+    }
+
+    if (strcasecmp($target_charset, 'UTF-8') === 0) {
+        return $utf8_content;
+    }
+
+    if (function_exists('mb_convert_encoding')) {
+        $converted = @mb_convert_encoding($utf8_content, $target_charset, 'UTF-8');
+        if (is_string($converted)) {
+            return $converted;
+        }
+    }
+
+    if (function_exists('iconv')) {
+        $converted = @iconv('UTF-8', $target_charset . '//IGNORE', $utf8_content);
+        if (is_string($converted)) {
+            return $converted;
+        }
+    }
+
+    return $utf8_content;
+}
+
+
+/**
  * Update the href attribute of matching <a> tags without reserializing the whole document.
  *
  * @param string $html            Original HTML content.

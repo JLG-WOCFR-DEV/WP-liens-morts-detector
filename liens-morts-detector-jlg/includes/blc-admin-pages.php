@@ -56,8 +56,8 @@ function blc_dashboard_links_page() {
         check_admin_referer('blc_manual_check_nonce');
         $is_full = isset($_POST['blc_full_scan']);
         $bypass_rest_window = $is_full;
-        wp_clear_scheduled_hook('blc_check_batch');
-        wp_schedule_single_event(time(), 'blc_check_batch', array(0, $is_full, $bypass_rest_window));
+        wp_clear_scheduled_hook('blc_manual_check_batch');
+        wp_schedule_single_event(time(), 'blc_manual_check_batch', array(0, $is_full, $bypass_rest_window));
         printf(
             '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
             esc_html__("La vérification des liens a été programmée et s'exécute en arrière-plan.", 'liens-morts-detector-jlg')

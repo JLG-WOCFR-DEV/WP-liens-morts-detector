@@ -155,6 +155,7 @@ class BlcScannerTest extends TestCase
             return $records;
         });
         Functions\when('gethostbynamel')->alias(fn(string $hostname) => ['93.184.216.34']);
+        Functions\when('wp_reset_postdata')->justReturn(null);
         Functions\when('wp_kses_bad_protocol')->alias(function ($string, $allowed_protocols = []) {
             $string = (string) $string;
             $allowed_protocols = array_map('strtolower', (array) $allowed_protocols);
