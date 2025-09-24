@@ -222,8 +222,12 @@ function blc_ajax_edit_link_callback() {
         $site_scheme = 'http';
     }
 
-    $raw_old_url = $params['old_url'];
-    $raw_new_url = $params['new_url'];
+    $prepared_old_url = blc_prepare_posted_url($params['old_url']);
+    $prepared_new_url = blc_prepare_posted_url($params['new_url']);
+
+    if ($prepared_old_url === '' || $prepared_new_url === '') {
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
+    }
 
     $post = get_post($post_id);
     $permalink = '';
@@ -240,10 +244,7 @@ function blc_ajax_edit_link_callback() {
         }
     }
 
-    $stored_old_url = blc_prepare_url_for_storage($raw_old_url);
-
-    $prepared_old_url = blc_prepare_posted_url($raw_old_url);
-    $prepared_new_url = blc_prepare_posted_url($raw_new_url);
+    $stored_old_url = blc_prepare_url_for_storage($prepared_old_url);
 
     if ($prepared_new_url === '') {
         wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
@@ -307,8 +308,8 @@ function blc_ajax_edit_link_callback() {
     $clean_new_url = $sanitized_new_url;
     $looks_like_domain_input = $looks_like_bare_domain($clean_new_url);
 
-    $validated_old_url = wp_http_validate_url($raw_old_url);
-    $normalized_old_url = $validated_old_url ?: blc_normalize_link_url($raw_old_url, $site_url, $site_scheme, $permalink);
+    $validated_old_url = wp_http_validate_url($prepared_old_url);
+    $normalized_old_url = $validated_old_url ?: blc_normalize_link_url($prepared_old_url, $site_url, $site_scheme, $permalink);
 
     $validated_new_url = wp_http_validate_url($clean_new_url);
     $normalized_new_url = '';
@@ -434,10 +435,14 @@ function blc_ajax_unlink_callback() {
         $site_scheme = 'http';
     }
 
-    $raw_url_to_unlink = $params['url_to_unlink'];
-    $stored_url_to_unlink = blc_prepare_url_for_storage($raw_url_to_unlink);
-    $validated_url = wp_http_validate_url($raw_url_to_unlink);
-    $normalized_url = $validated_url ?: blc_normalize_link_url($raw_url_to_unlink, $site_url, $site_scheme);
+    $prepared_url_to_unlink = blc_prepare_posted_url($params['url_to_unlink']);
+    if ($prepared_url_to_unlink === '') {
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
+    }
+
+    $stored_url_to_unlink = blc_prepare_url_for_storage($prepared_url_to_unlink);
+    $validated_url = wp_http_validate_url($prepared_url_to_unlink);
+    $normalized_url = $validated_url ?: blc_normalize_link_url($prepared_url_to_unlink, $site_url, $site_scheme);
 
     $normalized_parts = $normalized_url !== '' ? parse_url($normalized_url) : false;
     if (!$normalized_url || $normalized_parts === false || empty($normalized_parts['scheme']) || !in_array($normalized_parts['scheme'], ['http', 'https'], true)) {
@@ -460,13 +465,8 @@ function blc_ajax_unlink_callback() {
         wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')]);
     }
 
-    $url_to_unlink = blc_prepare_posted_url($raw_url_to_unlink);
-    if ($url_to_unlink === '') {
-        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
-    }
-
     $normalized_content = blc_normalize_post_content_encoding($post->post_content);
-    $removal = blc_remove_link_wrappers_from_content($normalized_content, $url_to_unlink);
+    $removal = blc_remove_link_wrappers_from_content($normalized_content, $prepared_url_to_unlink);
 
     if (!$removal['removed']) {
         wp_send_json_error(['message' => __('Le lien n\'a pas été trouvé dans le contenu de l\'article.', 'liens-morts-detector-jlg')]);

@@ -6,7 +6,7 @@ if (!defined('ABSPATH')) {
 }
 
 if (!defined('BLC_DB_VERSION')) {
-    define('BLC_DB_VERSION', '1.3.0');
+    define('BLC_DB_VERSION', '1.4.0');
 }
 
 if (!defined('BLC_TEXT_FIELD_LENGTH')) {
@@ -40,6 +40,10 @@ function blc_maybe_upgrade_database() {
 
     if (!$installed_version || version_compare($installed_version, '1.3.0', '<')) {
         blc_migrate_column_to_text($table_name, 'url', 'longtext', false);
+    }
+
+    if (!$installed_version || version_compare($installed_version, '1.4.0', '<')) {
+        blc_maybe_add_index($table_name, 'url_prefix', 'url', 191);
     }
 
     update_option('blc_plugin_db_version', BLC_DB_VERSION);
@@ -170,6 +174,46 @@ function blc_migrate_column_to_text($table_name, $column_name, $target_type = 'l
 }
 
 /**
+ * Add an index to the specified table when it does not already exist.
+ *
+ * @param string   $table_name    Database table name.
+ * @param string   $index_name    Desired index name.
+ * @param string   $column_name   Column to index.
+ * @param int|null $prefix_length Optional prefix length for text columns.
+ */
+function blc_maybe_add_index($table_name, $index_name, $column_name, $prefix_length = null) {
+    global $wpdb;
+
+    $table = esc_sql($table_name);
+    $index = esc_sql($index_name);
+
+    $existing_index = $wpdb->get_var(
+        $wpdb->prepare("SHOW INDEX FROM `$table` WHERE Key_name = %s", $index)
+    );
+
+    if ($existing_index) {
+        return;
+    }
+
+    $column = '`' . esc_sql($column_name) . '`';
+    if ($prefix_length !== null) {
+        $prefix_length = (int) $prefix_length;
+        if ($prefix_length > 0) {
+            $column .= '(' . $prefix_length . ')';
+        }
+    }
+
+    $wpdb->query(
+        sprintf(
+            "ALTER TABLE `%s` ADD INDEX `%s` (%s)",
+            $table,
+            $index,
+            $column
+        )
+    );
+}
+
+/**
  * S'exécute à l'activation de l'extension.
  * Met en place la tâche planifiée (cron) pour les liens si elle n'existe pas déjà.
  */
@@ -188,7 +232,8 @@ function blc_activation() {
         type varchar(20) NOT NULL,
         PRIMARY KEY  (id),
         KEY type (type),
-        KEY post_id (post_id)
+        KEY post_id (post_id),
+        KEY url_prefix (url(191))
     ) $charset_collate;";
 
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -213,8 +258,9 @@ function blc_activation() {
 function blc_deactivation() {
     // Supprime la tâche planifiée principale pour les liens
     wp_clear_scheduled_hook('blc_check_links');
-    
+
     // Supprime également toute tâche de lot qui aurait pu rester en attente
     wp_clear_scheduled_hook('blc_check_batch');
+    wp_clear_scheduled_hook('blc_manual_check_batch');
     wp_clear_scheduled_hook('blc_check_image_batch');
 }

@@ -3,6 +3,42 @@
 namespace {
     require_once __DIR__ . '/translation-stubs.php';
 
+    if (!class_exists('WP_Error')) {
+        class WP_Error
+        {
+            /** @var string */
+            private $code;
+
+            /** @var string */
+            private $message;
+
+            /** @var mixed */
+            private $data;
+
+            public function __construct($code = '', $message = '', $data = null)
+            {
+                $this->code = (string) $code;
+                $this->message = (string) $message;
+                $this->data = $data;
+            }
+
+            public function get_error_code()
+            {
+                return $this->code;
+            }
+
+            public function get_error_message()
+            {
+                return $this->message;
+            }
+
+            public function get_error_data()
+            {
+                return $this->data;
+            }
+        }
+    }
+
     if (!class_exists('WP_Query')) {
         class WP_Query
         {
@@ -53,6 +89,9 @@ class BlcScannerTest extends TestCase
     /** @var array<string, mixed> */
     private array $updatedOptions = [];
 
+    /** @var array<string, mixed> */
+    private array $transients = [];
+
     /** @var array<int, float> */
     private array $serverLoad = [0.5, 0.4, 0.3];
 
@@ -91,6 +130,7 @@ class BlcScannerTest extends TestCase
         $this->httpResponses = [];
         $this->scheduledEvents = [];
         $this->updatedOptions = [];
+        $this->transients = [];
         $this->serverLoad = [0.5, 0.4, 0.3];
         $this->currentHour = '00';
         $this->updatedPosts = [];
@@ -100,6 +140,15 @@ class BlcScannerTest extends TestCase
         $GLOBALS['wp_query_last_args'] = [];
 
         Functions\when('get_option')->alias(fn(string $name, $default = false) => $this->options[$name] ?? $default);
+        Functions\when('get_transient')->alias(fn(string $key) => $this->transients[$key] ?? false);
+        Functions\when('set_transient')->alias(function (string $key, $value, $expiration) {
+            $this->transients[$key] = $value;
+            return true;
+        });
+        Functions\when('delete_transient')->alias(function (string $key) {
+            unset($this->transients[$key]);
+            return true;
+        });
         Functions\when('apply_filters')->alias(fn(string $hook, $value, ...$args) => $value);
         Functions\when('home_url')->alias(function ($path = '', $scheme = null) {
             $base = 'https://example.com';
@@ -294,6 +343,14 @@ class BlcScannerTest extends TestCase
         });
         Functions\when('update_option')->alias(function (string $option, $value) {
             $this->updatedOptions[$option] = $value;
+            if (in_array($option, ['blc_active_link_scan_key', 'blc_active_image_scan_key'], true)) {
+                $this->options[$option] = $value;
+            }
+
+            return true;
+        });
+        Functions\when('delete_option')->alias(function (string $option) {
+            unset($this->options[$option], $this->updatedOptions[$option]);
             return true;
         });
         Functions\when('wp_update_post')->alias(function (array $data, $wp_error = false) {
@@ -333,11 +390,15 @@ class BlcScannerTest extends TestCase
         unset($GLOBALS['wp_query_queue'], $GLOBALS['wp_query_last_args']);
         unset($_POST);
         $this->ajaxResponse = null;
+        $this->transients = [];
         global $wpdb;
         $wpdb = null;
     }
 
-    private function mockHttpRequest(string $method, string $url, array $args = []): array
+    /**
+     * @return array|\WP_Error
+     */
+    private function mockHttpRequest(string $method, string $url, array $args = [])
     {
         $this->httpRequests[] = ['method' => $method, 'url' => $url, 'args' => $args];
         $key = $method . ' ' . $url;
@@ -345,7 +406,10 @@ class BlcScannerTest extends TestCase
         return $this->httpResponses[$key] ?? ['response' => ['code' => 200]];
     }
 
-    private function setHttpResponse(string $method, string $url, array $response): void
+    /**
+     * @param array|\WP_Error $response
+     */
+    private function setHttpResponse(string $method, string $url, $response): void
     {
         $key = $method . ' ' . $url;
         $this->httpResponses[$key] = $response;
@@ -1274,6 +1338,80 @@ class BlcScannerTest extends TestCase
         $this->assertSame([], $this->scheduledEvents, 'Forbidden responses must not be retried indefinitely.');
     }
 
+    public function test_blc_perform_check_avoids_duplicate_requests_for_identical_urls(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $firstPost = (object) [
+            'ID' => 901,
+            'post_title' => 'Duplicate Link A',
+            'post_content' => '<a href="http://duplicate.example.com/broken">Broken</a>',
+        ];
+
+        $secondPost = (object) [
+            'ID' => 902,
+            'post_title' => 'Duplicate Link B',
+            'post_content' => '<a href="http://duplicate.example.com/broken">Broken Again</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$firstPost, $secondPost],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'http://duplicate.example.com/broken', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(1, $this->httpRequests, 'Duplicate URLs should reuse the cached HTTP response.');
+        $this->assertSame('HEAD', $this->httpRequests[0]['method']);
+        $this->assertSame('http://duplicate.example.com/broken', $this->httpRequests[0]['url']);
+
+        $this->assertCount(2, $wpdb->inserted, 'Each occurrence of the broken link should be recorded.');
+        $this->assertSame([], $this->scheduledEvents, 'Definitive errors should not schedule retries.');
+        $this->assertSame(
+            $this->utcNow,
+            $this->updatedOptions['blc_last_check_time'] ?? null,
+            'Completed scans must update the last check timestamp when no retries are scheduled.'
+        );
+    }
+
+    public function test_blc_perform_check_treats_timeout_errors_as_temporary_and_schedules_retry(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 903,
+            'post_title' => 'Timeout Link',
+            'post_content' => '<a href="http://timeout.example.com/slow">Slow Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $timeoutError = new \WP_Error('http_request_failed', 'Operation timed out');
+        $this->setHttpResponse('HEAD', 'http://timeout.example.com/slow', $timeoutError);
+        $this->setHttpResponse('GET', 'http://timeout.example.com/slow', $timeoutError);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(2, $this->httpRequests, 'Timeouts should attempt both HEAD and GET before retrying.');
+        $this->assertSame('HEAD', $this->httpRequests[0]['method']);
+        $this->assertSame('GET', $this->httpRequests[1]['method']);
+        $this->assertCount(0, $wpdb->inserted, 'Temporary network errors must not be recorded as broken links.');
+        $this->assertCount(1, $this->scheduledEvents, 'A retry should be scheduled when a temporary error occurs.');
+        $this->assertSame('blc_check_batch', $this->scheduledEvents[0]['hook']);
+        $this->assertArrayNotHasKey(
+            'blc_last_check_time',
+            $this->updatedOptions,
+            'Scans that schedule retries should postpone updating the last check timestamp.'
+        );
+    }
+
     public function test_blc_perform_check_normalizes_host_with_port_without_scheme(): void
     {
         global $wpdb;
@@ -1459,7 +1597,9 @@ class BlcScannerTest extends TestCase
         $this->assertSame($this->utcNow + 60, $event['timestamp']);
         $this->assertSame('blc_check_batch', $event['hook']);
         $this->assertSame([1, true, false], $event['args']);
-        $this->assertSame([], $this->updatedOptions, 'Last check time should not be updated before the final batch.');
+        $cacheKeyOptions = $this->updatedOptions;
+        unset($cacheKeyOptions['blc_active_link_scan_key']);
+        $this->assertSame([], $cacheKeyOptions, 'Last check time should not be updated before the final batch.');
     }
 
     public function test_blc_perform_check_normalizes_negative_delays(): void
