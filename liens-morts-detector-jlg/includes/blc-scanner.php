@@ -443,13 +443,21 @@ function blc_create_dom_from_content($content, $charset = 'UTF-8') {
     $dom = new DOMDocument('1.0', 'UTF-8');
     $previous_state = libxml_use_internal_errors(true);
 
-    if (function_exists('mb_convert_encoding')) {
-        $content_for_dom = mb_convert_encoding($content, 'HTML-ENTITIES', $charset);
-        if ($content_for_dom === false) {
-            $content_for_dom = $content;
-        }
+    $normalized_charset = is_string($charset) ? trim($charset) : '';
+    if ($normalized_charset === '') {
+        $normalized_charset = 'UTF-8';
+    }
+
+    if (function_exists('blc_convert_html_to_utf8')) {
+        $content_for_dom = blc_convert_html_to_utf8($content, $normalized_charset);
     } else {
         $content_for_dom = $content;
+        if (strcasecmp($normalized_charset, 'UTF-8') !== 0 && function_exists('mb_convert_encoding')) {
+            $maybe_converted = @mb_convert_encoding($content, 'UTF-8', $normalized_charset);
+            if ($maybe_converted !== false) {
+                $content_for_dom = $maybe_converted;
+            }
+        }
     }
 
     $loaded = $dom->loadHTML('<?xml encoding="utf-8" ?>' . $content_for_dom);
@@ -1128,6 +1136,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     // Si c'est le premier lot, on nettoie les anciens résultats
     if ($batch === 0) {
         $wpdb->query("DELETE FROM $table_name WHERE type = 'image'");
+        blc_flush_dataset_size_cache('image');
     }
 
     $batch_size = 20;

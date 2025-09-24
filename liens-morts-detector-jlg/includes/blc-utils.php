@@ -6,6 +6,54 @@ if (!defined('ABSPATH')) {
 }
 
 /**
+ * Convert HTML content from an arbitrary charset to UTF-8.
+ *
+ * DOMDocument expects UTF-8 when the pseudo XML header declares it. This helper attempts
+ * to perform a best-effort conversion using multibyte functions when available and falls
+ * back to iconv before returning the original string as a last resort.
+ *
+ * @param string $html            Raw HTML fragment to convert.
+ * @param string $source_charset  Charset the HTML fragment is encoded in.
+ *
+ * @return string HTML encoded in UTF-8 when possible.
+ */
+function blc_convert_html_to_utf8($html, $source_charset = 'UTF-8') {
+    $html = (string) $html;
+
+    $source_charset = is_string($source_charset) ? trim($source_charset) : '';
+    if ($source_charset === '') {
+        $source_charset = 'UTF-8';
+    }
+
+    if (strcasecmp($source_charset, 'UTF-8') !== 0) {
+        if (function_exists('mb_convert_encoding')) {
+            $converted = @mb_convert_encoding($html, 'UTF-8', $source_charset);
+            if ($converted !== false) {
+                return $converted;
+            }
+        }
+
+        if (function_exists('iconv')) {
+            $converted = @iconv($source_charset, 'UTF-8//IGNORE', $html);
+            if ($converted !== false) {
+                return $converted;
+            }
+        }
+
+        return $html;
+    }
+
+    if (function_exists('mb_check_encoding') && !@mb_check_encoding($html, 'UTF-8')) {
+        $converted = @mb_convert_encoding($html, 'UTF-8', 'UTF-8');
+        if ($converted !== false) {
+            return $converted;
+        }
+    }
+
+    return $html;
+}
+
+/**
  * Charge le contenu HTML d'un article dans un DOMDocument et retourne également un DOMXPath.
  *
  * Cette fonction centralise la gestion des erreurs libxml et garantit la restauration de la
@@ -31,16 +79,9 @@ function blc_load_dom_from_post($post_content) {
         }
     }
 
-    if (function_exists('mb_convert_encoding')) {
-        $converted_content = mb_convert_encoding($post_content, 'HTML-ENTITIES', $source_charset);
-        if ($converted_content === false) {
-            $converted_content = $post_content;
-        }
-    } else {
-        $converted_content = $post_content;
-    }
+    $converted_content = blc_convert_html_to_utf8($post_content, $source_charset);
 
-    $loaded = $dom->loadHTML($converted_content, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+    $loaded = $dom->loadHTML('<?xml encoding="UTF-8"?>' . $converted_content, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
     $errors = libxml_get_errors();
 
     libxml_clear_errors();
@@ -717,6 +758,16 @@ function blc_is_safe_remote_host($host) {
         return false;
     }
 
+    static $cache = [];
+
+    $cache_key = function_exists('mb_strtolower')
+        ? mb_strtolower($host, 'UTF-8')
+        : strtolower($host);
+
+    if (isset($cache[$cache_key])) {
+        return $cache[$cache_key];
+    }
+
     $ip_addresses = [];
 
     if (filter_var($host, FILTER_VALIDATE_IP)) {
@@ -843,6 +894,7 @@ function blc_is_safe_remote_host($host) {
     }
 
     if (empty($ip_addresses)) {
+        $cache[$cache_key] = false;
         return false;
     }
 
@@ -850,10 +902,12 @@ function blc_is_safe_remote_host($host) {
 
     foreach ($ip_addresses as $ip) {
         if (!blc_is_public_ip_address($ip)) {
+            $cache[$cache_key] = false;
             return false;
         }
     }
 
+    $cache[$cache_key] = true;
     return true;
 }
 
