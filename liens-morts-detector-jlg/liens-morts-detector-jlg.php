@@ -371,30 +371,14 @@ function blc_ajax_edit_link_callback() {
     $old_url = $prepared_old_url;
     $new_url = $final_new_url;
 
-    $dom_data = blc_load_dom_from_post($post->post_content);
-    if (isset($dom_data['error'])) {
-        wp_send_json_error(['message' => $dom_data['error']]);
-        return;
-    }
+    $normalized_content = blc_normalize_post_content_encoding($post->post_content);
+    $replacement = blc_replace_link_href_in_content($normalized_content, $old_url, $new_url);
 
-    /** @var DOMDocument $dom */
-    $dom = $dom_data['dom'];
-    /** @var DOMXPath $xpath */
-    $xpath = $dom_data['xpath'];
-
-    // Recherche et modification de la balise <a> ciblée
-    $anchors = $xpath->query(sprintf('//a[@href=%s]', blc_xpath_escape($old_url)));
-
-    if ($anchors->length === 0) {
+    if (!$replacement['updated']) {
         wp_send_json_error(['message' => __('Le lien n\'a pas été trouvé dans le contenu de l\'article.', 'liens-morts-detector-jlg')]);
     }
 
-    foreach ($anchors as $a) {
-        $a->setAttribute('href', $new_url);
-    }
-
-    // Enregistrement du contenu mis à jour
-    $new_content = $dom->saveHTML();
+    $new_content = $replacement['content'];
     $update_result = wp_update_post([
         'ID' => $post_id,
         'post_content' => wp_slash($new_content),
@@ -479,34 +463,14 @@ function blc_ajax_unlink_callback() {
         wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
     }
 
-    $dom_data = blc_load_dom_from_post($post->post_content);
-    if (isset($dom_data['error'])) {
-        wp_send_json_error(['message' => $dom_data['error']]);
-        return;
-    }
+    $normalized_content = blc_normalize_post_content_encoding($post->post_content);
+    $removal = blc_remove_link_wrappers_from_content($normalized_content, $url_to_unlink);
 
-    /** @var DOMDocument $dom */
-    $dom = $dom_data['dom'];
-    /** @var DOMXPath $xpath */
-    $xpath = $dom_data['xpath'];
-
-    // Recherche de la balise <a> à retirer
-    $anchors = $xpath->query(sprintf('//a[@href=%s]', blc_xpath_escape($url_to_unlink)));
-
-    if ($anchors->length === 0) {
+    if (!$removal['removed']) {
         wp_send_json_error(['message' => __('Le lien n\'a pas été trouvé dans le contenu de l\'article.', 'liens-morts-detector-jlg')]);
     }
 
-    foreach ($anchors as $a) {
-        $fragment = $dom->createDocumentFragment();
-        while ($a->childNodes->length > 0) {
-            $fragment->appendChild($a->childNodes->item(0));
-        }
-        $a->parentNode->replaceChild($fragment, $a);
-    }
-
-    // Enregistrement du contenu mis à jour
-    $new_content = $dom->saveHTML();
+    $new_content = $removal['content'];
     $update_result = wp_update_post([
         'ID' => $post_id,
         'post_content' => wp_slash($new_content),

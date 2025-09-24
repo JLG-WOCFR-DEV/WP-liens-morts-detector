@@ -67,6 +67,187 @@ function blc_load_dom_from_post($post_content) {
 
 
 /**
+ * Convert stored post content from the blog charset to UTF-8 for safe inline manipulation.
+ *
+ * @param string $post_content Raw post content as retrieved from the database.
+ *
+ * @return string Content converted to UTF-8 when possible.
+ */
+function blc_normalize_post_content_encoding($post_content) {
+    $post_content = (string) $post_content;
+
+    $source_charset = 'UTF-8';
+    if (function_exists('get_bloginfo')) {
+        $blog_charset = get_bloginfo('charset');
+        if (is_string($blog_charset)) {
+            $blog_charset = trim($blog_charset);
+        }
+
+        if (!empty($blog_charset)) {
+            $source_charset = $blog_charset;
+        }
+    }
+
+    if (strcasecmp($source_charset, 'UTF-8') === 0) {
+        return $post_content;
+    }
+
+    if (function_exists('mb_convert_encoding')) {
+        $converted = @mb_convert_encoding($post_content, 'UTF-8', $source_charset);
+        if (is_string($converted)) {
+            return $converted;
+        }
+    }
+
+    if (function_exists('iconv')) {
+        $converted = @iconv($source_charset, 'UTF-8//IGNORE', $post_content);
+        if (is_string($converted)) {
+            return $converted;
+        }
+    }
+
+    return $post_content;
+}
+
+
+/**
+ * Update the href attribute of matching <a> tags without reserializing the whole document.
+ *
+ * @param string $html            Original HTML content.
+ * @param string $target_href     Href attribute to search for (should already be sanitized).
+ * @param string $replacement_href Replacement value for the href attribute.
+ *
+ * @return array{content: string, updated: bool} Updated HTML content and whether at least one link was modified.
+ */
+function blc_replace_link_href_in_content($html, $target_href, $replacement_href) {
+    $html            = (string) $html;
+    $target_href     = blc_prepare_posted_url($target_href);
+    $replacement_href = (string) $replacement_href;
+
+    if ($target_href === '' || $replacement_href === '') {
+        return ['content' => $html, 'updated' => false];
+    }
+
+    $updated = false;
+
+    $result = preg_replace_callback(
+        '#<a\b[^>]*>#is',
+        function ($matches) use (&$updated, $target_href, $replacement_href) {
+            $tag = $matches[0];
+
+            $href_match = [];
+            if (!preg_match('#\bhref\s*=\s*("([^"]*)"|\'([^\']*)\'|([^\s>]+))#i', $tag, $href_match, PREG_OFFSET_CAPTURE)) {
+                return $tag;
+            }
+
+            $raw_value = '';
+            $quote      = '';
+            if ($href_match[2][0] !== '') {
+                $raw_value = $href_match[2][0];
+                $quote     = '"';
+            } elseif (isset($href_match[3]) && $href_match[3][0] !== '') {
+                $raw_value = $href_match[3][0];
+                $quote     = '\'';
+            } else {
+                $raw_value = $href_match[4][0];
+                $quote     = '';
+            }
+
+            $decoded_href = blc_prepare_posted_url(wp_kses_decode_entities($raw_value));
+            if ($decoded_href !== $target_href) {
+                return $tag;
+            }
+
+            $updated = true;
+
+            if ($quote === '') {
+                $quote = '"';
+            }
+
+            $new_attribute = 'href=' . $quote . esc_attr($replacement_href) . $quote;
+            $attribute_start = $href_match[0][1];
+            $attribute_length = strlen($href_match[0][0]);
+
+            return substr($tag, 0, $attribute_start) . $new_attribute . substr($tag, $attribute_start + $attribute_length);
+        },
+        $html
+    );
+
+    if (!is_string($result)) {
+        return ['content' => $html, 'updated' => false];
+    }
+
+    return ['content' => $result, 'updated' => $updated];
+}
+
+/**
+ * Remove matching <a> wrappers while preserving their inner HTML.
+ *
+ * @param string $html        Original HTML content.
+ * @param string $target_href Href attribute to search for (should already be sanitized).
+ *
+ * @return array{content: string, removed: bool} Updated HTML content and whether at least one link was removed.
+ */
+function blc_remove_link_wrappers_from_content($html, $target_href) {
+    $html        = (string) $html;
+    $target_href = blc_prepare_posted_url($target_href);
+
+    if ($target_href === '') {
+        return ['content' => $html, 'removed' => false];
+    }
+
+    $removed = false;
+
+    $result = preg_replace_callback(
+        '#<a\b[^>]*>.*?</a>#is',
+        function ($matches) use (&$removed, $target_href) {
+            $fragment = $matches[0];
+
+            $href_match = [];
+            if (!preg_match('#\bhref\s*=\s*("([^"]*)"|\'([^\']*)\'|([^\s>]+))#i', $fragment, $href_match)) {
+                return $fragment;
+            }
+
+            $raw_value = '';
+            if ($href_match[2] !== '') {
+                $raw_value = $href_match[2];
+            } elseif (isset($href_match[3]) && $href_match[3] !== '') {
+                $raw_value = $href_match[3];
+            } else {
+                $raw_value = $href_match[4];
+            }
+
+            $decoded_href = blc_prepare_posted_url(wp_kses_decode_entities($raw_value));
+            if ($decoded_href !== $target_href) {
+                return $fragment;
+            }
+
+            $closing_position = strripos($fragment, '</a>');
+            if ($closing_position === false) {
+                $closing_position = strripos($fragment, '</A>');
+            }
+
+            $open_position = strpos($fragment, '>');
+            if ($closing_position === false || $open_position === false) {
+                return $fragment;
+            }
+
+            $removed = true;
+
+            return substr($fragment, $open_position + 1, $closing_position - $open_position - 1);
+        },
+        $html
+    );
+
+    if (!is_string($result)) {
+        return ['content' => $html, 'removed' => false];
+    }
+
+    return ['content' => $result, 'removed' => $removed];
+}
+
+
+/**
  * Normalize and truncate a string before storing it in the database.
  *
  * @param string $value               Raw value to clean.

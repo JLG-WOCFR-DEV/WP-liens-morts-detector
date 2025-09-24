@@ -1198,18 +1198,18 @@ class BlcScannerTest extends TestCase
     /**
      * @return array<string, array{int}>
      */
-    public function temporaryHeadStatusProvider(): array
+    public function headStatusFallbackProvider(): array
     {
         return [
-            'forbidden' => [403],
+            'forbidden'    => [403],
             'rate_limited' => [429],
         ];
     }
 
     /**
-     * @dataProvider temporaryHeadStatusProvider
+     * @dataProvider headStatusFallbackProvider
      */
-    public function test_blc_perform_check_recovers_from_temporary_head_status(int $headStatus): void
+    public function test_blc_perform_check_recovers_from_head_status(int $headStatus): void
     {
         global $wpdb;
         $wpdb = $this->createWpdbStub();
@@ -1244,6 +1244,33 @@ class BlcScannerTest extends TestCase
             $this->updatedOptions['blc_last_check_time'] ?? null,
             'Successful recovery should update the last check timestamp.'
         );
+    }
+
+    public function test_blc_perform_check_marks_forbidden_as_broken_without_retry(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 811,
+            'post_title' => 'Forbidden Resource',
+            'post_content' => '<a href="http://forbidden.example.com/page">Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'http://forbidden.example.com/page', ['response' => ['code' => 403]]);
+        $this->setHttpResponse('GET', 'http://forbidden.example.com/page', ['response' => ['code' => 403]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertSame('HEAD', $this->httpRequests[0]['method']);
+        $this->assertSame('GET', $this->httpRequests[1]['method']);
+        $this->assertCount(1, $wpdb->inserted, 'Forbidden responses should be recorded as broken links after the GET fallback.');
+        $this->assertSame([], $this->scheduledEvents, 'Forbidden responses must not be retried indefinitely.');
     }
 
     public function test_blc_perform_check_normalizes_host_with_port_without_scheme(): void
