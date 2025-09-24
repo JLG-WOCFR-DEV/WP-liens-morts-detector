@@ -25,8 +25,9 @@ function blc_maybe_upgrade_database() {
 
     global $wpdb;
 
-    $table_name = $wpdb->prefix . 'blc_broken_links';
-    $table_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table_name));
+    $table_name   = $wpdb->prefix . 'blc_broken_links';
+    $table_pattern = $wpdb->esc_like($table_name);
+    $table_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table_pattern));
 
     if (empty($table_exists)) {
         return;
@@ -55,11 +56,12 @@ function blc_maybe_upgrade_database() {
 function blc_migrate_column_to_varchar($table_name, $column_name, $target_length, $is_nullable) {
     global $wpdb;
 
-    $table = esc_sql($table_name);
-    $column = esc_sql($column_name);
+    $table         = esc_sql($table_name);
+    $column        = esc_sql($column_name);
+    $column_pattern = $wpdb->esc_like($column_name);
 
     $column_definition = $wpdb->get_row(
-        $wpdb->prepare("SHOW COLUMNS FROM `$table` LIKE %s", $column)
+        $wpdb->prepare("SHOW COLUMNS FROM `$table` LIKE %s", $column_pattern)
     );
 
     if (!$column_definition) {
@@ -125,11 +127,12 @@ function blc_migrate_column_to_varchar($table_name, $column_name, $target_length
 function blc_migrate_column_to_text($table_name, $column_name, $target_type = 'longtext', $is_nullable = false) {
     global $wpdb;
 
-    $table  = esc_sql($table_name);
-    $column = esc_sql($column_name);
+    $table          = esc_sql($table_name);
+    $column         = esc_sql($column_name);
+    $column_pattern = $wpdb->esc_like($column_name);
 
     $column_definition = $wpdb->get_row(
-        $wpdb->prepare("SHOW COLUMNS FROM `$table` LIKE %s", $column)
+        $wpdb->prepare("SHOW COLUMNS FROM `$table` LIKE %s", $column_pattern)
     );
 
     if (!$column_definition) {
