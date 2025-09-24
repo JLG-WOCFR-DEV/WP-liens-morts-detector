@@ -34,5 +34,6 @@ $wpdb->query("DROP TABLE IF EXISTS $table_name");
 // Nettoyage final des tâches planifiées (par sécurité, même si la désactivation le fait déjà)
 wp_clear_scheduled_hook('blc_check_links');
 wp_clear_scheduled_hook('blc_check_batch');
+wp_clear_scheduled_hook('blc_manual_check_batch');
 wp_clear_scheduled_hook('blc_check_image_batch');
 
