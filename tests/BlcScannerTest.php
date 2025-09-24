@@ -158,6 +158,9 @@ class BlcScannerTest extends TestCase
 
             return $base;
         });
+        Functions\when('esc_url_raw')->alias(static function ($url) {
+            return (string) $url;
+        });
         Functions\when('site_url')->alias(function ($path = '', $scheme = null) {
             $base = 'https://example.com';
             if ($path !== '') {

@@ -243,6 +243,15 @@ function blc_activation() {
 
     // On récupère la fréquence de scan enregistrée, ou 'daily' par défaut
     $frequency = get_option('blc_frequency', 'daily');
+    $frequency = is_string($frequency) ? trim($frequency) : '';
+    if ($frequency === '') {
+        $frequency = 'daily';
+    }
+
+    $schedules = wp_get_schedules();
+    if (!isset($schedules[$frequency])) {
+        $frequency = 'daily';
+    }
 
     // On vérifie si une tâche est déjà planifiée pour éviter les doublons
     if (!wp_next_scheduled('blc_check_links')) {
