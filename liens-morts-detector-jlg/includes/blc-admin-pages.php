@@ -54,6 +54,11 @@ function blc_dashboard_links_page() {
     // Gère le lancement d'une vérification manuelle des liens
     if (isset($_POST['blc_manual_check'])) {
         check_admin_referer('blc_manual_check_nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('Permissions insuffisantes pour lancer une analyse manuelle.', 'liens-morts-detector-jlg'));
+        }
+
         $is_full = isset($_POST['blc_full_scan']);
         $bypass_rest_window = $is_full;
         wp_clear_scheduled_hook('blc_manual_check_batch');
@@ -144,6 +149,11 @@ function blc_dashboard_images_page() {
     // Gère le lancement du scan d'images
     if (isset($_POST['blc_manual_image_check'])) {
         check_admin_referer('blc_manual_image_check_nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('Permissions insuffisantes pour lancer une analyse manuelle.', 'liens-morts-detector-jlg'));
+        }
+
         wp_clear_scheduled_hook('blc_check_image_batch');
         wp_schedule_single_event(time(), 'blc_check_image_batch', array(0, true));
         printf(

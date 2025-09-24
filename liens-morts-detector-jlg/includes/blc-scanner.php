@@ -690,17 +690,44 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     $wp_query = new WP_Query($args);
     $posts = $wp_query->posts;
 
+    $cleanup_size = 0;
+    if (method_exists($wpdb, 'get_var')) {
+        $cleanup_size = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT SUM(COALESCE(LENGTH(blc.url), 0) + COALESCE(LENGTH(blc.anchor), 0) + COALESCE(LENGTH(blc.post_title), 0))
+                 FROM $table_name AS blc
+                 LEFT JOIN {$wpdb->posts} AS posts ON blc.post_id = posts.ID
+                 WHERE blc.type = %s AND posts.ID IS NULL",
+                'link'
+            )
+        );
+    }
     $cleanup_sql = "DELETE blc FROM $table_name AS blc LEFT JOIN {$wpdb->posts} AS posts ON blc.post_id = posts.ID WHERE blc.type = %s AND posts.ID IS NULL";
-    $wpdb->query($wpdb->prepare($cleanup_sql, 'link'));
-    blc_flush_dataset_size_cache('link');
+    $deleted_orphans = $wpdb->query($wpdb->prepare($cleanup_sql, 'link'));
+    if ($deleted_orphans && $cleanup_size > 0) {
+        blc_adjust_dataset_storage_footprint('link', -$cleanup_size);
+    }
 
     $post_ids_in_batch = wp_list_pluck($posts, 'ID');
     if (!empty($post_ids_in_batch)) {
         $post_ids_in_batch = array_map('intval', $post_ids_in_batch);
         $placeholders = implode(',', array_fill(0, count($post_ids_in_batch), '%d'));
         $delete_sql = "DELETE FROM $table_name WHERE post_id IN ($placeholders) AND type = %s";
-        $wpdb->query($wpdb->prepare($delete_sql, array_merge($post_ids_in_batch, ['link'])));
-        blc_flush_dataset_size_cache('link');
+        $size_to_remove = 0;
+        if (method_exists($wpdb, 'get_var')) {
+            $size_to_remove = (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0))
+                     FROM $table_name
+                     WHERE post_id IN ($placeholders) AND type = %s",
+                    array_merge($post_ids_in_batch, ['link'])
+                )
+            );
+        }
+        $deleted_rows = $wpdb->query($wpdb->prepare($delete_sql, array_merge($post_ids_in_batch, ['link'])));
+        if ($deleted_rows && $size_to_remove > 0) {
+            blc_adjust_dataset_storage_footprint('link', -$size_to_remove);
+        }
     }
 
     // --- 4. Boucle d'analyse des LIENS <a> ---
@@ -715,6 +742,11 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     $site_scheme     = parse_url($raw_home_url, PHP_URL_SCHEME);
     if (!is_string($site_scheme) || $site_scheme === '') {
         $site_scheme = 'http';
+    }
+    $site_host = '';
+    $site_parts = function_exists('wp_parse_url') ? wp_parse_url($site_url) : parse_url($site_url);
+    if (is_array($site_parts) && !empty($site_parts['host'])) {
+        $site_host = strtolower((string) $site_parts['host']);
     }
     $normalized_upload_baseurl = '';
     $upload_base_host = '';
@@ -778,6 +810,9 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                 continue;
             }
 
+            $metadata  = blc_get_url_metadata_for_storage($original_url, $normalized_url, $site_host);
+            $row_bytes = blc_calculate_row_storage_footprint_bytes($url_for_storage, $anchor_for_storage, $post_title_for_storage);
+
             $parsed_url = parse_url($normalized_url);
             if ($parsed_url === false) {
                 continue;
@@ -808,18 +843,22 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
                     if (!file_exists($file_path)) {
                         if ($debug_mode) { error_log("  -> Ressource locale introuvable : " . $normalized_url); }
-                        $wpdb->insert(
+                        $inserted = $wpdb->insert(
                             $table_name,
                             [
-                                'url'        => $url_for_storage,
-                                'anchor'     => $anchor_for_storage,
-                                'post_id'    => $post->ID,
-                                'post_title' => $post_title_for_storage,
-                                'type'       => 'link',
+                                'url'         => $url_for_storage,
+                                'anchor'      => $anchor_for_storage,
+                                'post_id'     => $post->ID,
+                                'post_title'  => $post_title_for_storage,
+                                'type'        => 'link',
+                                'url_host'    => $metadata['host'],
+                                'is_internal' => $metadata['is_internal'],
                             ],
-                            ['%s', '%s', '%d', '%s', '%s']
+                            ['%s', '%s', '%d', '%s', '%s', '%s', '%d']
                         );
-                        blc_flush_dataset_size_cache('link');
+                        if ($inserted) {
+                            blc_adjust_dataset_storage_footprint('link', $row_bytes);
+                        }
                         continue;
                     }
                 }
@@ -862,18 +901,22 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
                 if (!$is_safe_remote_host) {
                     if ($debug_mode) { error_log("  -> Lien ignoré (IP non autorisée) : " . $normalized_url); }
-                    $wpdb->insert(
+                    $inserted = $wpdb->insert(
                         $table_name,
                         [
-                            'url'        => $url_for_storage,
-                            'anchor'     => $anchor_for_storage,
-                            'post_id'    => $post->ID,
-                            'post_title' => $post_title_for_storage,
-                            'type'       => 'link',
+                            'url'         => $url_for_storage,
+                            'anchor'      => $anchor_for_storage,
+                            'post_id'     => $post->ID,
+                            'post_title'  => $post_title_for_storage,
+                            'type'        => 'link',
+                            'url_host'    => $metadata['host'],
+                            'is_internal' => $metadata['is_internal'],
                         ],
-                        ['%s', '%s', '%d', '%s', '%s']
+                        ['%s', '%s', '%d', '%s', '%s', '%s', '%d']
                     );
-                    blc_flush_dataset_size_cache('link');
+                    if ($inserted) {
+                        blc_adjust_dataset_storage_footprint('link', $row_bytes);
+                    }
                     $should_skip_remote_request = true;
                 }
             }
@@ -1050,18 +1093,22 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                     $temporary_retry_scheduled = true;
                 }
             } elseif ($should_insert_broken_link) {
-                $wpdb->insert(
+                $inserted = $wpdb->insert(
                     $table_name,
                     [
-                        'url'        => $url_for_storage,
-                        'anchor'     => $anchor_for_storage,
-                        'post_id'    => $post->ID,
-                        'post_title' => $post_title_for_storage,
-                        'type'       => 'link',
+                        'url'         => $url_for_storage,
+                        'anchor'      => $anchor_for_storage,
+                        'post_id'     => $post->ID,
+                        'post_title'  => $post_title_for_storage,
+                        'type'        => 'link',
+                        'url_host'    => $metadata['host'],
+                        'is_internal' => $metadata['is_internal'],
                     ],
-                    ['%s', '%s', '%d', '%s', '%s']
+                    ['%s', '%s', '%d', '%s', '%s', '%s', '%d']
                 );
-                blc_flush_dataset_size_cache('link');
+                if ($inserted) {
+                    blc_adjust_dataset_storage_footprint('link', $row_bytes);
+                }
             }
 
             if (!$should_use_cache && $cache_entry_key !== '') {
@@ -1127,7 +1174,18 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
 
     // Si c'est le premier lot, on nettoie les anciens résultats
     if ($batch === 0) {
-        $wpdb->query("DELETE FROM $table_name WHERE type = 'image'");
+        $image_cleanup_size = 0;
+        if (method_exists($wpdb, 'get_var')) {
+            $image_cleanup_size = (int) $wpdb->get_var(
+                "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0))
+                 FROM $table_name
+                 WHERE type = 'image'"
+            );
+        }
+        $deleted_images = $wpdb->query("DELETE FROM $table_name WHERE type = 'image'");
+        if ($deleted_images && $image_cleanup_size > 0) {
+            blc_adjust_dataset_storage_footprint('image', -$image_cleanup_size);
+        }
     }
 
     $batch_size = 20;
@@ -1153,6 +1211,11 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     $site_scheme = parse_url($site_url, PHP_URL_SCHEME);
     if (!is_string($site_scheme) || $site_scheme === '') {
         $site_scheme = 'https';
+    }
+    $site_host_for_metadata = '';
+    $site_host_candidate = parse_url($site_url, PHP_URL_HOST);
+    if (is_string($site_host_candidate) && $site_host_candidate !== '') {
+        $site_host_for_metadata = strtolower($site_host_candidate);
     }
 
     $blog_charset = get_bloginfo('charset');
@@ -1274,18 +1337,24 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                 $url_for_storage    = blc_prepare_url_for_storage($original_image_url);
                 $image_filename = wp_basename($decoded_relative_path);
                 $anchor_for_storage = blc_prepare_text_field_for_storage($image_filename);
-                $wpdb->insert(
+                $metadata  = blc_get_url_metadata_for_storage($original_image_url, $normalized_image_url, $site_host_for_metadata);
+                $row_bytes = blc_calculate_row_storage_footprint_bytes($url_for_storage, $anchor_for_storage, $post_title_for_storage);
+                $inserted = $wpdb->insert(
                     $table_name,
                     [
-                        'url'        => $url_for_storage,
-                        'anchor'     => $anchor_for_storage,
-                        'post_id'    => $post->ID,
-                        'post_title' => $post_title_for_storage,
-                        'type'       => 'image',
+                        'url'         => $url_for_storage,
+                        'anchor'      => $anchor_for_storage,
+                        'post_id'     => $post->ID,
+                        'post_title'  => $post_title_for_storage,
+                        'type'        => 'image',
+                        'url_host'    => $metadata['host'],
+                        'is_internal' => $metadata['is_internal'],
                     ],
-                    ['%s', '%s', '%d', '%s', '%s']
+                    ['%s', '%s', '%d', '%s', '%s', '%s', '%d']
                 );
-                blc_flush_dataset_size_cache('image');
+                if ($inserted) {
+                    blc_adjust_dataset_storage_footprint('image', $row_bytes);
+                }
             }
         }
     }

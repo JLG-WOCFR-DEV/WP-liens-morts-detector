@@ -411,7 +411,29 @@ function blc_prepare_text_field_for_storage($text) {
 
 
 /**
- * Build the transient key used to cache dataset sizes.
+ * Calculate the approximate storage footprint of a row based on its columns.
+ *
+ * @param string|null $url        URL stored for the broken item.
+ * @param string|null $anchor     Anchor text associated with the link/image.
+ * @param string|null $post_title Title of the post where the item was found.
+ *
+ * @return int Number of bytes used by the provided fields.
+ */
+function blc_calculate_row_storage_footprint_bytes($url, $anchor = null, $post_title = null) {
+    $bytes = 0;
+    foreach ([$url, $anchor, $post_title] as $field) {
+        if ($field === null) {
+            continue;
+        }
+
+        $bytes += strlen((string) $field);
+    }
+
+    return $bytes;
+}
+
+/**
+ * Build the option name used to cache dataset sizes.
  *
  * @param string $type Dataset type (link/image).
  *
@@ -431,6 +453,21 @@ function blc_get_dataset_size_cache_key($type) {
     return 'blc_dataset_size_' . $normalized;
 }
 
+/**
+ * Persist the dataset footprint in the options table.
+ *
+ * @param string $type  Dataset type identifier.
+ * @param int    $bytes Footprint in bytes.
+ */
+function blc_set_dataset_storage_footprint($type, $bytes) {
+    $option_name = blc_get_dataset_size_cache_key($type);
+    if ($option_name === '') {
+        return;
+    }
+
+    $bytes = max(0, (int) $bytes);
+    update_option($option_name, $bytes, false);
+}
 
 /**
  * Retrieve the cached dataset footprint in bytes.
@@ -440,16 +477,14 @@ function blc_get_dataset_size_cache_key($type) {
  * @return int
  */
 function blc_get_dataset_storage_footprint_bytes($type) {
-    $cache_key = blc_get_dataset_size_cache_key($type);
-    if ($cache_key === '') {
+    $option_name = blc_get_dataset_size_cache_key($type);
+    if ($option_name === '') {
         return 0;
     }
 
-    if (function_exists('get_transient')) {
-        $cached = get_transient($cache_key);
-        if ($cached !== false && is_numeric($cached)) {
-            return (int) $cached;
-        }
+    $stored = get_option($option_name, null);
+    if ($stored !== null && $stored !== false && is_numeric($stored)) {
+        return max(0, (int) $stored);
     }
 
     global $wpdb;
@@ -464,14 +499,31 @@ function blc_get_dataset_storage_footprint_bytes($type) {
         )
     );
 
-    if (function_exists('set_transient')) {
-        $expiration = defined('MINUTE_IN_SECONDS') ? (int) MINUTE_IN_SECONDS * 10 : 600;
-        set_transient($cache_key, $size, $expiration);
-    }
+    blc_set_dataset_storage_footprint($type, $size);
 
     return $size;
 }
 
+/**
+ * Adjust the cached dataset footprint by the provided delta.
+ *
+ * @param string $type  Dataset type identifier.
+ * @param int    $delta Positive or negative delta to apply.
+ */
+function blc_adjust_dataset_storage_footprint($type, $delta) {
+    $option_name = blc_get_dataset_size_cache_key($type);
+    if ($option_name === '') {
+        return;
+    }
+
+    $current = blc_get_dataset_storage_footprint_bytes($type);
+    $new_value = $current + (int) $delta;
+    if ($new_value < 0) {
+        $new_value = 0;
+    }
+
+    update_option($option_name, $new_value, false);
+}
 
 /**
  * Clear cached dataset footprints.
@@ -490,21 +542,61 @@ function blc_flush_dataset_size_cache($types = null) {
     }
 
     foreach ($types as $type) {
-        $cache_key = blc_get_dataset_size_cache_key($type);
-        if ($cache_key === '') {
+        $option_name = blc_get_dataset_size_cache_key($type);
+        if ($option_name === '') {
             continue;
         }
 
-        if (isset($flushed[$cache_key])) {
+        if (isset($flushed[$option_name])) {
             continue;
         }
 
-        if (function_exists('delete_transient')) {
-            delete_transient($cache_key);
-        }
-
-        $flushed[$cache_key] = true;
+        delete_option($option_name);
+        $flushed[$option_name] = true;
     }
+}
+
+/**
+ * Determine metadata stored alongside a broken URL entry.
+ *
+ * @param string      $original_url   Raw URL captured before normalization.
+ * @param string|null $normalized_url URL normalized for validation.
+ * @param string      $site_host      Lowercase host of the current site.
+ *
+ * @return array{host: string, is_internal: int}
+ */
+function blc_get_url_metadata_for_storage($original_url, $normalized_url, $site_host) {
+    $candidate = '';
+
+    if (is_string($normalized_url) && $normalized_url !== '') {
+        $candidate = $normalized_url;
+    } elseif (is_string($original_url) && $original_url !== '') {
+        $candidate = $original_url;
+    }
+
+    $host = '';
+    $is_internal = 0;
+
+    if ($candidate !== '') {
+        $parser = function_exists('wp_parse_url') ? 'wp_parse_url' : 'parse_url';
+        $parts = $parser($candidate);
+
+        if (is_array($parts)) {
+            if (!empty($parts['host'])) {
+                $host = strtolower((string) $parts['host']);
+                if ($site_host !== '' && $host === $site_host) {
+                    $is_internal = 1;
+                }
+            } elseif (isset($parts['path']) && is_string($parts['path']) && strpos($parts['path'], '/') === 0) {
+                $is_internal = 1;
+            }
+        }
+    }
+
+    return [
+        'host'        => $host,
+        'is_internal' => $is_internal,
+    ];
 }
 
 
