@@ -4,6 +4,7 @@ jQuery(document).ready(function($) {
     var editPromptDefault = messages.editPromptDefault || 'https://';
     var unlinkConfirmation = messages.unlinkConfirmation || "Êtes-vous sûr de vouloir supprimer ce lien ? Le texte sera conservé.";
     var errorPrefix = messages.errorPrefix || 'Erreur : ';
+    var recheckScheduled = messages.recheckScheduled || '';
 
     /**
      * Gère le clic sur le bouton "Modifier le lien".
@@ -75,5 +76,41 @@ jQuery(document).ready(function($) {
                 }
             });
         }
+    });
+
+    $('#the-list').on('click', '.blc-recheck', function(e) {
+        e.preventDefault();
+
+        var linkElement = $(this);
+        if (linkElement.hasClass('is-busy')) {
+            return;
+        }
+
+        var postId = linkElement.data('postid');
+        var urlToRecheck = linkElement.data('url');
+        var nonce = linkElement.data('nonce');
+        var tableRow = linkElement.closest('tr');
+
+        linkElement.addClass('is-busy');
+        tableRow.css('opacity', 0.5);
+
+        $.post(ajaxurl, {
+            action: 'blc_recheck_link',
+            post_id: postId,
+            url_to_recheck: urlToRecheck,
+            _ajax_nonce: nonce
+        }, function(response) {
+            if (response && response.success) {
+                if (recheckScheduled) {
+                    alert(recheckScheduled);
+                }
+            } else {
+                var message = response && response.data && response.data.message ? response.data.message : '';
+                alert(errorPrefix + message);
+            }
+        }).always(function() {
+            linkElement.removeClass('is-busy');
+            tableRow.css('opacity', 1);
+        });
     });
 });

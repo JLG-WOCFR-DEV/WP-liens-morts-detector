@@ -3,6 +3,46 @@
 namespace {
     require_once __DIR__ . '/translation-stubs.php';
 
+    if (!defined('ARRAY_A')) {
+        define('ARRAY_A', 'ARRAY_A');
+    }
+
+    if (!class_exists('WP_Error')) {
+        class WP_Error
+        {
+            /** @var string */
+            private $code;
+
+            /** @var string */
+            private $message;
+
+            /** @var mixed */
+            private $data;
+
+            public function __construct($code = '', $message = '', $data = null)
+            {
+                $this->code = (string) $code;
+                $this->message = (string) $message;
+                $this->data = $data;
+            }
+
+            public function get_error_code()
+            {
+                return $this->code;
+            }
+
+            public function get_error_message()
+            {
+                return $this->message;
+            }
+
+            public function get_error_data()
+            {
+                return $this->data;
+            }
+        }
+    }
+
     if (!class_exists('WP_Query')) {
         class WP_Query
         {
@@ -53,6 +93,9 @@ class BlcScannerTest extends TestCase
     /** @var array<string, mixed> */
     private array $updatedOptions = [];
 
+    /** @var array<string, mixed> */
+    private array $transients = [];
+
     /** @var array<int, float> */
     private array $serverLoad = [0.5, 0.4, 0.3];
 
@@ -66,6 +109,9 @@ class BlcScannerTest extends TestCase
     /** @var array{success: bool, data: mixed}|null */
     private ?array $ajaxResponse = null;
 
+    /** @var array<int, array<string, mixed>> */
+    private array $sentEmails = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -77,30 +123,55 @@ class BlcScannerTest extends TestCase
         }
 
         $this->options = [
-            'blc_debug_mode'       => false,
-            'blc_rest_start_hour'  => '00',
-            'blc_rest_end_hour'    => '00',
-            'blc_link_delay'       => 0,
-            'blc_batch_delay'      => 60,
-            'blc_scan_method'      => 'precise',
-            'blc_excluded_domains' => '',
-            'blc_last_check_time'  => 0,
+            'blc_debug_mode'                 => false,
+            'blc_rest_start_hour'            => '00',
+            'blc_rest_end_hour'              => '00',
+            'blc_link_delay'                 => 0,
+            'blc_batch_delay'                => 60,
+            'blc_scan_method'                => 'precise',
+            'blc_excluded_domains'           => '',
+            'blc_last_check_time'            => 0,
+            'blc_email_notifications_enabled' => false,
+            'blc_email_recipients'           => '',
+            'admin_email'                    => 'admin@example.com',
         ];
 
         $this->httpRequests = [];
         $this->httpResponses = [];
         $this->scheduledEvents = [];
         $this->updatedOptions = [];
+        $this->transients = [];
         $this->serverLoad = [0.5, 0.4, 0.3];
         $this->currentHour = '00';
         $this->updatedPosts = [];
         $this->ajaxResponse = null;
+        $this->sentEmails = [];
         $this->utcNow = 1000;
         $GLOBALS['wp_query_queue'] = [];
         $GLOBALS['wp_query_last_args'] = [];
 
         Functions\when('get_option')->alias(fn(string $name, $default = false) => $this->options[$name] ?? $default);
+        Functions\when('get_transient')->alias(fn(string $key) => $this->transients[$key] ?? false);
+        Functions\when('set_transient')->alias(function (string $key, $value, $expiration) {
+            $this->transients[$key] = $value;
+            return true;
+        });
+        Functions\when('delete_transient')->alias(function (string $key) {
+            unset($this->transients[$key]);
+            return true;
+        });
         Functions\when('apply_filters')->alias(fn(string $hook, $value, ...$args) => $value);
+        Functions\when('wp_mail')->alias(function ($to, $subject, $message, $headers = '', $attachments = []) {
+            $this->sentEmails[] = [
+                'to'          => $to,
+                'subject'     => $subject,
+                'message'     => $message,
+                'headers'     => $headers,
+                'attachments' => $attachments,
+            ];
+
+            return true;
+        });
         Functions\when('home_url')->alias(function ($path = '', $scheme = null) {
             $base = 'https://example.com';
             if ($path !== '') {
@@ -271,7 +342,24 @@ class BlcScannerTest extends TestCase
                 return 'UTF-8';
             }
 
+            if ($show === 'name') {
+                return 'Test Blog';
+            }
+
             return '';
+        });
+        Functions\when('wp_specialchars_decode')->alias(function ($text, $quote_style = null) {
+            $style = $quote_style ?? ENT_QUOTES;
+            return htmlspecialchars_decode((string) $text, $style);
+        });
+        Functions\when('sanitize_email')->alias(fn($email) => filter_var((string) $email, FILTER_SANITIZE_EMAIL));
+        Functions\when('is_email')->alias(fn($email) => filter_var($email, FILTER_VALIDATE_EMAIL) !== false);
+        Functions\when('admin_url')->alias(function ($path = '') {
+            return 'https://example.com/wp-admin/' . ltrim((string) $path, '/');
+        });
+        Functions\when('wp_date')->alias(function ($format, $timestamp = null, $timezone = null) {
+            $timestamp = $timestamp ?? time();
+            return date($format, $timestamp);
         });
         Functions\when('check_ajax_referer')->justReturn(true);
         Functions\when('current_user_can')->justReturn(true);
@@ -294,6 +382,14 @@ class BlcScannerTest extends TestCase
         });
         Functions\when('update_option')->alias(function (string $option, $value) {
             $this->updatedOptions[$option] = $value;
+            if (in_array($option, ['blc_active_link_scan_key', 'blc_active_image_scan_key'], true)) {
+                $this->options[$option] = $value;
+            }
+
+            return true;
+        });
+        Functions\when('delete_option')->alias(function (string $option) {
+            unset($this->options[$option], $this->updatedOptions[$option]);
             return true;
         });
         Functions\when('wp_update_post')->alias(function (array $data, $wp_error = false) {
@@ -333,11 +429,15 @@ class BlcScannerTest extends TestCase
         unset($GLOBALS['wp_query_queue'], $GLOBALS['wp_query_last_args']);
         unset($_POST);
         $this->ajaxResponse = null;
+        $this->transients = [];
         global $wpdb;
         $wpdb = null;
     }
 
-    private function mockHttpRequest(string $method, string $url, array $args = []): array
+    /**
+     * @return array|\WP_Error
+     */
+    private function mockHttpRequest(string $method, string $url, array $args = [])
     {
         $this->httpRequests[] = ['method' => $method, 'url' => $url, 'args' => $args];
         $key = $method . ' ' . $url;
@@ -345,7 +445,10 @@ class BlcScannerTest extends TestCase
         return $this->httpResponses[$key] ?? ['response' => ['code' => 200]];
     }
 
-    private function setHttpResponse(string $method, string $url, array $response): void
+    /**
+     * @param array|\WP_Error $response
+     */
+    private function setHttpResponse(string $method, string $url, $response): void
     {
         $key = $method . ' ' . $url;
         $this->httpResponses[$key] = $response;
@@ -362,16 +465,42 @@ class BlcScannerTest extends TestCase
             public array $inserted = [];
             /** @var array<int, array<string, mixed>> */
             public array $deleted = [];
+            /** @var array<string, array<int, array<string, mixed>>> */
+            public array $tableData = [];
+            public int $autoIncrement = 1;
 
             public function query(string $sql)
             {
                 $this->queries[] = ['sql' => $sql];
+                if (preg_match('/DELETE FROM\s+([a-z0-9_]+)\s+WHERE\s+type\s*=\s*\'([^\']+)\'/i', $sql, $matches)) {
+                    $table = $matches[1];
+                    $type  = stripslashes($matches[2]);
+                    if (isset($this->tableData[$table])) {
+                        $this->tableData[$table] = array_values(array_filter(
+                            $this->tableData[$table],
+                            static function ($row) use ($type) {
+                                return ($row['type'] ?? '') !== $type;
+                            }
+                        ));
+                    }
+                }
+
                 return true;
             }
 
             public function insert(string $table, array $data, array $formats)
             {
                 $this->inserted[] = ['table' => $table, 'data' => $data, 'formats' => $formats];
+                if (!isset($this->tableData[$table])) {
+                    $this->tableData[$table] = [];
+                }
+
+                $row = $data;
+                if (!isset($row['id'])) {
+                    $row['id'] = $this->autoIncrement++;
+                }
+
+                $this->tableData[$table][] = $row;
                 return true;
             }
 
@@ -379,6 +508,59 @@ class BlcScannerTest extends TestCase
             {
                 $this->deleted[] = ['table' => $table, 'where' => $where, 'formats' => $formats];
                 return 1;
+            }
+
+            public function get_var(string $query)
+            {
+                $this->queries[] = ['sql' => $query];
+                if (preg_match("/SELECT COUNT\(\*\) FROM\s+([a-z0-9_]+)\s+WHERE\s+type\s*=\s*'([^']+)'/i", $query, $matches)) {
+                    $table = $matches[1];
+                    $type  = stripslashes($matches[2]);
+                    $rows  = $this->tableData[$table] ?? [];
+                    $count = 0;
+                    foreach ($rows as $row) {
+                        if (($row['type'] ?? '') === $type) {
+                            $count++;
+                        }
+                    }
+
+                    return $count;
+                }
+
+                return 0;
+            }
+
+            public function get_results(string $query, $output = ARRAY_A)
+            {
+                $this->queries[] = ['sql' => $query];
+                if (preg_match("/SELECT\s+id,\s*url,\s*anchor,\s*post_title\s+FROM\s+([a-z0-9_]+)\s+WHERE\s+type\s*=\s*'([^']+)'\s+ORDER BY\s+id\s+DESC\s+LIMIT\s+(\d+)/i", $query, $matches)) {
+                    $table = $matches[1];
+                    $type  = stripslashes($matches[2]);
+                    $limit = (int) $matches[3];
+                    $rows  = $this->tableData[$table] ?? [];
+                    $filtered = array_values(array_filter(
+                        $rows,
+                        static function ($row) use ($type) {
+                            return ($row['type'] ?? '') === $type;
+                        }
+                    ));
+                    usort($filtered, static function ($a, $b) {
+                        return ($b['id'] ?? 0) <=> ($a['id'] ?? 0);
+                    });
+                    $filtered = array_slice($filtered, 0, $limit);
+
+                    if ($output === ARRAY_A || $output === 'ARRAY_A') {
+                        return array_map(static function ($row) {
+                            return $row;
+                        }, $filtered);
+                    }
+
+                    return array_map(static function ($row) {
+                        return (object) $row;
+                    }, $filtered);
+                }
+
+                return [];
             }
 
             public function prepare(string $query, $args = null): string
@@ -493,7 +675,7 @@ class BlcScannerTest extends TestCase
         $event = $this->scheduledEvents[0];
 
         $this->assertSame('blc_check_batch', $event['hook']);
-        $this->assertSame([3, false, false], $event['args']);
+        $this->assertSame([3, false, false, []], $event['args']);
         $this->assertGreaterThan($this->utcNow, $event['timestamp']);
         $this->assertSame(20 * 3600, $event['timestamp']);
     }
@@ -519,7 +701,7 @@ class BlcScannerTest extends TestCase
         $event = $this->scheduledEvents[0];
 
         $this->assertSame('blc_check_batch', $event['hook']);
-        $this->assertSame([5, false, false], $event['args']);
+        $this->assertSame([5, false, false, []], $event['args']);
         $this->assertGreaterThan($this->utcNow, $event['timestamp']);
         $this->assertSame(30 * 3600, $event['timestamp']);
     }
@@ -551,7 +733,7 @@ class BlcScannerTest extends TestCase
         $event = $this->scheduledEvents[0];
 
         $this->assertSame('blc_check_batch', $event['hook']);
-        $this->assertSame([1, true, true], $event['args']);
+        $this->assertSame([1, true, true, []], $event['args']);
     }
 
     public function test_blc_perform_check_runs_outside_rest_period(): void
@@ -571,6 +753,36 @@ class BlcScannerTest extends TestCase
         blc_perform_check(0, false);
 
         $this->assertNotSame([], $GLOBALS['wp_query_last_args'], 'A scan should start normally outside the rest window.');
+    }
+
+    public function test_blc_perform_check_targets_specific_posts_without_touching_global_state(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 101,
+            'post_title' => 'Targeted Post',
+            'post_content' => '<a href="http://ok.com/resource">Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_check(0, false, false, [101]);
+
+        $this->assertCount(1, $GLOBALS['wp_query_last_args'], 'The targeted scan should perform a single WP_Query request.');
+        $args = $GLOBALS['wp_query_last_args'][0];
+        $this->assertSame([101], $args['post__in']);
+        $this->assertSame('any', $args['post_status']);
+        $this->assertSame(1, $args['posts_per_page']);
+        $this->assertSame(1, $args['paged']);
+        $this->assertArrayNotHasKey('date_query', $args, 'Incremental filters must not apply to targeted rescans.');
+
+        $this->assertSame([], $this->scheduledEvents, 'Targeted scans should complete immediately.');
+        $this->assertSame([], $this->updatedOptions, 'Global scan metadata should remain untouched.');
     }
 
     public function test_blc_perform_check_skips_excluded_domains_and_records_failed_links(): void
@@ -1082,7 +1294,7 @@ class BlcScannerTest extends TestCase
         $event = $this->scheduledEvents[0];
         $this->assertSame($this->utcNow + 300, $event['timestamp']);
         $this->assertSame('blc_check_batch', $event['hook']);
-        $this->assertSame([0, false, false], $event['args']);
+        $this->assertSame([0, false, false, []], $event['args']);
         $this->assertSame([], $this->updatedOptions, 'No options should be updated when scan is postponed.');
         $this->assertCount(0, $wpdb->inserted, 'No database insertions should occur when load is high.');
     }
@@ -1127,7 +1339,7 @@ class BlcScannerTest extends TestCase
         $event = $this->scheduledEvents[0];
         $this->assertSame($this->utcNow + 600, $event['timestamp']);
         $this->assertSame('blc_check_batch', $event['hook']);
-        $this->assertSame([2, false, false], $event['args']);
+        $this->assertSame([2, false, false, []], $event['args']);
     }
 
     public function test_blc_perform_check_skips_malformed_urls_without_warnings(): void
@@ -1272,6 +1484,80 @@ class BlcScannerTest extends TestCase
         $this->assertSame('GET', $this->httpRequests[1]['method']);
         $this->assertCount(1, $wpdb->inserted, 'Forbidden responses should be recorded as broken links after the GET fallback.');
         $this->assertSame([], $this->scheduledEvents, 'Forbidden responses must not be retried indefinitely.');
+    }
+
+    public function test_blc_perform_check_avoids_duplicate_requests_for_identical_urls(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $firstPost = (object) [
+            'ID' => 901,
+            'post_title' => 'Duplicate Link A',
+            'post_content' => '<a href="http://duplicate.example.com/broken">Broken</a>',
+        ];
+
+        $secondPost = (object) [
+            'ID' => 902,
+            'post_title' => 'Duplicate Link B',
+            'post_content' => '<a href="http://duplicate.example.com/broken">Broken Again</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$firstPost, $secondPost],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'http://duplicate.example.com/broken', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(1, $this->httpRequests, 'Duplicate URLs should reuse the cached HTTP response.');
+        $this->assertSame('HEAD', $this->httpRequests[0]['method']);
+        $this->assertSame('http://duplicate.example.com/broken', $this->httpRequests[0]['url']);
+
+        $this->assertCount(2, $wpdb->inserted, 'Each occurrence of the broken link should be recorded.');
+        $this->assertSame([], $this->scheduledEvents, 'Definitive errors should not schedule retries.');
+        $this->assertSame(
+            $this->utcNow,
+            $this->updatedOptions['blc_last_check_time'] ?? null,
+            'Completed scans must update the last check timestamp when no retries are scheduled.'
+        );
+    }
+
+    public function test_blc_perform_check_treats_timeout_errors_as_temporary_and_schedules_retry(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 903,
+            'post_title' => 'Timeout Link',
+            'post_content' => '<a href="http://timeout.example.com/slow">Slow Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $timeoutError = new \WP_Error('http_request_failed', 'Operation timed out');
+        $this->setHttpResponse('HEAD', 'http://timeout.example.com/slow', $timeoutError);
+        $this->setHttpResponse('GET', 'http://timeout.example.com/slow', $timeoutError);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(2, $this->httpRequests, 'Timeouts should attempt both HEAD and GET before retrying.');
+        $this->assertSame('HEAD', $this->httpRequests[0]['method']);
+        $this->assertSame('GET', $this->httpRequests[1]['method']);
+        $this->assertCount(0, $wpdb->inserted, 'Temporary network errors must not be recorded as broken links.');
+        $this->assertCount(1, $this->scheduledEvents, 'A retry should be scheduled when a temporary error occurs.');
+        $this->assertSame('blc_check_batch', $this->scheduledEvents[0]['hook']);
+        $this->assertArrayNotHasKey(
+            'blc_last_check_time',
+            $this->updatedOptions,
+            'Scans that schedule retries should postpone updating the last check timestamp.'
+        );
     }
 
     public function test_blc_perform_check_normalizes_host_with_port_without_scheme(): void
@@ -1429,6 +1715,79 @@ class BlcScannerTest extends TestCase
         $this->assertSame('https://example.com/old', $wpdb->deleted[0]['where']['url']);
     }
 
+    public function test_blc_ajax_recheck_link_callback_schedules_targeted_scan(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post_id = 37;
+        Functions\when('get_post')->alias(static function (int $requested_post_id) use ($post_id) {
+            if ($requested_post_id === $post_id) {
+                return (object) ['ID' => $post_id];
+            }
+
+            return null;
+        });
+
+        $_POST = [
+            'post_id'        => (string) $post_id,
+            'url_to_recheck' => 'https://example.com/broken',
+            '_ajax_nonce'    => 'nonce',
+        ];
+
+        try {
+            blc_ajax_recheck_link_callback();
+            $this->fail('Expected wp_send_json_success to terminate execution.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('wp_send_json_success', $exception->getMessage());
+        }
+
+        $this->assertNotNull($this->ajaxResponse, 'AJAX response should be captured.');
+        $this->assertTrue($this->ajaxResponse['success'], 'AJAX call should succeed.');
+
+        $this->assertCount(1, $this->scheduledEvents, 'A targeted manual batch should be scheduled.');
+        $event = $this->scheduledEvents[0];
+        $this->assertSame('blc_manual_check_batch', $event['hook']);
+        $this->assertSame([0, false, true, [$post_id]], $event['args']);
+        $this->assertFalse($event['unique'], 'Scheduling should allow duplicate targeted scans if needed.');
+        $this->assertSame([], $wpdb->deleted, 'No database cleanup should occur when the post exists.');
+    }
+
+    public function test_blc_ajax_recheck_link_callback_purges_entry_when_post_is_missing(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        Functions\when('get_post')->alias(static function () {
+            return null;
+        });
+
+        $_POST = [
+            'post_id'        => '52',
+            'url_to_recheck' => 'https://example.com/missing',
+            '_ajax_nonce'    => 'nonce',
+        ];
+
+        try {
+            blc_ajax_recheck_link_callback();
+            $this->fail('Expected wp_send_json_success to terminate execution.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('wp_send_json_success', $exception->getMessage());
+        }
+
+        $this->assertNotNull($this->ajaxResponse, 'AJAX response should be captured.');
+        $this->assertTrue($this->ajaxResponse['success'], 'AJAX call should succeed.');
+        $this->assertSame(['purged' => true], $this->ajaxResponse['data']);
+
+        $this->assertCount(1, $wpdb->deleted, 'The orphaned record should be removed.');
+        $deletion = $wpdb->deleted[0];
+        $this->assertSame('wp_blc_broken_links', $deletion['table']);
+        $this->assertSame(52, $deletion['where']['post_id']);
+        $this->assertSame('https://example.com/missing', $deletion['where']['url']);
+        $this->assertSame('link', $deletion['where']['type']);
+        $this->assertSame([], $this->scheduledEvents, 'No scan should be scheduled when the post is missing.');
+    }
+
     public function test_blc_perform_check_batches_and_reschedules_next_batch(): void
     {
         global $wpdb;
@@ -1458,8 +1817,10 @@ class BlcScannerTest extends TestCase
         $event = $this->scheduledEvents[0];
         $this->assertSame($this->utcNow + 60, $event['timestamp']);
         $this->assertSame('blc_check_batch', $event['hook']);
-        $this->assertSame([1, true, false], $event['args']);
-        $this->assertSame([], $this->updatedOptions, 'Last check time should not be updated before the final batch.');
+        $this->assertSame([1, true, false, []], $event['args']);
+        $cacheKeyOptions = $this->updatedOptions;
+        unset($cacheKeyOptions['blc_active_link_scan_key']);
+        $this->assertSame([], $cacheKeyOptions, 'Last check time should not be updated before the final batch.');
     }
 
     public function test_blc_perform_check_normalizes_negative_delays(): void
@@ -1501,7 +1862,7 @@ class BlcScannerTest extends TestCase
         $event = $this->scheduledEvents[0];
         $this->assertSame($this->utcNow, $event['timestamp'], 'Negative delays should be coerced to zero before scheduling.');
         $this->assertSame('blc_check_batch', $event['hook']);
-        $this->assertSame([1, false, false], $event['args']);
+        $this->assertSame([1, false, false, []], $event['args']);
     }
 
     public function test_blc_perform_check_removes_entries_for_deleted_posts_before_inserting(): void
@@ -1837,6 +2198,65 @@ class BlcScannerTest extends TestCase
             $insert['data']['url']
         );
         $this->assertSame(93, $insert['data']['post_id']);
+    }
+
+    public function test_blc_perform_check_sends_email_notification_when_enabled(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_email_notifications_enabled'] = true;
+        $this->options['blc_email_recipients'] = "alerts@example.com\ninvalid";
+
+        $post = (object) [
+            'ID' => 501,
+            'post_title' => 'Broken Link Post',
+            'post_content' => '<a href="https://broken.example/path/">Broken</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'https://broken.example/path/', ['response' => ['code' => 404]]);
+        $this->setHttpResponse('GET', 'https://broken.example/path/', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, true);
+
+        $this->assertNotEmpty($this->sentEmails, 'An email notification should be sent when notifications are enabled.');
+        $email = $this->sentEmails[0];
+        $this->assertIsArray($email);
+        $this->assertStringContainsString('Rapport de scan liens', (string) $email['subject']);
+        $recipients = (array) $email['to'];
+        $this->assertContains('alerts@example.com', $recipients, 'Explicit recipients should be preserved after sanitization.');
+        $this->assertStringContainsString('1 lien cassé détecté.', (string) $email['message']);
+        $this->assertStringContainsString('https://broken.example/path/', (string) $email['message']);
+        $this->assertStringContainsString('Test Blog', (string) $email['message']);
+    }
+
+    public function test_blc_perform_check_does_not_send_email_when_notifications_disabled(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 777,
+            'post_title' => 'No Email Post',
+            'post_content' => '<a href="https://down.example/offline/">Offline</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'https://down.example/offline/', ['response' => ['code' => 404]]);
+        $this->setHttpResponse('GET', 'https://down.example/offline/', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, true);
+
+        $this->assertSame([], $this->sentEmails, 'Notifications should not be sent when the feature is disabled.');
     }
 }
 }

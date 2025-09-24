@@ -271,6 +271,511 @@ function blc_normalize_link_url($url, $site_url, $site_scheme = null, $document_
 }
 
 /**
+ * Generate a cache key identifier for the current scan session.
+ *
+ * @return string
+ */
+function blc_generate_scan_cache_key() {
+    if (function_exists('wp_generate_uuid4')) {
+        $uuid = wp_generate_uuid4();
+        if (is_string($uuid) && $uuid !== '') {
+            return $uuid;
+        }
+    }
+
+    if (function_exists('wp_unique_id')) {
+        $unique = wp_unique_id('blc_', true);
+        if (is_string($unique) && $unique !== '') {
+            return $unique;
+        }
+    }
+
+    try {
+        $fallback = bin2hex(random_bytes(16));
+        if (is_string($fallback) && $fallback !== '') {
+            return $fallback;
+        }
+    } catch (\Exception $e) {
+        // Fallback handled below.
+    }
+
+    return uniqid('blc_', true);
+}
+
+/**
+ * Build the transient name used to persist the scan cache.
+ *
+ * @param string $scan_type Scan type identifier (e.g. "link" or "image").
+ * @param string $cache_key Unique cache key for the ongoing scan.
+ *
+ * @return string
+ */
+function blc_build_scan_cache_transient_name($scan_type, $cache_key) {
+    $scan_type = (string) $scan_type;
+    if ($scan_type === '') {
+        $scan_type = 'link';
+    }
+
+    $cache_key = (string) $cache_key;
+    if ($cache_key === '') {
+        return '';
+    }
+
+    return 'blc_scan_cache_' . strtolower($scan_type) . '_' . md5($cache_key);
+}
+
+/**
+ * Retrieve the scan cache context for the current execution.
+ *
+ * @param string $scan_type Scan identifier.
+ * @param int    $batch     Current batch number.
+ *
+ * @return array{type: string, option: string, key: string, transient: string, data: array}
+ */
+function blc_get_scan_cache_context($scan_type, $batch) {
+    $scan_type = strtolower((string) $scan_type) === 'image' ? 'image' : 'link';
+    $option_name = $scan_type === 'image' ? 'blc_active_image_scan_key' : 'blc_active_link_scan_key';
+
+    $cache_key = get_option($option_name);
+    $cache_key = is_string($cache_key) ? trim($cache_key) : '';
+
+    if ($batch === 0 || $cache_key === '') {
+        if ($batch === 0 && $cache_key !== '') {
+            $previous_transient = blc_build_scan_cache_transient_name($scan_type, $cache_key);
+            if ($previous_transient !== '' && function_exists('delete_transient')) {
+                delete_transient($previous_transient);
+            }
+        }
+
+        $cache_key = blc_generate_scan_cache_key();
+        update_option($option_name, $cache_key, false);
+        $cache_data = [];
+    } else {
+        $transient_name = blc_build_scan_cache_transient_name($scan_type, $cache_key);
+        $cache_data = [];
+        if ($transient_name !== '' && function_exists('get_transient')) {
+            $stored_cache = get_transient($transient_name);
+            if (is_array($stored_cache)) {
+                $cache_data = $stored_cache;
+            }
+        }
+    }
+
+    return [
+        'type'      => $scan_type,
+        'option'    => $option_name,
+        'key'       => $cache_key,
+        'transient' => blc_build_scan_cache_transient_name($scan_type, $cache_key),
+        'data'      => $cache_data,
+    ];
+}
+
+/**
+ * Persist the scan cache to the transient API.
+ *
+ * @param array $context Scan cache context as returned by blc_get_scan_cache_context().
+ * @param array $data    Cache payload to persist.
+ *
+ * @return void
+ */
+function blc_save_scan_cache(array &$context, array $data) {
+    $context['data'] = $data;
+
+    $transient_name = isset($context['transient']) ? (string) $context['transient'] : '';
+    if ($transient_name === '' || !function_exists('set_transient')) {
+        return;
+    }
+
+    $default_expiration = defined('HOUR_IN_SECONDS') ? (int) HOUR_IN_SECONDS : 3600;
+    if (function_exists('apply_filters')) {
+        $maybe_expiration = apply_filters(
+            'blc_scan_cache_expiration',
+            $default_expiration,
+            $context['key'] ?? '',
+            $context['type'] ?? ''
+        );
+
+        if (is_int($maybe_expiration) && $maybe_expiration > 0) {
+            $default_expiration = $maybe_expiration;
+        }
+    }
+
+    set_transient($transient_name, $data, $default_expiration);
+}
+
+/**
+ * Clear the scan cache once a scan session is complete.
+ *
+ * @param array $context Scan cache context.
+ *
+ * @return void
+ */
+function blc_clear_scan_cache(array $context) {
+    $transient_name = isset($context['transient']) ? (string) $context['transient'] : '';
+    if ($transient_name !== '' && function_exists('delete_transient')) {
+        delete_transient($transient_name);
+    }
+
+    $option_name = isset($context['option']) ? (string) $context['option'] : '';
+    if ($option_name !== '') {
+        delete_option($option_name);
+    }
+}
+
+/**
+ * Normalize and validate a single email candidate.
+ *
+ * @param string $email Raw email value.
+ * @return string Normalized email address or empty string when invalid.
+ */
+function blc_normalize_email_candidate($email) {
+    $email = trim((string) $email);
+    if ($email === '') {
+        return '';
+    }
+
+    if (function_exists('sanitize_email')) {
+        $sanitized = sanitize_email($email);
+    } else {
+        $sanitized = filter_var($email, FILTER_SANITIZE_EMAIL);
+        if (!is_string($sanitized)) {
+            $sanitized = '';
+        }
+    }
+
+    if ($sanitized === '') {
+        return '';
+    }
+
+    $is_valid = false;
+    if (function_exists('is_email')) {
+        $is_valid = (bool) is_email($sanitized);
+    } else {
+        $is_valid = filter_var($sanitized, FILTER_VALIDATE_EMAIL) !== false;
+    }
+
+    return $is_valid ? $sanitized : '';
+}
+
+/**
+ * Prepare a plain-text representation of a value for email output.
+ *
+ * @param string $value Raw string value.
+ * @return string Normalized plain-text string.
+ */
+function blc_prepare_plain_text_value($value) {
+    $value = (string) $value;
+
+    if (function_exists('wp_specialchars_decode')) {
+        $value = wp_specialchars_decode($value, ENT_QUOTES);
+    } else {
+        $value = html_entity_decode($value, ENT_QUOTES, 'UTF-8');
+    }
+
+    if (function_exists('wp_strip_all_tags')) {
+        $value = wp_strip_all_tags($value, true);
+    } else {
+        $value = strip_tags($value);
+    }
+
+    $value = preg_replace('/\s+/u', ' ', $value);
+
+    return trim((string) $value);
+}
+
+/**
+ * Retrieve the recipient list for scan notifications.
+ *
+ * @param string $scan_type Scan type (link or image).
+ * @return string[] List of unique email addresses.
+ */
+function blc_get_notification_recipients($scan_type) {
+    $raw_recipients = get_option('blc_email_recipients', '');
+    $emails = [];
+
+    if (is_string($raw_recipients) && $raw_recipients !== '') {
+        $parts = preg_split('/[\r\n,;]+/', $raw_recipients, -1, PREG_SPLIT_NO_EMPTY);
+        if (is_array($parts)) {
+            foreach ($parts as $part) {
+                $normalized = blc_normalize_email_candidate($part);
+                if ($normalized !== '') {
+                    $emails[$normalized] = $normalized;
+                }
+            }
+        }
+    }
+
+    if (empty($emails)) {
+        $admin_email = get_option('admin_email');
+        $normalized_admin = blc_normalize_email_candidate($admin_email);
+        if ($normalized_admin !== '') {
+            $emails[$normalized_admin] = $normalized_admin;
+        }
+    }
+
+    if (function_exists('apply_filters')) {
+        /**
+         * Filter the list of recipients for scan notification emails.
+         *
+         * @param string[] $emails     Recipient email addresses.
+         * @param string   $scan_type  Scan type (link or image).
+         */
+        $emails = apply_filters('blc_scan_email_recipients', array_values($emails), $scan_type);
+    } else {
+        $emails = array_values($emails);
+    }
+
+    if (!is_array($emails)) {
+        return [];
+    }
+
+    $normalized_list = [];
+    foreach ($emails as $candidate) {
+        $normalized = blc_normalize_email_candidate($candidate);
+        if ($normalized !== '') {
+            $normalized_list[$normalized] = $normalized;
+        }
+    }
+
+    return array_values($normalized_list);
+}
+
+/**
+ * Collect summary information about the latest scan results.
+ *
+ * @param string $scan_type Scan type (link or image).
+ * @return array{count: int, items: array<int, array<string, mixed>>}
+ */
+function blc_collect_scan_summary($scan_type) {
+    global $wpdb;
+
+    $scan_type = ($scan_type === 'image') ? 'image' : 'link';
+    $table_name = $wpdb->prefix . 'blc_broken_links';
+
+    $count_sql = $wpdb->prepare("SELECT COUNT(*) FROM $table_name WHERE type = %s", $scan_type);
+    $count = (int) $wpdb->get_var($count_sql);
+
+    $items = [];
+    if ($count > 0) {
+        $default_limit = 5;
+        if (function_exists('apply_filters')) {
+            /**
+             * Filter the number of recent items to include in the notification email.
+             *
+             * @param int    $default_limit Default number of items.
+             * @param string $scan_type     Scan type (link or image).
+             */
+            $filtered_limit = apply_filters('blc_scan_email_items_limit', $default_limit, $scan_type);
+            if (is_int($filtered_limit) && $filtered_limit > 0) {
+                $default_limit = $filtered_limit;
+            }
+        }
+
+        $items_sql = $wpdb->prepare(
+            "SELECT id, url, anchor, post_title FROM $table_name WHERE type = %s ORDER BY id DESC LIMIT %d",
+            $scan_type,
+            $default_limit
+        );
+        $items = $wpdb->get_results($items_sql, ARRAY_A);
+        if (!is_array($items)) {
+            $items = [];
+        }
+    }
+
+    return [
+        'count' => $count,
+        'items' => $items,
+    ];
+}
+
+/**
+ * Send a notification email when a scan finishes.
+ *
+ * @param string $scan_type Scan type (link or image).
+ * @param array  $context   Additional context about the scan.
+ *
+ * @return void
+ */
+function blc_maybe_send_scan_email($scan_type, array $context = []) {
+    $enabled = (bool) get_option('blc_email_notifications_enabled', false);
+    if (!$enabled) {
+        return;
+    }
+
+    $scan_type = ($scan_type === 'image') ? 'image' : 'link';
+
+    $recipients = blc_get_notification_recipients($scan_type);
+    if (empty($recipients) || !function_exists('wp_mail')) {
+        return;
+    }
+
+    $summary = blc_collect_scan_summary($scan_type);
+
+    $site_name = '';
+    if (function_exists('get_bloginfo')) {
+        $site_name = (string) get_bloginfo('name');
+    }
+    $site_name = blc_prepare_plain_text_value($site_name);
+    if ($site_name === '') {
+        $site_name = 'WordPress';
+    }
+
+    $scan_label = ($scan_type === 'image')
+        ? __('images', 'liens-morts-detector-jlg')
+        : __('liens', 'liens-morts-detector-jlg');
+    $item_label_singular = ($scan_type === 'image')
+        ? __('image', 'liens-morts-detector-jlg')
+        : __('lien', 'liens-morts-detector-jlg');
+    $item_label_plural = ($scan_type === 'image')
+        ? __('images', 'liens-morts-detector-jlg')
+        : __('liens', 'liens-morts-detector-jlg');
+
+    $mode_label = !empty($context['is_full_scan'])
+        ? __('analyse complète', 'liens-morts-detector-jlg')
+        : __('analyse partielle', 'liens-morts-detector-jlg');
+    $trigger_label = !empty($context['is_manual'])
+        ? __('déclenchée manuellement', 'liens-morts-detector-jlg')
+        : __('programmée automatiquement', 'liens-morts-detector-jlg');
+
+    $timestamp = current_time('timestamp');
+    if (function_exists('wp_date')) {
+        $formatted_date = wp_date('Y-m-d H:i', $timestamp);
+    } else {
+        $formatted_date = date('Y-m-d H:i', $timestamp);
+    }
+
+    $lines = [];
+    $lines[] = sprintf(
+        /* translators: 1: formatted date, 2: site name, 3: scan mode label, 4: trigger label. */
+        __('Rapport du %1$s — %2$s (%3$s, %4$s)', 'liens-morts-detector-jlg'),
+        $formatted_date,
+        $site_name,
+        $mode_label,
+        $trigger_label
+    );
+
+    $count = isset($summary['count']) ? (int) $summary['count'] : 0;
+    if ($count === 0) {
+        $lines[] = sprintf(
+            /* translators: %s: item label (plural). */
+            __('Aucun %s cassé détecté.', 'liens-morts-detector-jlg'),
+            $item_label_plural
+        );
+    } elseif ($count === 1) {
+        $lines[] = sprintf(
+            /* translators: %s: item label (singular). */
+            __('1 %s cassé détecté.', 'liens-morts-detector-jlg'),
+            $item_label_singular
+        );
+    } else {
+        $lines[] = sprintf(
+            /* translators: 1: number of items, 2: item label (plural). */
+            __('%1$d %2$s cassés détectés.', 'liens-morts-detector-jlg'),
+            $count,
+            $item_label_plural
+        );
+    }
+
+    $items = isset($summary['items']) && is_array($summary['items']) ? $summary['items'] : [];
+    if (!empty($items)) {
+        $lines[] = '';
+        $lines[] = __('Extraits récents :', 'liens-morts-detector-jlg');
+        foreach ($items as $item) {
+            $post_title = blc_prepare_plain_text_value($item['post_title'] ?? '');
+            if ($post_title === '') {
+                $post_title = __('(Titre inconnu)', 'liens-morts-detector-jlg');
+            }
+
+            $url = blc_prepare_plain_text_value($item['url'] ?? '');
+            $line = sprintf('- %1$s — %2$s', $post_title, $url);
+
+            if ($scan_type === 'link') {
+                $anchor = blc_prepare_plain_text_value($item['anchor'] ?? '');
+                if ($anchor !== '' && strcasecmp($anchor, $post_title) !== 0) {
+                    $line .= sprintf(' (%s)', $anchor);
+                }
+            }
+
+            $lines[] = $line;
+        }
+    }
+
+    $dashboard_path = $scan_type === 'image'
+        ? 'admin.php?page=blc-images-dashboard'
+        : 'admin.php?page=blc-dashboard';
+    if (function_exists('admin_url')) {
+        $dashboard_url = admin_url($dashboard_path);
+        $dashboard_url = blc_prepare_plain_text_value($dashboard_url);
+        if ($dashboard_url !== '') {
+            $lines[] = '';
+            $lines[] = sprintf(
+                /* translators: %s: admin URL. */
+                __('Consultez le rapport détaillé : %s', 'liens-morts-detector-jlg'),
+                $dashboard_url
+            );
+        }
+    }
+
+    $subject = sprintf(
+        /* translators: 1: scan label, 2: site name. */
+        __('Rapport de scan %1$s – %2$s', 'liens-morts-detector-jlg'),
+        $scan_label,
+        $site_name
+    );
+
+    $message = implode("\n", $lines);
+
+    if (function_exists('apply_filters')) {
+        /**
+         * Filter the notification email subject before it is sent.
+         *
+         * @param string $subject   Email subject.
+         * @param string $scan_type Scan type (link or image).
+         * @param array  $context   Scan context.
+         * @param array  $summary   Scan summary data.
+         */
+        $subject = apply_filters('blc_scan_email_subject', $subject, $scan_type, $context, $summary);
+
+        /**
+         * Filter the notification email message before it is sent.
+         *
+         * @param string $message   Email body.
+         * @param string $scan_type Scan type (link or image).
+         * @param array  $context   Scan context.
+         * @param array  $summary   Scan summary data.
+         */
+        $message = apply_filters('blc_scan_email_message', $message, $scan_type, $context, $summary);
+    }
+
+    $headers = ['Content-Type: text/plain; charset=UTF-8'];
+    if (function_exists('apply_filters')) {
+        /**
+         * Filter the headers passed to wp_mail for scan notifications.
+         *
+         * @param array  $headers   Email headers.
+         * @param string $scan_type Scan type (link or image).
+         * @param array  $context   Scan context.
+         * @param array  $summary   Scan summary data.
+         */
+        $headers = apply_filters('blc_scan_email_headers', $headers, $scan_type, $context, $summary);
+    }
+
+    $result = wp_mail($recipients, $subject, $message, $headers);
+
+    if (function_exists('do_action')) {
+        /**
+         * Fires after a scan notification email is sent.
+         *
+         * @param string $scan_type Scan type (link or image).
+         * @param array  $context   Scan context.
+         * @param array  $summary   Scan summary data.
+         * @param bool   $result    Result of wp_mail().
+         */
+        do_action('blc_scan_email_sent', $scan_type, $context, $summary, $result);
+    }
+}
+
+/**
  * Helper to build a DOMDocument instance from raw post content.
  *
  * @param string $content Raw HTML content from the post.
@@ -312,12 +817,20 @@ function blc_create_dom_from_content($content, $charset = 'UTF-8') {
  * Fonction de scan DÉDIÉE AUX LIENS <a>.
  * Déclenchée par la planification et le bouton principal.
  */
-function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_window = false) {
+function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_window = false, $specific_post_ids = array()) {
     global $wpdb;
 
     // --- 1. Récupération des réglages ---
     $debug_mode = get_option('blc_debug_mode', false);
     if ($debug_mode) { error_log("--- Début du scan LIENS (Lot #$batch) ---"); }
+
+    if (!is_array($specific_post_ids)) {
+        $specific_post_ids = array();
+    }
+
+    $specific_post_ids = array_values(array_unique(array_filter(array_map('intval', $specific_post_ids), static function ($id) {
+        return $id > 0;
+    })));
 
     $current_hook = function_exists('current_filter') ? current_filter() : '';
     if (!$is_full_scan && $current_hook === 'blc_check_links') {
@@ -326,6 +839,12 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
     if ($current_hook === 'blc_check_links') {
         $bypass_rest_window = false;
+    }
+
+    $is_targeted_scan = !empty($specific_post_ids);
+    if ($is_targeted_scan) {
+        $bypass_rest_window = true;
+        $batch = 0;
     }
     
     $rest_start_hour_option = get_option('blc_rest_start_hour', '08');
@@ -469,7 +988,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             $next_timestamp = $current_gmt_timestamp + 60;
         }
 
-        wp_schedule_single_event($next_timestamp, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
+        wp_schedule_single_event($next_timestamp, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window, $specific_post_ids));
         return;
     }
 
@@ -488,7 +1007,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                     if ($retry_delay < 0) { $retry_delay = 0; }
 
                     if ($debug_mode) { error_log("Scan reporté : charge serveur trop élevée (" . $current_load . ")."); }
-                    wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
+                    wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window, $specific_post_ids));
                     return;
                 }
             } elseif ($debug_mode) {
@@ -512,13 +1031,42 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         );
     }
 
+    if ($is_targeted_scan) {
+        $scan_cache_context = [
+            'type'      => 'link',
+            'option'    => '',
+            'key'       => '',
+            'transient' => '',
+            'data'      => [],
+        ];
+    } else {
+        $scan_cache_context = blc_get_scan_cache_context('link', (int) $batch);
+    }
+    $scan_cache_data = isset($scan_cache_context['data']) && is_array($scan_cache_context['data'])
+        ? $scan_cache_context['data']
+        : [];
+    $scan_cache_dirty = false;
+    $scan_cache_identifier = isset($scan_cache_context['key']) && is_string($scan_cache_context['key'])
+        ? $scan_cache_context['key']
+        : '';
+
     // --- 3. Récupération des données et préparation ---
     $batch_size      = 20;
     $last_check_time = (int) get_option('blc_last_check_time', 0);
     $table_name      = $wpdb->prefix . 'blc_broken_links';
 
     $args = ['post_type' => 'any', 'post_status' => 'publish', 'posts_per_page' => $batch_size, 'paged' => $batch + 1];
-    if (!$is_full_scan && $last_check_time > 0) {
+    if ($is_targeted_scan) {
+        if (empty($specific_post_ids)) {
+            return;
+        }
+
+        $args['post__in'] = $specific_post_ids;
+        $args['orderby'] = 'post__in';
+        $args['posts_per_page'] = max(1, count($specific_post_ids));
+        $args['paged'] = 1;
+        $args['post_status'] = 'any';
+    } elseif (!$is_full_scan && $last_check_time > 0) {
         $threshold = gmdate('Y-m-d H:i:s', $last_check_time);
         $args['date_query'] = [[
             'column' => 'post_modified_gmt',
@@ -718,66 +1266,149 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                 continue;
             }
 
-            $head_request_args = [
-                'timeout'             => 5,
-                'limit_response_size' => 1024,
-                'redirection'         => 5,
-            ];
-
-            $get_request_args = [
-                'timeout'             => 10,
-                'user-agent'          => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
-                'method'              => 'GET',
-                'limit_response_size' => 131072,
-            ];
-
-            if ($scan_method === 'precise') {
-                $response = null;
-                $head_response = wp_safe_remote_head($normalized_url, $head_request_args);
-                $needs_get_fallback = false;
-                $fallback_due_to_temporary_status = false;
-
-                if (is_wp_error($head_response)) {
-                    $needs_get_fallback = true;
-                } else {
-                    $head_status = (int) wp_remote_retrieve_response_code($head_response);
-                    if (in_array($head_status, $temporary_http_statuses, true)) {
-                        $needs_get_fallback = true;
-                        $fallback_due_to_temporary_status = true;
-                    } elseif ($head_status === 403) {
-                        $needs_get_fallback = true;
-                    } elseif ($head_status === 405 || $head_status === 501) {
-                        $needs_get_fallback = true;
-                    } else {
-                        $response = $head_response;
-                    }
-                }
-
-                if ($needs_get_fallback) {
-                    $response = wp_safe_remote_get($normalized_url, $get_request_args);
-                }
-            } else {
-                $response = wp_safe_remote_head($normalized_url, $head_request_args);
-                $fallback_due_to_temporary_status = false;
-            }
-
             $should_insert_broken_link = false;
             $should_retry_later = false;
             $response_code = null;
+            $cache_entry_key = '';
+            $cache_entry = null;
+            $should_use_cache = false;
 
-            if (is_wp_error($response)) {
-                if ($fallback_due_to_temporary_status) {
-                    $should_retry_later = true;
-                } else {
-                    $should_insert_broken_link = true;
+            if ($scan_cache_identifier !== '') {
+                $cache_entry_key = md5($normalized_url);
+                if (isset($scan_cache_data[$cache_entry_key]) && is_array($scan_cache_data[$cache_entry_key])) {
+                    $cache_entry = $scan_cache_data[$cache_entry_key];
                 }
-            } else {
-                $response_code = (int) wp_remote_retrieve_response_code($response);
-                if ($response_code >= 400) {
-                    if (in_array($response_code, $temporary_http_statuses, true)) {
+            }
+
+            if (is_array($cache_entry) && isset($cache_entry['action'])) {
+                $cache_action = (string) $cache_entry['action'];
+                if ($cache_action === 'retry') {
+                    $checked_at = isset($cache_entry['checked_at']) ? (int) $cache_entry['checked_at'] : 0;
+                    $retry_ttl = apply_filters('blc_retry_cache_ttl', 300, $normalized_url, $cache_entry);
+                    if (!is_int($retry_ttl)) {
+                        $retry_ttl = 300;
+                    }
+
+                    if ($retry_ttl <= 0 || ($checked_at > 0 && (time() - $checked_at) <= $retry_ttl)) {
+                        $should_retry_later = true;
+                        $should_use_cache = true;
+                    }
+                } elseif ($cache_action === 'broken') {
+                    $should_insert_broken_link = true;
+                    $should_use_cache = true;
+                } elseif ($cache_action === 'ok') {
+                    $should_use_cache = true;
+                }
+
+                if ($should_use_cache && isset($cache_entry['response_code'])) {
+                    $response_code = (int) $cache_entry['response_code'];
+                }
+            }
+
+            $fallback_due_to_temporary_status = false;
+            if (!$should_use_cache) {
+                $head_request_args = [
+                    'timeout'             => 5,
+                    'limit_response_size' => 1024,
+                    'redirection'         => 5,
+                ];
+
+                $get_request_args = [
+                    'timeout'             => 10,
+                    'user-agent'          => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+                    'method'              => 'GET',
+                    'limit_response_size' => 131072,
+                ];
+
+                if ($scan_method === 'precise') {
+                    $response = null;
+                    $head_response = wp_safe_remote_head($normalized_url, $head_request_args);
+                    $needs_get_fallback = false;
+
+                    if (is_wp_error($head_response)) {
+                        $needs_get_fallback = true;
+                    } else {
+                        $head_status = (int) wp_remote_retrieve_response_code($head_response);
+                        if (in_array($head_status, $temporary_http_statuses, true)) {
+                            $needs_get_fallback = true;
+                            $fallback_due_to_temporary_status = true;
+                        } elseif ($head_status === 403) {
+                            $needs_get_fallback = true;
+                        } elseif ($head_status === 405 || $head_status === 501) {
+                            $needs_get_fallback = true;
+                        } else {
+                            $response = $head_response;
+                        }
+                    }
+
+                    if ($needs_get_fallback) {
+                        $response = wp_safe_remote_get($normalized_url, $get_request_args);
+                    }
+                } else {
+                    $response = wp_safe_remote_head($normalized_url, $head_request_args);
+                }
+
+                if (is_wp_error($response)) {
+                    if ($fallback_due_to_temporary_status) {
                         $should_retry_later = true;
                     } else {
-                        $should_insert_broken_link = true;
+                        $temporary_wp_error_codes = apply_filters(
+                            'blc_temporary_wp_error_codes',
+                            ['request_timed_out', 'connect_timeout', 'could_not_resolve_host', 'dns_unresolved_hostname', 'timeout']
+                        );
+                        if (!is_array($temporary_wp_error_codes)) {
+                            $temporary_wp_error_codes = [];
+                        }
+                        $temporary_wp_error_codes = array_values(array_unique(array_filter(array_map('strval', $temporary_wp_error_codes))));
+
+                        $error_code = method_exists($response, 'get_error_code') ? (string) $response->get_error_code() : '';
+                        if ($error_code !== '' && in_array($error_code, $temporary_wp_error_codes, true)) {
+                            $should_retry_later = true;
+                        } else {
+                            $temporary_wp_error_indicators = apply_filters(
+                                'blc_temporary_wp_error_indicators',
+                                ['timed out', 'timeout', 'temporarily unavailable', 'temporary failure', 'could not resolve host']
+                            );
+                            if (!is_array($temporary_wp_error_indicators)) {
+                                $temporary_wp_error_indicators = [];
+                            }
+
+                            $error_message = method_exists($response, 'get_error_message') ? (string) $response->get_error_message() : '';
+                            foreach ($temporary_wp_error_indicators as $indicator) {
+                                $indicator = (string) $indicator;
+                                if ($indicator === '') {
+                                    continue;
+                                }
+
+                                if ($error_message !== '' && stripos($error_message, $indicator) !== false) {
+                                    $should_retry_later = true;
+                                    break;
+                                }
+                            }
+
+                            if (!$should_retry_later && method_exists($response, 'get_error_data')) {
+                                $error_data = $response->get_error_data();
+                                if (is_array($error_data) && isset($error_data['status'])) {
+                                    $maybe_status = (int) $error_data['status'];
+                                    if (in_array($maybe_status, $temporary_http_statuses, true)) {
+                                        $should_retry_later = true;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!$should_retry_later) {
+                            $should_insert_broken_link = true;
+                        }
+                    }
+                } else {
+                    $response_code = (int) wp_remote_retrieve_response_code($response);
+                    if ($response_code >= 400) {
+                        if (in_array($response_code, $temporary_http_statuses, true)) {
+                            $should_retry_later = true;
+                        } else {
+                            $should_insert_broken_link = true;
+                        }
                     }
                 }
             }
@@ -794,13 +1425,13 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                         $retry_delay = 0;
                     }
 
-                    wp_schedule_single_event(
-                        time() + $retry_delay,
-                        'blc_check_batch',
-                        array($batch, $is_full_scan, $bypass_rest_window)
-                    );
-                    $temporary_retry_scheduled = true;
-                }
+                wp_schedule_single_event(
+                    time() + $retry_delay,
+                    'blc_check_batch',
+                    array($batch, $is_full_scan, $bypass_rest_window, $specific_post_ids)
+                );
+                $temporary_retry_scheduled = true;
+            }
             } elseif ($should_insert_broken_link) {
                 $wpdb->insert(
                     $table_name,
@@ -814,6 +1445,29 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                     ['%s', '%s', '%d', '%s', '%s']
                 );
             }
+
+            if (!$should_use_cache && $cache_entry_key !== '') {
+                $cache_timestamp = time();
+                $cache_action = 'ok';
+                if ($should_retry_later) {
+                    $cache_action = 'retry';
+                } elseif ($should_insert_broken_link) {
+                    $cache_action = 'broken';
+                }
+
+                $new_cache_entry = [
+                    'action'     => $cache_action,
+                    'checked_at' => $cache_timestamp,
+                ];
+
+                if ($response_code !== null) {
+                    $new_cache_entry['response_code'] = $response_code;
+                }
+
+                $scan_cache_data[$cache_entry_key] = $new_cache_entry;
+                $scan_cache_dirty = true;
+            }
+
             usleep($link_delay_ms * 1000);
         }
     }
@@ -821,15 +1475,30 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     // --- 5. Sauvegarde et planification ---
     wp_reset_postdata();
 
+    if ($scan_cache_dirty) {
+        blc_save_scan_cache($scan_cache_context, $scan_cache_data);
+        $scan_cache_dirty = false;
+    }
+
     if ($temporary_retry_scheduled) {
         if ($debug_mode) { error_log('Scan reporté : statut HTTP temporaire détecté, nouveau passage planifié.'); }
         return;
     }
 
+    if ($is_targeted_scan) {
+        if ($debug_mode) { error_log('--- Fin du scan LIENS ciblé ---'); }
+        return;
+    }
+
     if ($wp_query->max_num_pages > ($batch + 1)) {
-        wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan, $bypass_rest_window));
+        wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan, $bypass_rest_window, $specific_post_ids));
     } else {
         update_option('blc_last_check_time', current_time('timestamp', true));
+        blc_clear_scan_cache($scan_cache_context);
+        blc_maybe_send_scan_email('link', [
+            'is_full_scan' => (bool) $is_full_scan,
+            'is_manual'    => (bool) $bypass_rest_window,
+        ]);
     }
 
     if ($debug_mode) { error_log("--- Fin du scan LIENS (Lot #$batch) ---"); }
@@ -919,6 +1588,13 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
             $hosts_match_upload = !empty($image_host) && $upload_baseurl_host !== '' && strcasecmp($image_host, $upload_baseurl_host) === 0;
             if (!$hosts_match_site && !$hosts_match_upload) {
                 continue;
+            }
+            if (!$hosts_match_site && $hosts_match_upload) {
+                $is_safe_remote_host = blc_is_safe_remote_host($image_host);
+                if (!$is_safe_remote_host) {
+                    if ($debug_mode) { error_log("  -> Image ignorée (IP non autorisée) : " . $normalized_image_url); }
+                    continue;
+                }
             }
             if (empty($upload_baseurl) || empty($upload_basedir) || empty($normalized_basedir)) {
                 continue;
@@ -1012,5 +1688,9 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     } else {
         if ($debug_mode) { error_log("--- Scan IMAGES terminé ---"); }
         update_option('blc_last_image_check_time', current_time('timestamp'));
+        blc_maybe_send_scan_email('image', [
+            'is_full_scan' => true,
+            'is_manual'    => true,
+        ]);
     }
 }
