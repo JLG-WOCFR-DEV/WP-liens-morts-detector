@@ -572,7 +572,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
     $temporary_http_statuses = apply_filters(
         'blc_temporary_http_statuses',
-        [403, 429, 503]
+        [429, 503]
     );
     if (!is_array($temporary_http_statuses)) {
         $temporary_http_statuses = [];
@@ -744,6 +744,8 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                     if (in_array($head_status, $temporary_http_statuses, true)) {
                         $needs_get_fallback = true;
                         $fallback_due_to_temporary_status = true;
+                    } elseif ($head_status === 403) {
+                        $needs_get_fallback = true;
                     } elseif ($head_status === 405 || $head_status === 501) {
                         $needs_get_fallback = true;
                     } else {
