@@ -191,13 +191,29 @@ class BlcAjaxCallbacksTest extends TestCase
                         $url = (string) $_POST['url_to_unlink'];
                     }
 
+                    $occurrence_value = null;
+                    if (isset($_POST['occurrence_index'])) {
+                        $raw_occurrence = $_POST['occurrence_index'];
+                        if (is_string($raw_occurrence)) {
+                            $trimmed_occurrence = trim($raw_occurrence);
+                        } elseif (is_scalar($raw_occurrence)) {
+                            $trimmed_occurrence = trim((string) $raw_occurrence);
+                        } else {
+                            $trimmed_occurrence = '';
+                        }
+
+                        if ($trimmed_occurrence !== '') {
+                            $occurrence_value = (int) $trimmed_occurrence;
+                        }
+                    }
+
                     $row = [
                         'id' => $row_id,
                         'post_id' => $post_id,
                         'url' => $url,
                         'anchor' => '',
                         'post_title' => '',
-                        'occurrence_index' => isset($_POST['occurrence_index']) ? (int) $_POST['occurrence_index'] : 0,
+                        'occurrence_index' => $occurrence_value,
                     ];
                 }
 
@@ -240,18 +256,6 @@ class BlcAjaxCallbacksTest extends TestCase
             'empty row_id' => [
                 ['post_id' => 5, 'row_id' => '   ', 'occurrence_index' => '0', 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
                 'row_id',
-            ],
-            'missing occurrence_index' => [
-                ['post_id' => 5, 'row_id' => '2', 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
-                'occurrence_index',
-            ],
-            'null occurrence_index' => [
-                ['post_id' => 5, 'row_id' => '2', 'occurrence_index' => null, 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
-                'occurrence_index',
-            ],
-            'empty occurrence_index' => [
-                ['post_id' => 5, 'row_id' => '2', 'occurrence_index' => '   ', 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
-                'occurrence_index',
             ],
             'missing old_url' => [
                 ['post_id' => 5, 'row_id' => '2', 'occurrence_index' => '1', 'new_url' => 'http://new.com'],
@@ -324,18 +328,6 @@ class BlcAjaxCallbacksTest extends TestCase
             'empty row_id' => [
                 ['post_id' => 6, 'row_id' => '   ', 'occurrence_index' => '0', 'url_to_unlink' => 'http://old.com'],
                 'row_id',
-            ],
-            'missing occurrence_index' => [
-                ['post_id' => 6, 'row_id' => '2', 'url_to_unlink' => 'http://old.com'],
-                'occurrence_index',
-            ],
-            'null occurrence_index' => [
-                ['post_id' => 6, 'row_id' => '2', 'occurrence_index' => null, 'url_to_unlink' => 'http://old.com'],
-                'occurrence_index',
-            ],
-            'empty occurrence_index' => [
-                ['post_id' => 6, 'row_id' => '2', 'occurrence_index' => '   ', 'url_to_unlink' => 'http://old.com'],
-                'occurrence_index',
             ],
             'missing url_to_unlink' => [
                 ['post_id' => 6, 'row_id' => '2', 'occurrence_index' => '1'],
@@ -426,6 +418,47 @@ class BlcAjaxCallbacksTest extends TestCase
         }
 
         $this->assertSame($initial, libxml_use_internal_errors());
+    }
+
+    public function test_edit_link_allows_missing_occurrence_index(): void
+    {
+        $_POST['post_id'] = 32;
+        $_POST['row_id'] = '32';
+        unset($_POST['occurrence_index']);
+        $_POST['old_url'] = 'http://old.com';
+        $_POST['new_url'] = 'http://new.com';
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('current_user_can')->once()->with('edit_post', 32)->andReturn(true);
+
+        $post = (object) ['post_content' => '<a href="http://old.com">Link</a>'];
+        Functions\expect('get_post')->once()->with(32)->andReturn($post);
+
+        Functions\expect('blc_replace_link_href_in_content')->once()->withArgs(function ($content, $old, $new, $index) {
+            $this->assertSame('http://old.com', $old);
+            $this->assertSame('http://new.com', $new);
+            $this->assertNull($index);
+
+            return true;
+        })->andReturn([
+            'updated' => true,
+            'content' => '<a href="http://new.com">Link</a>',
+        ]);
+
+        Functions\expect('wp_update_post')->once()->andReturn(true);
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+
+        Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
+            throw new \Exception('success-missing');
+        });
+
+        try {
+            blc_ajax_edit_link_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $exception) {
+            $this->assertSame('success-missing', $exception->getMessage());
+        }
     }
 
     public function test_edit_link_uses_blog_charset_when_loading_dom(): void
@@ -975,6 +1008,45 @@ class BlcAjaxCallbacksTest extends TestCase
         }
 
         $this->assertSame($initial, libxml_use_internal_errors());
+    }
+
+    public function test_unlink_allows_missing_occurrence_index(): void
+    {
+        $_POST['post_id'] = 34;
+        $_POST['row_id'] = '34';
+        unset($_POST['occurrence_index']);
+        $_POST['url_to_unlink'] = 'http://old.com';
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('current_user_can')->once()->with('edit_post', 34)->andReturn(true);
+
+        $post = (object) ['post_content' => '<a href="http://old.com">Link</a>'];
+        Functions\expect('get_post')->once()->with(34)->andReturn($post);
+
+        Functions\expect('blc_remove_link_wrappers_from_content')->once()->withArgs(function ($content, $url, $index) {
+            $this->assertSame('http://old.com', $url);
+            $this->assertNull($index);
+
+            return true;
+        })->andReturn([
+            'removed' => true,
+            'content' => '<p>Updated</p>',
+        ]);
+
+        Functions\expect('wp_update_post')->once()->andReturn(true);
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+
+        Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
+            throw new \Exception('unlink-success-missing');
+        });
+
+        try {
+            blc_ajax_unlink_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $exception) {
+            $this->assertSame('unlink-success-missing', $exception->getMessage());
+        }
     }
 
     public function test_unlink_returns_success_when_post_has_been_deleted(): void
