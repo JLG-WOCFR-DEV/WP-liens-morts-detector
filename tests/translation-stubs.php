@@ -3,6 +3,15 @@
 if (!function_exists('__')) {
     function __($text, $domain = null)
     {
+        if (!isset($GLOBALS['__translation_calls'])) {
+            $GLOBALS['__translation_calls'] = [];
+        }
+
+        $GLOBALS['__translation_calls'][] = [
+            'text'   => (string) $text,
+            'domain' => $domain,
+        ];
+
         return $text;
     }
 }
