@@ -6,7 +6,7 @@ if (!defined('ABSPATH')) {
 }
 
 if (!defined('BLC_DB_VERSION')) {
-    define('BLC_DB_VERSION', '1.7.0');
+    define('BLC_DB_VERSION', '1.7.1');
 }
 
 if (!defined('BLC_TEXT_FIELD_LENGTH')) {
@@ -54,12 +54,16 @@ function blc_maybe_upgrade_database() {
     }
 
     if (!$installed_version || version_compare($installed_version, '1.6.0', '<')) {
-        blc_maybe_add_column($table_name, 'occurrence_index', 'int(10) unsigned NOT NULL DEFAULT 0');
+        blc_maybe_add_column($table_name, 'occurrence_index', 'int(10) unsigned NULL DEFAULT NULL');
     }
 
     if (!$installed_version || version_compare($installed_version, '1.7.0', '<')) {
         blc_maybe_add_column($table_name, 'scan_run_id', 'varchar(64) NULL');
         blc_maybe_add_index($table_name, 'scan_run_id', 'scan_run_id');
+    }
+
+    if (!$installed_version || version_compare($installed_version, '1.7.1', '<')) {
+        blc_maybe_make_occurrence_index_nullable($table_name);
     }
 
     update_option('blc_plugin_db_version', BLC_DB_VERSION);
@@ -198,6 +202,41 @@ function blc_migrate_column_to_text($table_name, $column_name, $target_type = 'l
  * @param string $column_name Column name to add.
  * @param string $definition Column definition (type, nullability, default, etc.).
  */
+function blc_maybe_make_occurrence_index_nullable($table_name) {
+    global $wpdb;
+
+    $table          = esc_sql($table_name);
+    $column_pattern = $wpdb->esc_like('occurrence_index');
+
+    $column_definition = $wpdb->get_row(
+        $wpdb->prepare("SHOW COLUMNS FROM `$table` LIKE %s", $column_pattern)
+    );
+
+    if (!$column_definition) {
+        return;
+    }
+
+    $current_type  = strtolower((string) ($column_definition->Type ?? ''));
+    $is_nullable   = strtolower((string) ($column_definition->Null ?? '')) === 'yes';
+    $default_value = $column_definition->Default;
+
+    $needs_alter = !$is_nullable || $default_value !== null;
+
+    if (strpos($current_type, 'int(10) unsigned') === false) {
+        $needs_alter = true;
+    }
+
+    if ($needs_alter) {
+        $wpdb->query(
+            "ALTER TABLE `$table` MODIFY `occurrence_index` int(10) unsigned NULL DEFAULT NULL"
+        );
+    }
+
+    $wpdb->query(
+        "UPDATE `$table` SET `occurrence_index` = NULL WHERE `occurrence_index` = 0"
+    );
+}
+
 function blc_maybe_add_column($table_name, $column_name, $definition) {
     global $wpdb;
 
@@ -280,7 +319,7 @@ function blc_activation() {
         post_id bigint(20) unsigned NOT NULL,
         post_title varchar(" . BLC_TEXT_FIELD_LENGTH . ") NULL,
         type varchar(20) NOT NULL,
-        occurrence_index int(10) unsigned NOT NULL DEFAULT 0,
+        occurrence_index int(10) unsigned NULL DEFAULT NULL,
         url_host varchar(191) NULL,
         is_internal tinyint(1) NOT NULL DEFAULT 0,
         PRIMARY KEY  (id),
