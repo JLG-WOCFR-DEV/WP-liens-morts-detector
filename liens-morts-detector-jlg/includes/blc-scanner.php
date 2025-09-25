@@ -589,6 +589,177 @@ function blc_create_dom_from_content($content, $charset = 'UTF-8') {
 }
 
 /**
+ * Generate a unique token used to mark dataset rows while refreshing them.
+ *
+ * @return string
+ */
+function blc_generate_scan_run_token() {
+    if (function_exists('wp_generate_uuid4')) {
+        return (string) wp_generate_uuid4();
+    }
+
+    try {
+        $bytes = random_bytes(16);
+        return bin2hex($bytes);
+    } catch (\Exception $e) {
+        return uniqid('blc_', true);
+    }
+}
+
+/**
+ * Flag existing dataset rows so they can be purged after a successful refresh.
+ *
+ * @param string     $table_name  Fully qualified table name.
+ * @param string     $type        Dataset type (e.g. 'link', 'image').
+ * @param string     $scan_run_id Unique marker for the current refresh.
+ * @param array<int>|null $post_ids Optional list of post IDs scoped to the refresh.
+ *
+ * @return int|\WP_Error Number of rows marked or WP_Error on failure.
+ */
+function blc_stage_dataset_refresh($table_name, $type, $scan_run_id, ?array $post_ids = null) {
+    if (is_array($post_ids) && count($post_ids) === 0) {
+        return 0;
+    }
+
+    global $wpdb;
+
+    $clauses = ['type = %s'];
+    $args    = [$scan_run_id, $type];
+
+    if (is_array($post_ids)) {
+        $post_ids = array_values(array_unique(array_map('intval', $post_ids)));
+        if (count($post_ids) === 0) {
+            return 0;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($post_ids), '%d'));
+        $clauses[]    = "post_id IN ($placeholders)";
+        $args         = array_merge($args, $post_ids);
+    }
+
+    $where_sql = implode(' AND ', $clauses);
+    $mark_sql  = $wpdb->prepare("UPDATE $table_name SET scan_run_id = %s WHERE $where_sql", $args);
+
+    if (!is_string($mark_sql)) {
+        return new \WP_Error('blc_stage_prepare_failed', __('Unable to prepare statement for staging dataset rows.', 'broken-link-checker'));
+    }
+
+    $result = $wpdb->query($mark_sql);
+    if ($result === false) {
+        $message = isset($wpdb->last_error) && $wpdb->last_error !== ''
+            ? $wpdb->last_error
+            : __('Failed to mark dataset rows for refresh.', 'broken-link-checker');
+
+        return new \WP_Error('blc_stage_failed', $message);
+    }
+
+    return (int) $result;
+}
+
+/**
+ * Remove staged rows after the new dataset has been stored successfully.
+ *
+ * @param string         $table_name   Fully qualified table name.
+ * @param string         $type         Dataset type stored in the table.
+ * @param string         $scan_run_id  Marker assigned during staging.
+ * @param string         $dataset_type Logical dataset type for storage bookkeeping.
+ * @param array<int>|null $post_ids    Optional subset of posts to purge.
+ *
+ * @return int|\WP_Error Number of rows deleted or WP_Error on failure.
+ */
+function blc_commit_dataset_refresh($table_name, $type, $scan_run_id, $dataset_type, ?array $post_ids = null) {
+    if (is_array($post_ids) && count($post_ids) === 0) {
+        return 0;
+    }
+
+    global $wpdb;
+
+    $clauses = ['scan_run_id = %s', 'type = %s'];
+    $args    = [$scan_run_id, $type];
+
+    if (is_array($post_ids)) {
+        $post_ids = array_values(array_unique(array_map('intval', $post_ids)));
+        if (count($post_ids) === 0) {
+            return 0;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($post_ids), '%d'));
+        $clauses[]    = "post_id IN ($placeholders)";
+        $args         = array_merge($args, $post_ids);
+    }
+
+    $where_sql = implode(' AND ', $clauses);
+
+    $size = 0;
+    if (method_exists($wpdb, 'get_var')) {
+        $size_sql = $wpdb->prepare(
+            "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0)) FROM $table_name WHERE $where_sql",
+            $args
+        );
+        if (is_string($size_sql)) {
+            $size = (int) $wpdb->get_var($size_sql);
+        }
+    }
+
+    $delete_sql = $wpdb->prepare("DELETE FROM $table_name WHERE $where_sql", $args);
+    if (!is_string($delete_sql)) {
+        return new \WP_Error('blc_commit_prepare_failed', __('Unable to prepare cleanup query for dataset refresh.', 'broken-link-checker'));
+    }
+
+    $deleted = $wpdb->query($delete_sql);
+    if ($deleted === false) {
+        $message = isset($wpdb->last_error) && $wpdb->last_error !== ''
+            ? $wpdb->last_error
+            : __('Failed to purge stale dataset entries.', 'broken-link-checker');
+
+        return new \WP_Error('blc_commit_failed', $message);
+    }
+
+    if (is_int($deleted) && $deleted > 0 && $size > 0) {
+        blc_adjust_dataset_storage_footprint($dataset_type, -$size);
+    }
+
+    return (int) $deleted;
+}
+
+/**
+ * Clear staging markers so the previous dataset remains available.
+ *
+ * @param string         $table_name  Fully qualified table name.
+ * @param string         $type        Dataset type stored in the table.
+ * @param string         $scan_run_id Marker assigned during staging.
+ * @param array<int>|null $post_ids   Optional subset of posts to restore.
+ */
+function blc_restore_dataset_refresh($table_name, $type, $scan_run_id, ?array $post_ids = null) {
+    if (is_array($post_ids) && count($post_ids) === 0) {
+        return;
+    }
+
+    global $wpdb;
+
+    $clauses = ['scan_run_id = %s', 'type = %s'];
+    $args    = [$scan_run_id, $type];
+
+    if (is_array($post_ids)) {
+        $post_ids = array_values(array_unique(array_map('intval', $post_ids)));
+        if (count($post_ids) === 0) {
+            return;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($post_ids), '%d'));
+        $clauses[]    = "post_id IN ($placeholders)";
+        $args         = array_merge($args, $post_ids);
+    }
+
+    $where_sql   = implode(' AND ', $clauses);
+    $restore_sql = $wpdb->prepare("UPDATE $table_name SET scan_run_id = NULL WHERE $where_sql", $args);
+
+    if (is_string($restore_sql)) {
+        $wpdb->query($restore_sql);
+    }
+}
+
+/**
  * Fonction de scan DÉDIÉE AUX LIENS <a>.
  * Déclenchée par la planification et le bouton principal.
  */
@@ -856,25 +1027,17 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         blc_adjust_dataset_storage_footprint('link', -$cleanup_size);
     }
 
-    $post_ids_in_batch = wp_list_pluck($posts, 'ID');
+    $post_ids_in_batch = array_map('intval', wp_list_pluck($posts, 'ID'));
+    $post_ids_in_batch = array_values(array_unique(array_filter($post_ids_in_batch, static function ($value) {
+        return $value > 0;
+    })));
+
+    $scan_run_token = '';
     if (!empty($post_ids_in_batch)) {
-        $post_ids_in_batch = array_map('intval', $post_ids_in_batch);
-        $placeholders = implode(',', array_fill(0, count($post_ids_in_batch), '%d'));
-        $delete_sql = "DELETE FROM $table_name WHERE post_id IN ($placeholders) AND type = %s";
-        $size_to_remove = 0;
-        if (method_exists($wpdb, 'get_var')) {
-            $size_to_remove = (int) $wpdb->get_var(
-                $wpdb->prepare(
-                    "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0))
-                     FROM $table_name
-                     WHERE post_id IN ($placeholders) AND type = %s",
-                    array_merge($post_ids_in_batch, ['link'])
-                )
-            );
-        }
-        $deleted_rows = $wpdb->query($wpdb->prepare($delete_sql, array_merge($post_ids_in_batch, ['link'])));
-        if ($deleted_rows && $size_to_remove > 0) {
-            blc_adjust_dataset_storage_footprint('link', -$size_to_remove);
+        $scan_run_token = blc_generate_scan_run_token();
+        $stage_result = blc_stage_dataset_refresh($table_name, 'link', $scan_run_token, $post_ids_in_batch);
+        if (is_wp_error($stage_result)) {
+            return $stage_result;
         }
     }
 
@@ -924,21 +1087,32 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
     $temporary_retry_scheduled = false;
 
-    foreach ($posts as $post) {
-        if ($debug_mode) { error_log("Analyse LIENS pour : '" . $post->post_title . "'"); }
+    $batch_exception = null;
+    $batch_wp_error = null;
 
-        $permalink = '';
-        if (function_exists('get_permalink')) {
-            $maybe_permalink = get_permalink($post);
-            if (is_string($maybe_permalink)) {
-                $permalink = $maybe_permalink;
+    foreach ($posts as $post) {
+        try {
+            if ($debug_mode) { error_log("Analyse LIENS pour : '" . $post->post_title . "'"); }
+
+            $permalink = '';
+            if (function_exists('get_permalink')) {
+                $maybe_permalink = get_permalink($post);
+                if (is_string($maybe_permalink)) {
+                    $permalink = $maybe_permalink;
+                }
             }
-        }
 
         $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
 
         $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
         if (!$dom instanceof DOMDocument) {
+            if ($scan_run_token !== '') {
+                $commit_result = blc_commit_dataset_refresh($table_name, 'link', $scan_run_token, 'link', [$post->ID]);
+                if (is_wp_error($commit_result)) {
+                    $batch_wp_error = $commit_result;
+                    break;
+                }
+            }
             continue;
         }
 
@@ -1298,6 +1472,31 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                 $scan_cache_dirty = true;
             }
         }
+
+        } catch (\Throwable $caught_exception) {
+            $batch_exception = $caught_exception;
+            break;
+        }
+
+        if ($scan_run_token !== '') {
+            $commit_result = blc_commit_dataset_refresh($table_name, 'link', $scan_run_token, 'link', [$post->ID]);
+            if (is_wp_error($commit_result)) {
+                $batch_wp_error = $commit_result;
+                break;
+            }
+        }
+    }
+
+    if ($scan_run_token !== '' && ($batch_exception !== null || $batch_wp_error instanceof \WP_Error)) {
+        blc_restore_dataset_refresh($table_name, 'link', $scan_run_token);
+    }
+
+    if ($batch_exception instanceof \Throwable) {
+        throw $batch_exception;
+    }
+
+    if ($batch_wp_error instanceof \WP_Error) {
+        return $batch_wp_error;
     }
 
     // --- 5. Sauvegarde et planification ---
@@ -1389,27 +1588,28 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
         }
     }
 
-    // Si c'est le premier lot, on nettoie les anciens résultats
-    if ($batch === 0) {
-        $image_cleanup_size = 0;
-        if (method_exists($wpdb, 'get_var')) {
-            $image_cleanup_size = (int) $wpdb->get_var(
-                "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0))
-                 FROM $table_name
-                 WHERE type = 'image'"
-            );
-        }
-        $deleted_images = $wpdb->query("DELETE FROM $table_name WHERE type = 'image'");
-        if ($deleted_images && $image_cleanup_size > 0) {
-            blc_adjust_dataset_storage_footprint('image', -$image_cleanup_size);
-        }
-    }
-
     $batch_size = 20;
     $args = ['post_type' => 'any', 'post_status' => 'publish', 'posts_per_page' => $batch_size, 'paged' => $batch + 1];
     $query = new WP_Query($args);
     $posts = $query->posts;
     $checked_local_paths = [];
+
+    $post_ids_in_batch = array_map('intval', wp_list_pluck($posts, 'ID'));
+    $post_ids_in_batch = array_values(array_unique(array_filter($post_ids_in_batch, static function ($value) {
+        return $value > 0;
+    })));
+
+    $scan_run_token = '';
+    if (!empty($post_ids_in_batch)) {
+        $scan_run_token = blc_generate_scan_run_token();
+        $stage_result = blc_stage_dataset_refresh($table_name, 'image', $scan_run_token, $post_ids_in_batch);
+        if (is_wp_error($stage_result)) {
+            if ($lock_token !== '') {
+                blc_release_image_scan_lock($lock_token);
+            }
+            return $stage_result;
+        }
+    }
 
     $upload_dir_info = wp_upload_dir();
     $upload_baseurl = isset($upload_dir_info['baseurl']) ? trailingslashit($upload_dir_info['baseurl']) : '';
@@ -1439,15 +1639,26 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     $blog_charset = get_bloginfo('charset');
     if (empty($blog_charset)) { $blog_charset = 'UTF-8'; }
 
+    $batch_exception = null;
+    $batch_wp_error = null;
+
     foreach ($posts as $post) {
-        if ($debug_mode) { error_log("Analyse IMAGES pour : '" . $post->post_title . "'"); }
+        try {
+            if ($debug_mode) { error_log("Analyse IMAGES pour : '" . $post->post_title . "'"); }
 
-        $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
+            $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
 
-        $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
-        if (!$dom instanceof DOMDocument) {
-            continue;
-        }
+            $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
+            if (!$dom instanceof DOMDocument) {
+                if ($scan_run_token !== '') {
+                    $commit_result = blc_commit_dataset_refresh($table_name, 'image', $scan_run_token, 'image', [$post->ID]);
+                    if (is_wp_error($commit_result)) {
+                        $batch_wp_error = $commit_result;
+                        break;
+                    }
+                }
+                continue;
+            }
 
         $permalink = get_permalink($post);
 
@@ -1581,6 +1792,37 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                 blc_adjust_dataset_storage_footprint('image', $row_bytes);
             }
         }
+
+        } catch (\Throwable $caught_exception) {
+            $batch_exception = $caught_exception;
+            break;
+        }
+
+        if ($scan_run_token !== '') {
+            $commit_result = blc_commit_dataset_refresh($table_name, 'image', $scan_run_token, 'image', [$post->ID]);
+            if (is_wp_error($commit_result)) {
+                $batch_wp_error = $commit_result;
+                break;
+            }
+        }
+    }
+
+    if ($scan_run_token !== '' && ($batch_exception !== null || $batch_wp_error instanceof \WP_Error)) {
+        blc_restore_dataset_refresh($table_name, 'image', $scan_run_token);
+    }
+
+    if ($batch_exception instanceof \Throwable) {
+        if ($lock_token !== '') {
+            blc_release_image_scan_lock($lock_token);
+        }
+        throw $batch_exception;
+    }
+
+    if ($batch_wp_error instanceof \WP_Error) {
+        if ($lock_token !== '') {
+            blc_release_image_scan_lock($lock_token);
+        }
+        return $batch_wp_error;
     }
 
     wp_reset_postdata();

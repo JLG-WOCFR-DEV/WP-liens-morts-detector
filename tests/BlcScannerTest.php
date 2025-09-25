@@ -39,6 +39,16 @@ namespace {
         }
     }
 
+    if (!defined('ARRAY_A')) {
+        define('ARRAY_A', 'ARRAY_A');
+    }
+    if (!defined('ARRAY_N')) {
+        define('ARRAY_N', 'ARRAY_N');
+    }
+    if (!defined('OBJECT')) {
+        define('OBJECT', 'OBJECT');
+    }
+
     if (!class_exists('WP_Query')) {
         class WP_Query
         {
@@ -429,10 +439,19 @@ class BlcScannerTest extends TestCase
             public array $deleted = [];
             /** @var array<int, array<string, mixed>> */
             public array $selectedRows = [];
+            /** @var array<int, mixed> */
+            public array $queryResults = [];
+            /** @var array<int, mixed> */
+            public array $getVarResults = [];
+            public string $last_error = '';
 
             public function query(string $sql)
             {
                 $this->queries[] = ['sql' => $sql];
+                if (!empty($this->queryResults)) {
+                    return array_shift($this->queryResults);
+                }
+
                 return true;
             }
 
@@ -446,6 +465,16 @@ class BlcScannerTest extends TestCase
             {
                 $this->deleted[] = ['table' => $table, 'where' => $where, 'formats' => $formats];
                 return 1;
+            }
+
+            public function get_var(string $query)
+            {
+                $this->queries[] = ['sql' => $query, 'type' => 'get_var'];
+                if (!empty($this->getVarResults)) {
+                    return array_shift($this->getVarResults);
+                }
+
+                return 0;
             }
 
             public function get_row(string $query, $output = ARRAY_A)
@@ -1635,7 +1664,19 @@ class BlcScannerTest extends TestCase
         $this->assertSame(1, $args['paged']);
         $this->assertSame(20, $args['posts_per_page']);
 
-        $this->assertCount(2, $wpdb->queries, 'Existing entries for the batch should be cleared.');
+        $markQueryFound = false;
+        $deleteQueryFound = false;
+        foreach ($wpdb->queries as $query) {
+            $sql = $query['sql'] ?? '';
+            if (strpos($sql, 'SET scan_run_id') !== false && strpos($sql, "type = 'link'") !== false) {
+                $markQueryFound = true;
+            }
+            if (strpos($sql, 'DELETE FROM wp_blc_broken_links') !== false && strpos($sql, 'scan_run_id') !== false && strpos($sql, "type = 'link'") !== false) {
+                $deleteQueryFound = true;
+            }
+        }
+        $this->assertTrue($markQueryFound, 'Existing link rows should be staged before scheduling the next batch.');
+        $this->assertTrue($deleteQueryFound, 'Stale link rows must be purged for completed posts.');
         $this->assertCount(0, $wpdb->inserted, 'No broken links should be recorded for healthy responses.');
         $this->assertCount(1, $this->scheduledEvents, 'Next batch should be scheduled.');
         $event = $this->scheduledEvents[0];
@@ -1724,6 +1765,194 @@ class BlcScannerTest extends TestCase
         $this->assertNotEmpty($wpdb->inserted, 'Broken links should continue to be recorded after cleanup.');
     }
 
+    public function test_blc_perform_check_marks_rows_before_processing(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 501,
+            'post_title' => 'Marked Post',
+            'post_content' => '<a href="http://mark.example.com/broken">Broken Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'http://mark.example.com/broken', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $markQueryFound = false;
+        $deleteQueryFound = false;
+        foreach ($wpdb->queries as $query) {
+            $sql = $query['sql'] ?? '';
+            if (strpos($sql, 'SET scan_run_id') !== false && strpos($sql, "type = 'link'") !== false) {
+                $markQueryFound = true;
+            }
+            if (strpos($sql, 'DELETE FROM wp_blc_broken_links') !== false && strpos($sql, 'scan_run_id') !== false && strpos($sql, "type = 'link'") !== false) {
+                $deleteQueryFound = true;
+            }
+        }
+
+        $this->assertTrue($markQueryFound, 'Existing link rows should be staged before recomputation.');
+        $this->assertTrue($deleteQueryFound, 'Stale link rows must be purged after successful recomputation.');
+    }
+
+    public function test_blc_perform_check_restores_markers_when_interrupted(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 502,
+            'post_title' => 'Interrupted Post',
+            'post_content' => '<a href="http://interrupt.example.com/broken">Broken Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        Functions\when('wp_remote_head')->alias(function () {
+            throw new \RuntimeException('link interruption');
+        });
+        Functions\when('wp_safe_remote_head')->alias(function () {
+            throw new \RuntimeException('link interruption');
+        });
+        Functions\when('wp_safe_remote_get')->alias(function () {
+            throw new \RuntimeException('link interruption');
+        });
+
+        try {
+            blc_perform_check(0, false);
+            $this->fail('Expected interruption to bubble up.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('link interruption', $exception->getMessage());
+        }
+
+        $restoreQueryFound = false;
+        $deleteQueryFound = false;
+        foreach ($wpdb->queries as $query) {
+            $sql = $query['sql'] ?? '';
+            if (strpos($sql, 'SET scan_run_id = NULL') !== false && strpos($sql, "type = 'link'") !== false) {
+                $restoreQueryFound = true;
+            }
+            if (strpos($sql, 'DELETE FROM wp_blc_broken_links') !== false && strpos($sql, 'scan_run_id') !== false && strpos($sql, "type = 'link'") !== false) {
+                $deleteQueryFound = true;
+            }
+        }
+
+        $this->assertTrue($restoreQueryFound, 'Marked link rows should be restored after an interruption.');
+        $this->assertFalse($deleteQueryFound, 'Stale link rows must not be purged when the batch fails.');
+
+        Functions\when('wp_remote_head')->alias(function (string $url, array $args = []) {
+            return $this->mockHttpRequest('HEAD', $url, $args);
+        });
+        Functions\when('wp_safe_remote_head')->alias(function (string $url, array $args = []) {
+            return $this->mockHttpRequest('HEAD', $url, $args);
+        });
+        Functions\when('wp_safe_remote_get')->alias(function (string $url, array $args = []) {
+            return $this->mockHttpRequest('GET', $url, $args);
+        });
+    }
+
+    public function test_blc_perform_check_returns_wp_error_when_commit_fails(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+        $wpdb->queryResults = [true, true, false, true];
+        $wpdb->getVarResults = [0, 128];
+        $wpdb->last_error = 'Simulated failure';
+
+        $post = (object) [
+            'ID' => 503,
+            'post_title' => 'Commit Failure Post',
+            'post_content' => '<a href="http://failure.example.com/broken">Broken Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'http://failure.example.com/broken', ['response' => ['code' => 404]]);
+
+        $result = blc_perform_check(0, false);
+
+        $this->assertInstanceOf(\WP_Error::class, $result, 'Commit failures should surface as WP_Error.');
+        $this->assertSame('Simulated failure', $result->get_error_message(), 'Database error should be propagated.');
+
+        $restoreQueryFound = false;
+        foreach ($wpdb->queries as $query) {
+            $sql = $query['sql'] ?? '';
+            if (strpos($sql, 'SET scan_run_id = NULL') !== false && strpos($sql, "type = 'link'") !== false) {
+                $restoreQueryFound = true;
+                break;
+            }
+        }
+
+        $this->assertTrue($restoreQueryFound, 'Markers should be restored after a failed commit.');
+    }
+
+    public function test_blc_perform_image_check_restores_markers_when_interrupted(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 504,
+            'post_title' => 'Interrupted Image Post',
+            'post_content' => '<img src="https://example.com/wp-content/uploads/2024/05/missing-image.jpg" />',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        Functions\when('get_permalink')->alias(function () {
+            throw new \RuntimeException('image interruption');
+        });
+
+        try {
+            blc_perform_image_check(0, true);
+            $this->fail('Expected interruption during image scan.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('image interruption', $exception->getMessage());
+        }
+
+        $restoreQueryFound = false;
+        $deleteQueryFound = false;
+        foreach ($wpdb->queries as $query) {
+            $sql = $query['sql'] ?? '';
+            if (strpos($sql, 'SET scan_run_id = NULL') !== false && strpos($sql, "type = 'image'") !== false) {
+                $restoreQueryFound = true;
+            }
+            if (strpos($sql, 'DELETE FROM wp_blc_broken_links') !== false && strpos($sql, 'scan_run_id') !== false && strpos($sql, "type = 'image'") !== false) {
+                $deleteQueryFound = true;
+            }
+        }
+
+        $this->assertTrue($restoreQueryFound, 'Image markers should be restored after an interruption.');
+        $this->assertFalse($deleteQueryFound, 'Stale image rows must not be purged when the batch fails.');
+
+        Functions\when('get_permalink')->alias(function ($post = null) {
+            if (is_object($post) && isset($post->ID)) {
+                return 'https://example.com/post-' . $post->ID . '/';
+            }
+
+            if (is_numeric($post)) {
+                return 'https://example.com/post-' . ((int) $post) . '/';
+            }
+
+            return 'https://example.com/post/';
+        });
+    }
+
     public function test_blc_perform_image_check_cleans_table_and_reschedules(): void
     {
         global $wpdb;
@@ -1743,7 +1972,20 @@ class BlcScannerTest extends TestCase
 
         blc_perform_image_check(0, true);
 
-        $this->assertCount(1, $wpdb->queries, 'Image results table should be cleared at first batch.');
+        $markQueryFound = false;
+        $deleteQueryFound = false;
+        foreach ($wpdb->queries as $query) {
+            $sql = $query['sql'] ?? '';
+            if (strpos($sql, 'SET scan_run_id') !== false && strpos($sql, "type = 'image'") !== false) {
+                $markQueryFound = true;
+            }
+            if (strpos($sql, 'DELETE FROM wp_blc_broken_links') !== false && strpos($sql, 'scan_run_id') !== false && strpos($sql, "type = 'image'") !== false) {
+                $deleteQueryFound = true;
+            }
+        }
+
+        $this->assertTrue($markQueryFound, 'Image results should be staged before recomputation.');
+        $this->assertTrue($deleteQueryFound, 'Stale image rows must be purged after successful recomputation.');
         $this->assertCount(1, $wpdb->inserted, 'Missing local image should be recorded.');
         $insert = $wpdb->inserted[0];
         $this->assertSame('image', $insert['data']['type']);
