@@ -942,6 +942,8 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             continue;
         }
 
+        $occurrence_counters = [];
+
         foreach ($dom->getElementsByTagName('a') as $link_node) {
             $original_url = trim(wp_kses_decode_entities($link_node->getAttribute('href')));
             if ($original_url === '') { continue; }
@@ -967,6 +969,13 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             }
 
             if (empty($parsed_url['scheme']) || !in_array($parsed_url['scheme'], ['http', 'https'], true)) { continue; }
+
+            $counter_key = $url_for_storage;
+            if (!isset($occurrence_counters[$counter_key])) {
+                $occurrence_counters[$counter_key] = 0;
+            }
+            $occurrence_index = $occurrence_counters[$counter_key];
+            $occurrence_counters[$counter_key]++;
 
             if ($upload_basedir && $upload_base_host && isset($parsed_url['host']) && isset($parsed_url['path'])) {
                 if (strcasecmp($upload_base_host, $parsed_url['host']) === 0 && $upload_base_path !== '' && strpos($parsed_url['path'], $upload_base_path) === 0) {
@@ -999,10 +1008,11 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                                 'post_id'     => $post->ID,
                                 'post_title'  => $post_title_for_storage,
                                 'type'        => 'link',
+                                'occurrence_index' => $occurrence_index,
                                 'url_host'    => $metadata['host'],
                                 'is_internal' => $metadata['is_internal'],
                             ],
-                            ['%s', '%s', '%d', '%s', '%s', '%s', '%d']
+                            ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d']
                         );
                         if ($inserted) {
                             blc_adjust_dataset_storage_footprint('link', $row_bytes);
@@ -1057,10 +1067,11 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                             'post_id'     => $post->ID,
                             'post_title'  => $post_title_for_storage,
                             'type'        => 'link',
+                            'occurrence_index' => $occurrence_index,
                             'url_host'    => $metadata['host'],
                             'is_internal' => $metadata['is_internal'],
                         ],
-                        ['%s', '%s', '%d', '%s', '%s', '%s', '%d']
+                        ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d']
                     );
                     if ($inserted) {
                         blc_adjust_dataset_storage_footprint('link', $row_bytes);
@@ -1254,10 +1265,11 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                         'post_id'     => $post->ID,
                         'post_title'  => $post_title_for_storage,
                         'type'        => 'link',
+                        'occurrence_index' => $occurrence_index,
                         'url_host'    => $metadata['host'],
                         'is_internal' => $metadata['is_internal'],
                     ],
-                    ['%s', '%s', '%d', '%s', '%s', '%s', '%d']
+                    ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d']
                 );
                 if ($inserted) {
                     blc_adjust_dataset_storage_footprint('link', $row_bytes);

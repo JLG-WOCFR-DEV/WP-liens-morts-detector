@@ -1,6 +1,15 @@
 <?php
 
-namespace Tests;
+namespace {
+    if (!function_exists('__')) {
+        function __($text, $domain = null)
+        {
+            return (string) $text;
+        }
+    }
+}
+
+namespace Tests {
 
 use PHPUnit\Framework\TestCase;
 use Brain\Monkey;
@@ -16,6 +25,10 @@ class BlcAjaxCallbacksTest extends TestCase
 
         if (!defined('ABSPATH')) {
             define('ABSPATH', __DIR__ . '/../');
+        }
+
+        if (!defined('ARRAY_A')) {
+            define('ARRAY_A', 'ARRAY_A');
         }
 
         Functions\when('register_activation_hook')->justReturn();
@@ -95,6 +108,9 @@ class BlcAjaxCallbacksTest extends TestCase
         });
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/liens-morts-detector-jlg.php';
+
+        $_POST['row_id'] = '1';
+        $_POST['occurrence_index'] = '0';
     }
 
     protected function tearDown(): void
@@ -106,43 +122,159 @@ class BlcAjaxCallbacksTest extends TestCase
         $wpdb = null;
     }
 
+    private function createAjaxWpdbStub(?callable $get_row_callback = null): object
+    {
+        return new class($get_row_callback) {
+            public $prefix = '';
+            public $delete_args = null;
+            public $delete_calls = [];
+            public $delete_return_value = true;
+            public $get_row_result = null;
+            private $get_row_callback;
+
+            public function __construct(?callable $get_row_callback)
+            {
+                $this->get_row_callback = $get_row_callback;
+            }
+
+            public function prepare($query, ...$args)
+            {
+                if (isset($args[0]) && is_array($args[0])) {
+                    $args = $args[0];
+                }
+
+                if (empty($args)) {
+                    return $query;
+                }
+
+                $replacements = array_map(function ($value) {
+                    if (is_int($value) || is_float($value)) {
+                        return $value;
+                    }
+
+                    if ($value === null) {
+                        return 'NULL';
+                    }
+
+                    return "'" . addslashes((string) $value) . "'";
+                }, $args);
+
+                return vsprintf($query, $replacements);
+            }
+
+            public function delete($table, $where, $formats)
+            {
+                $args = [$table, $where, $formats];
+                $this->delete_args = $args;
+                $this->delete_calls[] = $args;
+
+                return $this->delete_return_value;
+            }
+
+            public function get_row($query, $output = ARRAY_A)
+            {
+                if ($this->get_row_callback) {
+                    $row = call_user_func($this->get_row_callback, $query, $output);
+                } elseif ($this->get_row_result !== null) {
+                    $row = $this->get_row_result;
+                } else {
+                    $row_id = isset($_POST['row_id']) ? (int) $_POST['row_id'] : 0;
+                    if ($row_id <= 0) {
+                        return null;
+                    }
+
+                    $post_id = isset($_POST['post_id']) ? (int) $_POST['post_id'] : 0;
+                    $url = '';
+                    if (isset($_POST['old_url'])) {
+                        $url = (string) $_POST['old_url'];
+                    } elseif (isset($_POST['url_to_unlink'])) {
+                        $url = (string) $_POST['url_to_unlink'];
+                    }
+
+                    $row = [
+                        'id' => $row_id,
+                        'post_id' => $post_id,
+                        'url' => $url,
+                        'anchor' => '',
+                        'post_title' => '',
+                        'occurrence_index' => isset($_POST['occurrence_index']) ? (int) $_POST['occurrence_index'] : 0,
+                    ];
+                }
+
+                if ($row === null) {
+                    return null;
+                }
+
+                if ($output === ARRAY_A) {
+                    return is_array($row) ? $row : (array) $row;
+                }
+
+                return is_object($row) ? $row : (object) $row;
+            }
+        };
+    }
+
     public function editLinkMissingParamProvider(): array
     {
         return [
             'missing post_id' => [
-                ['old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
+                ['row_id' => '1', 'occurrence_index' => '0', 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
                 'post_id',
             ],
             'null post_id' => [
-                ['post_id' => null, 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
+                ['post_id' => null, 'row_id' => '1', 'occurrence_index' => '0', 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
                 'post_id',
             ],
             'empty post_id' => [
-                ['post_id' => '   ', 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
+                ['post_id' => '   ', 'row_id' => '1', 'occurrence_index' => '0', 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
                 'post_id',
             ],
+            'missing row_id' => [
+                ['post_id' => 5, 'occurrence_index' => '0', 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
+                'row_id',
+            ],
+            'null row_id' => [
+                ['post_id' => 5, 'row_id' => null, 'occurrence_index' => '0', 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
+                'row_id',
+            ],
+            'empty row_id' => [
+                ['post_id' => 5, 'row_id' => '   ', 'occurrence_index' => '0', 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
+                'row_id',
+            ],
+            'missing occurrence_index' => [
+                ['post_id' => 5, 'row_id' => '2', 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
+                'occurrence_index',
+            ],
+            'null occurrence_index' => [
+                ['post_id' => 5, 'row_id' => '2', 'occurrence_index' => null, 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
+                'occurrence_index',
+            ],
+            'empty occurrence_index' => [
+                ['post_id' => 5, 'row_id' => '2', 'occurrence_index' => '   ', 'old_url' => 'http://old.com', 'new_url' => 'http://new.com'],
+                'occurrence_index',
+            ],
             'missing old_url' => [
-                ['post_id' => 5, 'new_url' => 'http://new.com'],
+                ['post_id' => 5, 'row_id' => '2', 'occurrence_index' => '1', 'new_url' => 'http://new.com'],
                 'old_url',
             ],
             'null old_url' => [
-                ['post_id' => 5, 'old_url' => null, 'new_url' => 'http://new.com'],
+                ['post_id' => 5, 'row_id' => '2', 'occurrence_index' => '1', 'old_url' => null, 'new_url' => 'http://new.com'],
                 'old_url',
             ],
             'empty old_url' => [
-                ['post_id' => 5, 'old_url' => '   ', 'new_url' => 'http://new.com'],
+                ['post_id' => 5, 'row_id' => '2', 'occurrence_index' => '1', 'old_url' => '   ', 'new_url' => 'http://new.com'],
                 'old_url',
             ],
             'missing new_url' => [
-                ['post_id' => 5, 'old_url' => 'http://old.com'],
+                ['post_id' => 5, 'row_id' => '2', 'occurrence_index' => '1', 'old_url' => 'http://old.com'],
                 'new_url',
             ],
             'null new_url' => [
-                ['post_id' => 5, 'old_url' => 'http://old.com', 'new_url' => null],
+                ['post_id' => 5, 'row_id' => '2', 'occurrence_index' => '1', 'old_url' => 'http://old.com', 'new_url' => null],
                 'new_url',
             ],
             'empty new_url' => [
-                ['post_id' => 5, 'old_url' => 'http://old.com', 'new_url' => '   '],
+                ['post_id' => 5, 'row_id' => '2', 'occurrence_index' => '1', 'old_url' => 'http://old.com', 'new_url' => '   '],
                 'new_url',
             ],
         ];
@@ -170,27 +302,51 @@ class BlcAjaxCallbacksTest extends TestCase
     {
         return [
             'missing post_id' => [
-                ['url_to_unlink' => 'http://old.com'],
+                ['row_id' => '1', 'occurrence_index' => '0', 'url_to_unlink' => 'http://old.com'],
                 'post_id',
             ],
             'null post_id' => [
-                ['post_id' => null, 'url_to_unlink' => 'http://old.com'],
+                ['post_id' => null, 'row_id' => '1', 'occurrence_index' => '0', 'url_to_unlink' => 'http://old.com'],
                 'post_id',
             ],
             'empty post_id' => [
-                ['post_id' => '   ', 'url_to_unlink' => 'http://old.com'],
+                ['post_id' => '   ', 'row_id' => '1', 'occurrence_index' => '0', 'url_to_unlink' => 'http://old.com'],
                 'post_id',
             ],
+            'missing row_id' => [
+                ['post_id' => 6, 'occurrence_index' => '0', 'url_to_unlink' => 'http://old.com'],
+                'row_id',
+            ],
+            'null row_id' => [
+                ['post_id' => 6, 'row_id' => null, 'occurrence_index' => '0', 'url_to_unlink' => 'http://old.com'],
+                'row_id',
+            ],
+            'empty row_id' => [
+                ['post_id' => 6, 'row_id' => '   ', 'occurrence_index' => '0', 'url_to_unlink' => 'http://old.com'],
+                'row_id',
+            ],
+            'missing occurrence_index' => [
+                ['post_id' => 6, 'row_id' => '2', 'url_to_unlink' => 'http://old.com'],
+                'occurrence_index',
+            ],
+            'null occurrence_index' => [
+                ['post_id' => 6, 'row_id' => '2', 'occurrence_index' => null, 'url_to_unlink' => 'http://old.com'],
+                'occurrence_index',
+            ],
+            'empty occurrence_index' => [
+                ['post_id' => 6, 'row_id' => '2', 'occurrence_index' => '   ', 'url_to_unlink' => 'http://old.com'],
+                'occurrence_index',
+            ],
             'missing url_to_unlink' => [
-                ['post_id' => 6],
+                ['post_id' => 6, 'row_id' => '2', 'occurrence_index' => '1'],
                 'url_to_unlink',
             ],
             'null url_to_unlink' => [
-                ['post_id' => 6, 'url_to_unlink' => null],
+                ['post_id' => 6, 'row_id' => '2', 'occurrence_index' => '1', 'url_to_unlink' => null],
                 'url_to_unlink',
             ],
             'empty url_to_unlink' => [
-                ['post_id' => 6, 'url_to_unlink' => '   '],
+                ['post_id' => 6, 'row_id' => '2', 'occurrence_index' => '1', 'url_to_unlink' => '   '],
                 'url_to_unlink',
             ],
         ];
@@ -217,15 +373,15 @@ class BlcAjaxCallbacksTest extends TestCase
     public function test_edit_link_denied_for_user_without_permission(): void
     {
         $_POST['post_id'] = 1;
+        $_POST['row_id'] = '1';
+        $_POST['occurrence_index'] = '0';
         $_POST['old_url'] = 'http://old.com';
         $_POST['new_url'] = 'http://new.com';
 
         Functions\when('check_ajax_referer')->justReturn(true);
         Functions\expect('current_user_can')->once()->with('edit_post', 1)->andReturn(false);
         global $wpdb;
-        $wpdb = new class {
-            public string $prefix = 'wp_';
-        };
+        $wpdb = $this->createAjaxWpdbStub();
         Functions\expect('get_post')->once()->with(1)->andReturn((object) ['post_content' => '<a href="http://old.com">Link</a>']);
         Functions\expect('wp_send_json_error')->once()->with(['message' => 'Permissions insuffisantes.'])->andReturnUsing(function () {
             throw new \Exception('error');
@@ -238,6 +394,8 @@ class BlcAjaxCallbacksTest extends TestCase
     public function test_edit_link_allows_user_with_permission(): void
     {
         $_POST['post_id'] = 2;
+        $_POST['row_id'] = '2';
+        $_POST['occurrence_index'] = '0';
         $_POST['old_url'] = 'http://old.com';
         $_POST['new_url'] = 'http://new.com';
 
@@ -252,13 +410,7 @@ class BlcAjaxCallbacksTest extends TestCase
 
         Functions\expect('wp_update_post')->once()->andReturn(true);
         global $wpdb;
-        $wpdb = new class {
-            public $prefix = '';
-            public function delete($table, $where, $formats)
-            {
-                return true;
-            }
-        };
+        $wpdb = $this->createAjaxWpdbStub();
 
         Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
             throw new \Exception('success');
@@ -279,6 +431,8 @@ class BlcAjaxCallbacksTest extends TestCase
     public function test_edit_link_uses_blog_charset_when_loading_dom(): void
     {
         $_POST['post_id'] = 22;
+        $_POST['row_id'] = '22';
+        $_POST['occurrence_index'] = '0';
         $_POST['old_url'] = 'http://old.com';
         $_POST['new_url'] = 'http://nouveau.com';
 
@@ -322,16 +476,7 @@ class BlcAjaxCallbacksTest extends TestCase
         });
 
         global $wpdb;
-        $wpdb = new class {
-            public $prefix = '';
-            public $delete_args = null;
-            public function delete($table, $where, $formats)
-            {
-                $this->delete_args = [$table, $where, $formats];
-
-                return true;
-            }
-        };
+        $wpdb = $this->createAjaxWpdbStub();
 
         Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
             throw new \Exception('success');
@@ -375,13 +520,15 @@ class BlcAjaxCallbacksTest extends TestCase
 
         $this->assertIsArray($wpdb->delete_args);
         $this->assertSame('blc_broken_links', $wpdb->delete_args[0]);
-        $this->assertSame(['post_id' => 22, 'url' => 'http://old.com', 'type' => 'link'], $wpdb->delete_args[1]);
-        $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);
+        $this->assertSame(['id' => 22], $wpdb->delete_args[1]);
+        $this->assertSame(['%d'], $wpdb->delete_args[2]);
     }
 
     public function test_edit_link_accepts_uppercase_scheme(): void
     {
         $_POST['post_id'] = 3;
+        $_POST['row_id'] = '3';
+        $_POST['occurrence_index'] = '0';
         $_POST['old_url'] = 'http://old.com';
         $_POST['new_url'] = 'HTTPS://example.com/nouvelle-page';
 
@@ -401,16 +548,7 @@ class BlcAjaxCallbacksTest extends TestCase
         });
 
         global $wpdb;
-        $wpdb = new class {
-            public $prefix = '';
-            public $delete_args = null;
-            public function delete($table, $where, $formats)
-            {
-                $this->delete_args = [$table, $where, $formats];
-
-                return true;
-            }
-        };
+        $wpdb = $this->createAjaxWpdbStub();
 
         Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
             throw new \Exception('success');
@@ -435,13 +573,15 @@ class BlcAjaxCallbacksTest extends TestCase
 
         $this->assertIsArray($wpdb->delete_args);
         $this->assertSame('blc_broken_links', $wpdb->delete_args[0]);
-        $this->assertSame(['post_id' => 3, 'url' => 'http://old.com', 'type' => 'link'], $wpdb->delete_args[1]);
-        $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);
+        $this->assertSame(['id' => 3], $wpdb->delete_args[1]);
+        $this->assertSame(['%d'], $wpdb->delete_args[2]);
     }
 
     public function test_edit_link_accepts_relative_url_and_preserves_href(): void
     {
         $_POST['post_id'] = 42;
+        $_POST['row_id'] = '42';
+        $_POST['occurrence_index'] = '0';
         $_POST['old_url'] = 'http://old.com';
         $_POST['new_url'] = '/nouvelle-page';
 
@@ -458,16 +598,7 @@ class BlcAjaxCallbacksTest extends TestCase
         });
 
         global $wpdb;
-        $wpdb = new class {
-            public $prefix = '';
-            public $delete_args = null;
-            public function delete($table, $where, $formats)
-            {
-                $this->delete_args = [$table, $where, $formats];
-
-                return true;
-            }
-        };
+        $wpdb = $this->createAjaxWpdbStub();
 
         Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
             throw new \Exception('success');
@@ -489,13 +620,15 @@ class BlcAjaxCallbacksTest extends TestCase
 
         $this->assertIsArray($wpdb->delete_args);
         $this->assertSame('blc_broken_links', $wpdb->delete_args[0]);
-        $this->assertSame(['post_id' => 42, 'url' => 'http://old.com', 'type' => 'link'], $wpdb->delete_args[1]);
-        $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);
+        $this->assertSame(['id' => 42], $wpdb->delete_args[1]);
+        $this->assertSame(['%d'], $wpdb->delete_args[2]);
     }
 
     public function test_edit_link_normalizes_bare_domain_for_href(): void
     {
         $_POST['post_id'] = 43;
+        $_POST['row_id'] = '43';
+        $_POST['occurrence_index'] = '0';
         $_POST['old_url'] = 'http://old.com';
         $_POST['new_url'] = 'www.example.com';
 
@@ -512,16 +645,7 @@ class BlcAjaxCallbacksTest extends TestCase
         });
 
         global $wpdb;
-        $wpdb = new class {
-            public $prefix = '';
-            public $delete_args = null;
-            public function delete($table, $where, $formats)
-            {
-                $this->delete_args = [$table, $where, $formats];
-
-                return true;
-            }
-        };
+        $wpdb = $this->createAjaxWpdbStub();
 
         Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
             throw new \Exception('success');
@@ -544,13 +668,15 @@ class BlcAjaxCallbacksTest extends TestCase
 
         $this->assertIsArray($wpdb->delete_args);
         $this->assertSame('blc_broken_links', $wpdb->delete_args[0]);
-        $this->assertSame(['post_id' => 43, 'url' => 'http://old.com', 'type' => 'link'], $wpdb->delete_args[1]);
-        $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);
+        $this->assertSame(['id' => 43], $wpdb->delete_args[1]);
+        $this->assertSame(['%d'], $wpdb->delete_args[2]);
     }
 
     public function test_edit_link_rejects_dangerous_scheme(): void
     {
         $_POST['post_id'] = 8;
+        $_POST['row_id'] = '8';
+        $_POST['occurrence_index'] = '0';
         $_POST['old_url'] = 'http://old.com';
         $_POST['new_url'] = 'javascript:alert(1)';
 
@@ -559,9 +685,8 @@ class BlcAjaxCallbacksTest extends TestCase
         Functions\expect('get_post')->once()->with(8)->andReturn(null);
 
         global $wpdb;
-        $wpdb = new class {
-            public $prefix = 'wp_';
-        };
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->prefix = 'wp_';
 
         Functions\expect('wp_send_json_error')->once()->with(['message' => 'URL invalide.'])->andReturnUsing(function () {
             throw new \Exception('error');
@@ -575,6 +700,8 @@ class BlcAjaxCallbacksTest extends TestCase
     public function test_edit_link_returns_success_when_post_has_been_deleted(): void
     {
         $_POST['post_id'] = 11;
+        $_POST['row_id'] = '11';
+        $_POST['occurrence_index'] = '0';
         $_POST['old_url'] = 'http://old.com';
         $_POST['new_url'] = 'http://new.com';
 
@@ -583,15 +710,9 @@ class BlcAjaxCallbacksTest extends TestCase
         Functions\expect('current_user_can')->once()->with('manage_options')->andReturn(true);
 
         global $wpdb;
-        $wpdb = new class {
-            public string $prefix = 'wp_';
-            public array $deleted = [];
-            public function delete($table, $where, $formats)
-            {
-                $this->deleted[] = ['table' => $table, 'where' => $where, 'formats' => $formats];
-                return 1;
-            }
-        };
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->prefix = 'wp_';
+        $wpdb->delete_return_value = 1;
 
         Functions\expect('wp_send_json_success')->once()->with(['purged' => true])->andReturnUsing(function () {
             throw new \Exception('success');
@@ -604,15 +725,18 @@ class BlcAjaxCallbacksTest extends TestCase
             $this->assertSame('success', $exception->getMessage());
         }
 
-        $this->assertCount(1, $wpdb->deleted, 'Cleanup should remove the orphaned database row.');
-        $deleted = $wpdb->deleted[0];
-        $this->assertSame(11, $deleted['where']['post_id']);
-        $this->assertSame('link', $deleted['where']['type']);
+        $this->assertCount(1, $wpdb->delete_calls, 'Cleanup should remove the orphaned database row.');
+        $deleted = $wpdb->delete_calls[0];
+        $this->assertSame('wp_blc_broken_links', $deleted[0]);
+        $this->assertSame(['id' => 11], $deleted[1]);
+        $this->assertSame(['%d'], $deleted[2]);
     }
 
     public function test_edit_link_succeeds_when_no_database_rows_deleted(): void
     {
         $_POST['post_id'] = 9;
+        $_POST['row_id'] = '9';
+        $_POST['occurrence_index'] = '0';
         $_POST['old_url'] = 'http://old.com';
         $_POST['new_url'] = 'http://new.com';
 
@@ -627,13 +751,8 @@ class BlcAjaxCallbacksTest extends TestCase
 
         Functions\expect('wp_update_post')->once()->andReturn(true);
         global $wpdb;
-        $wpdb = new class {
-            public $prefix = '';
-            public function delete($table, $where, $formats)
-            {
-                return 0;
-            }
-        };
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->delete_return_value = 0;
 
         Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
             throw new \Exception('success');
@@ -654,6 +773,8 @@ class BlcAjaxCallbacksTest extends TestCase
     public function test_edit_link_preserves_scheme_relative_url_for_xpath_and_database(): void
     {
         $_POST['post_id'] = 12;
+        $_POST['row_id'] = '12';
+        $_POST['occurrence_index'] = '0';
         $_POST['old_url'] = '//example.com/cdn/asset.js';
         $_POST['new_url'] = 'https://cdn.example.com/asset.js';
 
@@ -673,15 +794,7 @@ class BlcAjaxCallbacksTest extends TestCase
         });
 
         global $wpdb;
-        $wpdb = new class {
-            public $prefix = '';
-            public $delete_args = null;
-            public function delete($table, $where, $formats)
-            {
-                $this->delete_args = [$table, $where, $formats];
-                return true;
-            }
-        };
+        $wpdb = $this->createAjaxWpdbStub();
 
         Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
             throw new \Exception('success');
@@ -706,11 +819,8 @@ class BlcAjaxCallbacksTest extends TestCase
 
         $this->assertIsArray($wpdb->delete_args);
         $this->assertSame('blc_broken_links', $wpdb->delete_args[0]);
-        $this->assertSame(
-            ['post_id' => 12, 'url' => '//example.com/cdn/asset.js', 'type' => 'link'],
-            $wpdb->delete_args[1]
-        );
-        $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);
+        $this->assertSame(['id' => 12], $wpdb->delete_args[1]);
+        $this->assertSame(['%d'], $wpdb->delete_args[2]);
     }
 
     public function test_edit_and_unlink_handle_long_urls(): void
@@ -728,8 +838,13 @@ class BlcAjaxCallbacksTest extends TestCase
         Functions\when('esc_url_raw')->alias(function ($url) {
             return $url;
         });
-        Functions\when('wp_send_json_error')->alias(function () {
-            throw new \RuntimeException('error');
+        Functions\when('wp_send_json_error')->alias(function ($response = null) {
+            $message = '';
+            if (is_array($response) && isset($response['message'])) {
+                $message = (string) $response['message'];
+            }
+
+            throw new \RuntimeException($message === '' ? 'error' : 'error: ' . $message);
         });
 
         $posts = [
@@ -754,18 +869,14 @@ class BlcAjaxCallbacksTest extends TestCase
         });
 
         global $wpdb;
-        $wpdb = new class {
-            public $prefix = 'wp_';
-            public $delete_calls = [];
-            public function delete($table, $where, $formats)
-            {
-                $this->delete_calls[] = [$table, $where, $formats];
-                return true;
-            }
-        };
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->prefix = 'wp_';
+        $wpdb->delete_return_value = 1;
 
         $_POST = [
             'post_id' => 42,
+            'row_id' => '420',
+            'occurrence_index' => '0',
             'old_url' => $long_old_url,
             'new_url' => $long_new_url,
         ];
@@ -781,13 +892,15 @@ class BlcAjaxCallbacksTest extends TestCase
         $this->assertCount(1, $update_calls);
         $this->assertSame(1, count($wpdb->delete_calls));
         $this->assertSame('wp_blc_broken_links', $wpdb->delete_calls[0][0]);
-        $this->assertSame($long_old_url, $wpdb->delete_calls[0][1]['url']);
-        $this->assertGreaterThan(255, strlen($wpdb->delete_calls[0][1]['url']));
+        $this->assertSame(['id' => 420], $wpdb->delete_calls[0][1]);
+        $this->assertSame(['%d'], $wpdb->delete_calls[0][2]);
         $this->assertStringContainsString($long_new_url, $update_calls[0][0]['post_content']);
         $this->assertStringNotContainsString($long_old_url, $update_calls[0][0]['post_content']);
 
         $_POST = [
             'post_id' => 42,
+            'row_id' => '421',
+            'occurrence_index' => '0',
             'url_to_unlink' => $long_new_url,
         ];
 
@@ -801,7 +914,8 @@ class BlcAjaxCallbacksTest extends TestCase
         $this->assertSame(2, $success_calls);
         $this->assertCount(2, $update_calls);
         $this->assertSame(2, count($wpdb->delete_calls));
-        $this->assertSame($long_new_url, $wpdb->delete_calls[1][1]['url']);
+        $this->assertSame(['id' => 421], $wpdb->delete_calls[1][1]);
+        $this->assertSame(['%d'], $wpdb->delete_calls[1][2]);
         $this->assertStringNotContainsString($long_new_url, $update_calls[1][0]['post_content']);
         $this->assertStringContainsString('Long link', $update_calls[1][0]['post_content']);
     }
@@ -809,14 +923,15 @@ class BlcAjaxCallbacksTest extends TestCase
     public function test_unlink_denied_for_user_without_permission(): void
     {
         $_POST['post_id'] = 3;
+        $_POST['row_id'] = '3';
+        $_POST['occurrence_index'] = '0';
         $_POST['url_to_unlink'] = 'http://old.com';
 
         Functions\when('check_ajax_referer')->justReturn(true);
         Functions\expect('current_user_can')->once()->with('edit_post', 3)->andReturn(false);
         global $wpdb;
-        $wpdb = new class {
-            public string $prefix = 'wp_';
-        };
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->prefix = 'wp_';
         Functions\expect('get_post')->once()->with(3)->andReturn((object) ['post_content' => '<a href="http://old.com">Link</a>']);
         Functions\expect('wp_send_json_error')->once()->with(['message' => 'Permissions insuffisantes.'])->andReturnUsing(function () {
             throw new \Exception('error');
@@ -829,6 +944,8 @@ class BlcAjaxCallbacksTest extends TestCase
     public function test_unlink_allows_user_with_permission(): void
     {
         $_POST['post_id'] = 4;
+        $_POST['row_id'] = '4';
+        $_POST['occurrence_index'] = '0';
         $_POST['url_to_unlink'] = 'http://old.com';
 
         Functions\when('check_ajax_referer')->justReturn(true);
@@ -842,13 +959,7 @@ class BlcAjaxCallbacksTest extends TestCase
 
         Functions\expect('wp_update_post')->once()->andReturn(true);
         global $wpdb;
-        $wpdb = new class {
-            public $prefix = '';
-            public function delete($table, $where, $formats)
-            {
-                return true;
-            }
-        };
+        $wpdb = $this->createAjaxWpdbStub();
 
         Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
             throw new \Exception('success');
@@ -869,6 +980,8 @@ class BlcAjaxCallbacksTest extends TestCase
     public function test_unlink_returns_success_when_post_has_been_deleted(): void
     {
         $_POST['post_id'] = 21;
+        $_POST['row_id'] = '210';
+        $_POST['occurrence_index'] = '0';
         $_POST['url_to_unlink'] = 'http://old.com';
 
         Functions\when('check_ajax_referer')->justReturn(true);
@@ -880,15 +993,9 @@ class BlcAjaxCallbacksTest extends TestCase
         });
 
         global $wpdb;
-        $wpdb = new class {
-            public string $prefix = 'wp_';
-            public array $deleted = [];
-            public function delete($table, $where, $formats)
-            {
-                $this->deleted[] = ['table' => $table, 'where' => $where, 'formats' => $formats];
-                return 1;
-            }
-        };
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->prefix = 'wp_';
+        $wpdb->delete_return_value = 1;
 
         Functions\expect('wp_send_json_success')->once()->with(['purged' => true])->andReturnUsing(function () {
             throw new \Exception('success');
@@ -901,15 +1008,18 @@ class BlcAjaxCallbacksTest extends TestCase
             $this->assertSame('success', $exception->getMessage());
         }
 
-        $this->assertCount(1, $wpdb->deleted, 'Cleanup should remove the orphaned database row.');
-        $deleted = $wpdb->deleted[0];
-        $this->assertSame(21, $deleted['where']['post_id']);
-        $this->assertSame('link', $deleted['where']['type']);
+        $this->assertCount(1, $wpdb->delete_calls, 'Cleanup should remove the orphaned database row.');
+        $deleted = $wpdb->delete_calls[0];
+        $this->assertSame('wp_blc_broken_links', $deleted[0]);
+        $this->assertSame(['id' => 210], $deleted[1]);
+        $this->assertSame(['%d'], $deleted[2]);
     }
 
     public function test_unlink_succeeds_when_no_database_rows_deleted(): void
     {
         $_POST['post_id'] = 10;
+        $_POST['row_id'] = '10';
+        $_POST['occurrence_index'] = '0';
         $_POST['url_to_unlink'] = 'http://old.com';
 
         Functions\when('check_ajax_referer')->justReturn(true);
@@ -923,13 +1033,8 @@ class BlcAjaxCallbacksTest extends TestCase
 
         Functions\expect('wp_update_post')->once()->andReturn(true);
         global $wpdb;
-        $wpdb = new class {
-            public $prefix = '';
-            public function delete($table, $where, $formats)
-            {
-                return 0;
-            }
-        };
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->delete_return_value = 0;
 
         Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
             throw new \Exception('success');
@@ -950,6 +1055,8 @@ class BlcAjaxCallbacksTest extends TestCase
     public function test_unlink_relative_url_updates_content_and_database(): void
     {
         $_POST['post_id'] = 7;
+        $_POST['row_id'] = '7';
+        $_POST['occurrence_index'] = '0';
         $_POST['url_to_unlink'] = '/relative/path';
 
         Functions\when('check_ajax_referer')->justReturn(true);
@@ -968,15 +1075,7 @@ class BlcAjaxCallbacksTest extends TestCase
         });
 
         global $wpdb;
-        $wpdb = new class {
-            public $prefix = '';
-            public $delete_args = null;
-            public function delete($table, $where, $formats)
-            {
-                $this->delete_args = [$table, $where, $formats];
-                return true;
-            }
-        };
+        $wpdb = $this->createAjaxWpdbStub();
 
         Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
             throw new \Exception('success');
@@ -1002,16 +1101,15 @@ class BlcAjaxCallbacksTest extends TestCase
         $this->assertSame('', $wpdb->prefix);
         $this->assertIsArray($wpdb->delete_args);
         $this->assertSame('blc_broken_links', $wpdb->delete_args[0]);
-        $this->assertSame(
-            ['post_id' => 7, 'url' => '/relative/path', 'type' => 'link'],
-            $wpdb->delete_args[1]
-        );
-        $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);
+        $this->assertSame(['id' => 7], $wpdb->delete_args[1]);
+        $this->assertSame(['%d'], $wpdb->delete_args[2]);
     }
 
     public function test_unlink_scheme_relative_url_updates_content_and_database(): void
     {
         $_POST['post_id'] = 8;
+        $_POST['row_id'] = '8';
+        $_POST['occurrence_index'] = '0';
         $_POST['url_to_unlink'] = '//example.com/image.png';
 
         Functions\when('check_ajax_referer')->justReturn(true);
@@ -1030,15 +1128,7 @@ class BlcAjaxCallbacksTest extends TestCase
         });
 
         global $wpdb;
-        $wpdb = new class {
-            public $prefix = '';
-            public $delete_args = null;
-            public function delete($table, $where, $formats)
-            {
-                $this->delete_args = [$table, $where, $formats];
-                return true;
-            }
-        };
+        $wpdb = $this->createAjaxWpdbStub();
 
         Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
             throw new \Exception('success');
@@ -1063,10 +1153,9 @@ class BlcAjaxCallbacksTest extends TestCase
 
         $this->assertIsArray($wpdb->delete_args);
         $this->assertSame('blc_broken_links', $wpdb->delete_args[0]);
-        $this->assertSame(
-            ['post_id' => 8, 'url' => '//example.com/image.png', 'type' => 'link'],
-            $wpdb->delete_args[1]
-        );
-        $this->assertSame(['%d', '%s', '%s'], $wpdb->delete_args[2]);
+        $this->assertSame(['id' => 8], $wpdb->delete_args[1]);
+        $this->assertSame(['%d'], $wpdb->delete_args[2]);
     }
+}
+
 }

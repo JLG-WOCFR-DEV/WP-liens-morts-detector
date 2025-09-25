@@ -6,7 +6,7 @@ if (!defined('ABSPATH')) {
 }
 
 if (!defined('BLC_DB_VERSION')) {
-    define('BLC_DB_VERSION', '1.5.0');
+    define('BLC_DB_VERSION', '1.6.0');
 }
 
 if (!defined('BLC_TEXT_FIELD_LENGTH')) {
@@ -51,6 +51,10 @@ function blc_maybe_upgrade_database() {
         blc_maybe_add_column($table_name, 'is_internal', 'tinyint(1) NOT NULL DEFAULT 0');
         blc_maybe_add_index($table_name, 'url_host', 'url_host');
         blc_maybe_add_index($table_name, 'is_internal', 'is_internal');
+    }
+
+    if (!$installed_version || version_compare($installed_version, '1.6.0', '<')) {
+        blc_maybe_add_column($table_name, 'occurrence_index', 'int(10) unsigned NOT NULL DEFAULT 0');
     }
 
     update_option('blc_plugin_db_version', BLC_DB_VERSION);
@@ -271,6 +275,7 @@ function blc_activation() {
         post_id bigint(20) unsigned NOT NULL,
         post_title varchar(" . BLC_TEXT_FIELD_LENGTH . ") NULL,
         type varchar(20) NOT NULL,
+        occurrence_index int(10) unsigned NOT NULL DEFAULT 0,
         url_host varchar(191) NULL,
         is_internal tinyint(1) NOT NULL DEFAULT 0,
         PRIMARY KEY  (id),
