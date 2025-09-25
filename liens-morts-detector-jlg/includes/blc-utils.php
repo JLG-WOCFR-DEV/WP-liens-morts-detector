@@ -845,48 +845,123 @@ function blc_is_public_ipv6($ip, $packed = null) {
 }
 
 /**
+ * Normalize a remote host representation for consistent lookups and caching.
+ *
+ * @param string $host Raw host string extracted from a URL.
+ * @return string Normalized host suitable for comparisons and DNS queries.
+ */
+function blc_normalize_remote_host($host) {
+    $host = trim((string) $host);
+    if ($host === '') {
+        return '';
+    }
+
+    if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+        return $host;
+    }
+
+    if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+        $packed = @inet_pton($host);
+        if ($packed !== false) {
+            $normalized = @inet_ntop($packed);
+            if (is_string($normalized) && $normalized !== '') {
+                return strtolower($normalized);
+            }
+        }
+
+        return strtolower($host);
+    }
+
+    $decoded_host = $host;
+
+    if (function_exists('wp_specialchars_decode')) {
+        $decoded = wp_specialchars_decode($decoded_host);
+        if (is_string($decoded) && $decoded !== '') {
+            $decoded_host = $decoded;
+        }
+    }
+
+    $ascii_host = $decoded_host;
+
+    if (
+        function_exists('idn_to_ascii') &&
+        $decoded_host !== '' &&
+        preg_match('/[^\x00-\x7F]/', $decoded_host) === 1
+    ) {
+        if (defined('INTL_IDNA_VARIANT_UTS46')) {
+            $converted = @idn_to_ascii($decoded_host, 0, INTL_IDNA_VARIANT_UTS46);
+        } else {
+            $converted = @idn_to_ascii($decoded_host);
+        }
+
+        if (is_string($converted) && $converted !== '') {
+            $ascii_host = $converted;
+        }
+    }
+
+    return strtolower($ascii_host);
+}
+
+/**
  * Validate that the provided host resolves to public IP addresses.
  *
  * @param string $host Hostname or IP address extracted from the URL.
  *
  * @return bool True when every resolved IP is public.
+ *
+ * @filter blc_safe_remote_host_cache_ttl int Filter the cache TTL (in seconds) applied when
+ *         storing safe remote host results via wp_cache_set(). The default of 0 keeps entries
+ *         in memory for the duration of the request only.
  */
 function blc_is_safe_remote_host($host) {
-    $host = trim((string) $host);
-    if ($host === '') {
+    $normalized_host = blc_normalize_remote_host($host);
+    if ($normalized_host === '') {
         return false;
     }
 
-    $ip_addresses = [];
+    static $in_process_cache = [];
+    if (array_key_exists($normalized_host, $in_process_cache)) {
+        return $in_process_cache[$normalized_host];
+    }
 
-    if (filter_var($host, FILTER_VALIDATE_IP)) {
-        $ip_addresses[] = $host;
-    } else {
-        $lookup_host = $host;
+    $cache_group = 'blc_safe_remote_host';
+    $store_cache = static function ($result) use (&$in_process_cache, $normalized_host, $host, $cache_group): bool {
+        $bool_result = (bool) $result;
+        $in_process_cache[$normalized_host] = $bool_result;
 
-        if (function_exists('idn_to_ascii')) {
-            $decoded_host = $host;
-
-            if (function_exists('wp_specialchars_decode')) {
-                $decoded = wp_specialchars_decode($decoded_host);
-                if (is_string($decoded) && $decoded !== '') {
-                    $decoded_host = $decoded;
-                }
+        if (function_exists('wp_cache_set')) {
+            $ttl = function_exists('apply_filters')
+                ? apply_filters('blc_safe_remote_host_cache_ttl', 0, $normalized_host, $host)
+                : 0;
+            if (!is_int($ttl)) {
+                $ttl = (int) $ttl;
+            }
+            if ($ttl < 0) {
+                $ttl = 0;
             }
 
-            if ($decoded_host !== '' && preg_match('/[^\x00-\x7F]/', $decoded_host) === 1) {
-                if (defined('INTL_IDNA_VARIANT_UTS46')) {
-                    $converted = @idn_to_ascii($decoded_host, 0, INTL_IDNA_VARIANT_UTS46);
-                } else {
-                    $converted = @idn_to_ascii($decoded_host);
-                }
-
-                if (is_string($converted) && $converted !== '') {
-                    $lookup_host = $converted;
-                }
-            }
+            wp_cache_set($normalized_host, ['result' => $bool_result], $cache_group, $ttl);
         }
 
+        return $bool_result;
+    };
+
+    if (function_exists('wp_cache_get')) {
+        $found = null;
+        $cached_value = wp_cache_get($normalized_host, $cache_group, false, $found);
+        if ($found && is_array($cached_value) && array_key_exists('result', $cached_value)) {
+            $result = (bool) $cached_value['result'];
+            $in_process_cache[$normalized_host] = $result;
+            return $result;
+        }
+    }
+
+    $lookup_host = $normalized_host;
+    $ip_addresses = [];
+
+    if (filter_var($lookup_host, FILTER_VALIDATE_IP)) {
+        $ip_addresses[] = $lookup_host;
+    } else {
         if (function_exists('dns_get_record')) {
             $all_records = null;
 
@@ -983,18 +1058,18 @@ function blc_is_safe_remote_host($host) {
     }
 
     if (empty($ip_addresses)) {
-        return false;
+        return $store_cache(false);
     }
 
     $ip_addresses = array_unique($ip_addresses);
 
     foreach ($ip_addresses as $ip) {
         if (!blc_is_public_ip_address($ip)) {
-            return false;
+            return $store_cache(false);
         }
     }
 
-    return true;
+    return $store_cache(true);
 }
 
 /**

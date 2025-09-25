@@ -918,6 +918,65 @@ class BlcScannerTest extends TestCase
         );
     }
 
+    public function test_blc_perform_check_reuses_safe_host_cache_within_execution(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_scan_method'] = 'precise';
+
+        $perHostLookupCalls = [];
+
+        Functions\when('dns_get_record')->alias(function (string $hostname, ?int $type = null) use (&$perHostLookupCalls) {
+            $normalized = blc_normalize_remote_host($hostname);
+            $perHostLookupCalls[$normalized] = ($perHostLookupCalls[$normalized] ?? 0) + 1;
+
+            if ($perHostLookupCalls[$normalized] > 6) {
+                return [];
+            }
+
+            return [
+                ['ip' => '93.184.216.34'],
+                ['ipv6' => '2001:4860:4860::8888'],
+            ];
+        });
+
+        Functions\when('gethostbynamel')->alias(function (string $hostname) use (&$perHostLookupCalls) {
+            $normalized = blc_normalize_remote_host($hostname);
+            $perHostLookupCalls[$normalized] = ($perHostLookupCalls[$normalized] ?? 0) + 1;
+
+            if ($perHostLookupCalls[$normalized] > 6) {
+                return [];
+            }
+
+            return ['93.184.216.34'];
+        });
+
+        $post = (object) [
+            'ID' => 777,
+            'post_title' => 'Duplicate Host',
+            'post_content' => '<a href="http://Cache.example/first">One</a><a href="http://cache.example/second">Two</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 0,
+        ];
+
+        $this->setHttpResponse('HEAD', 'http://Cache.example/first', ['response' => ['code' => 200]]);
+        $this->setHttpResponse('HEAD', 'http://cache.example/first', ['response' => ['code' => 200]]);
+        $this->setHttpResponse('HEAD', 'http://cache.example/second', ['response' => ['code' => 200]]);
+
+        blc_perform_check(0, false);
+
+        $normalizedHost = blc_normalize_remote_host('cache.example');
+        $lookupCount = $perHostLookupCalls[$normalizedHost] ?? 0;
+
+        $this->assertGreaterThan(0, $lookupCount, 'The host should be resolved at least once.');
+        $this->assertLessThanOrEqual(6, $lookupCount, 'Cached host results must prevent duplicate resolutions within the same run.');
+        $this->assertCount(0, $wpdb->inserted, 'Safe hosts should not be flagged as broken when cache is reused.');
+    }
+
     public function test_blc_perform_check_limits_head_requests_and_falls_back_to_get_when_needed(): void
     {
         global $wpdb;
