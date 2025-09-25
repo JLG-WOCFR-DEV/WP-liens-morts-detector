@@ -427,6 +427,8 @@ class BlcScannerTest extends TestCase
             public array $inserted = [];
             /** @var array<int, array<string, mixed>> */
             public array $deleted = [];
+            /** @var array<int, array<string, mixed>> */
+            public array $selectedRows = [];
 
             public function query(string $sql)
             {
@@ -444,6 +446,21 @@ class BlcScannerTest extends TestCase
             {
                 $this->deleted[] = ['table' => $table, 'where' => $where, 'formats' => $formats];
                 return 1;
+            }
+
+            public function get_row(string $query, $output = ARRAY_A)
+            {
+                $this->queries[] = ['sql' => $query, 'type' => 'get_row'];
+                if (empty($this->selectedRows)) {
+                    return null;
+                }
+
+                $row = array_shift($this->selectedRows);
+                if ($output === ARRAY_A) {
+                    return $row;
+                }
+
+                return (object) $row;
             }
 
             public function prepare(string $query, $args = null): string
@@ -1492,11 +1509,22 @@ class BlcScannerTest extends TestCase
             return null;
         });
 
+        $wpdb->selectedRows[] = [
+            'id' => 1,
+            'post_id' => $post_id,
+            'url' => '//cdn.example.com/foo',
+            'anchor' => '',
+            'post_title' => '',
+            'occurrence_index' => 0,
+        ];
+
         $_POST = [
-            'post_id'    => (string) $post_id,
-            'old_url'    => '//cdn.example.com/foo',
-            'new_url'    => 'https://cdn.example.com/bar',
-            '_ajax_nonce' => 'nonce',
+            'post_id'          => (string) $post_id,
+            'row_id'           => '1',
+            'occurrence_index' => '0',
+            'old_url'          => '//cdn.example.com/foo',
+            'new_url'          => 'https://cdn.example.com/bar',
+            '_ajax_nonce'      => 'nonce',
         ];
 
         try {
@@ -1516,7 +1544,7 @@ class BlcScannerTest extends TestCase
         $this->assertStringNotContainsString('//cdn.example.com/foo', $update['post_content']);
 
         $this->assertCount(1, $wpdb->deleted, 'Original URL should be removed from the broken links table.');
-        $this->assertSame('//cdn.example.com/foo', $wpdb->deleted[0]['where']['url']);
+        $this->assertSame(['id' => 1], $wpdb->deleted[0]['where']);
     }
 
     public function test_blc_ajax_edit_link_callback_preserves_relative_href_in_dom(): void
@@ -1547,11 +1575,22 @@ class BlcScannerTest extends TestCase
             return 'https://example.com/post/';
         });
 
+        $wpdb->selectedRows[] = [
+            'id' => 2,
+            'post_id' => $post_id,
+            'url' => 'https://example.com/old',
+            'anchor' => '',
+            'post_title' => '',
+            'occurrence_index' => 0,
+        ];
+
         $_POST = [
-            'post_id'    => (string) $post_id,
-            'old_url'    => 'https://example.com/old',
-            'new_url'    => 'section/page.html',
-            '_ajax_nonce' => 'nonce',
+            'post_id'          => (string) $post_id,
+            'row_id'           => '2',
+            'occurrence_index' => '0',
+            'old_url'          => 'https://example.com/old',
+            'new_url'          => 'section/page.html',
+            '_ajax_nonce'      => 'nonce',
         ];
 
         try {
@@ -1570,7 +1609,7 @@ class BlcScannerTest extends TestCase
         $this->assertStringNotContainsString('https://example.com/blog/articles/mon-post/section/page.html', $update['post_content']);
 
         $this->assertCount(1, $wpdb->deleted, 'Original URL should be removed from the broken links table.');
-        $this->assertSame('https://example.com/old', $wpdb->deleted[0]['where']['url']);
+        $this->assertSame(['id' => 2], $wpdb->deleted[0]['where']);
     }
 
     public function test_blc_perform_check_batches_and_reschedules_next_batch(): void

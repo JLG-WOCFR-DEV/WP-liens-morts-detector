@@ -15,6 +15,14 @@ jQuery(document).ready(function($) {
         var linkElement = $(this);
         var oldUrl = linkElement.data('url');
         var postId = linkElement.data('postid');
+        var rowId = linkElement.data('rowId');
+        if (typeof rowId === 'undefined') {
+            rowId = '';
+        }
+        var occurrenceIndex = linkElement.data('occurrenceIndex');
+        if (typeof occurrenceIndex === 'undefined') {
+            occurrenceIndex = '';
+        }
         var nonce = linkElement.data('nonce');
 
         // Affiche une boîte de dialogue pour demander la nouvelle URL
@@ -30,6 +38,8 @@ jQuery(document).ready(function($) {
             $.post(ajaxurl, {
                 action: 'blc_edit_link',
                 post_id: postId,
+                row_id: rowId,
+                occurrence_index: occurrenceIndex,
                 old_url: oldUrl,
                 new_url: newUrl,
                 _ajax_nonce: nonce
@@ -55,6 +65,14 @@ jQuery(document).ready(function($) {
         var linkElement = $(this);
         var urlToUnlink = linkElement.data('url');
         var postId = linkElement.data('postid');
+        var rowId = linkElement.data('rowId');
+        if (typeof rowId === 'undefined') {
+            rowId = '';
+        }
+        var occurrenceIndex = linkElement.data('occurrenceIndex');
+        if (typeof occurrenceIndex === 'undefined') {
+            occurrenceIndex = '';
+        }
         var nonce = linkElement.data('nonce');
 
         // Demande une confirmation avant de supprimer le lien
@@ -64,6 +82,8 @@ jQuery(document).ready(function($) {
             $.post(ajaxurl, {
                 action: 'blc_unlink',
                 post_id: postId,
+                row_id: rowId,
+                occurrence_index: occurrenceIndex,
                 url_to_unlink: urlToUnlink,
                 _ajax_nonce: nonce
             }, function(response) {

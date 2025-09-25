@@ -208,17 +208,25 @@ class BLC_Links_List_Table extends WP_List_Table {
      */
     protected function get_row_actions($item) {
         $actions = [];
-        $actions['edit_link'] = sprintf(
-            '<a href="#" class="blc-edit-link" data-postid="%d" data-url="%s" data-nonce="%s">%s</a>',
+        $row_id = isset($item['id']) ? absint($item['id']) : 0;
+        $occurrence_index = isset($item['occurrence_index']) ? max(0, (int) $item['occurrence_index']) : 0;
+        $data_attributes = sprintf(
+            'data-postid="%d" data-url="%s" data-row-id="%d" data-occurrence-index="%d"',
             $item['post_id'],
             esc_attr($item['url']),
+            $row_id,
+            $occurrence_index
+        );
+
+        $actions['edit_link'] = sprintf(
+            '<a href="#" class="blc-edit-link" %s data-nonce="%s">%s</a>',
+            $data_attributes,
             wp_create_nonce('blc_edit_link_nonce'),
             esc_html__('Modifier', 'liens-morts-detector-jlg')
         );
         $actions['unlink'] = sprintf(
-            '<a href="#" class="blc-unlink" data-postid="%d" data-url="%s" data-nonce="%s" style="color:#a00;">%s</a>',
-            $item['post_id'],
-            esc_attr($item['url']),
+            '<a href="#" class="blc-unlink" %s data-nonce="%s" style="color:#a00;">%s</a>',
+            $data_attributes,
             wp_create_nonce('blc_unlink_nonce'),
             esc_html__('Dissocier', 'liens-morts-detector-jlg')
         );
@@ -272,7 +280,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         $offset = ($current_page - 1) * $per_page;
 
         $data_query = $wpdb->prepare(
-            "SELECT url, anchor, post_id, post_title
+            "SELECT id, occurrence_index, url, anchor, post_id, post_title
              FROM $table_name
              WHERE $where_clause
              ORDER BY id DESC

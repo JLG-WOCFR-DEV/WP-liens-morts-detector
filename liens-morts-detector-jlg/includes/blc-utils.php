@@ -221,19 +221,31 @@ function blc_restore_post_content_encoding($utf8_content) {
 /**
  * Update the href attribute of matching <a> tags without reserializing the whole document.
  *
- * @param string $html            Original HTML content.
- * @param string $target_href     Href attribute to search for (should already be sanitized).
- * @param string $replacement_href Replacement value for the href attribute.
+ * @param string   $html              Original HTML content.
+ * @param string   $target_href       Href attribute to search for (should already be sanitized).
+ * @param string   $replacement_href  Replacement value for the href attribute.
+ * @param int|null $occurrence_index  Zero-based occurrence index to update. When null, all matches are updated.
  *
  * @return array{content: string, updated: bool} Updated HTML content and whether at least one link was modified.
  */
-function blc_replace_link_href_in_content($html, $target_href, $replacement_href) {
+function blc_replace_link_href_in_content($html, $target_href, $replacement_href, $occurrence_index = null) {
     $html            = (string) $html;
     $target_href     = blc_prepare_posted_url($target_href);
     $replacement_href = (string) $replacement_href;
 
     if ($target_href === '' || $replacement_href === '') {
         return ['content' => $html, 'updated' => false];
+    }
+
+    $target_occurrence = null;
+    if ($occurrence_index !== null) {
+        if (!is_int($occurrence_index)) {
+            $occurrence_index = (int) $occurrence_index;
+        }
+        if ($occurrence_index < 0) {
+            return ['content' => $html, 'updated' => false];
+        }
+        $target_occurrence = $occurrence_index;
     }
 
     $dom_result = blc_load_dom_from_html_fragment($html);
@@ -250,6 +262,7 @@ function blc_replace_link_href_in_content($html, $target_href, $replacement_href
 
     $links = $xpath->query('.//a[@href]');
     if ($links instanceof DOMNodeList) {
+        $match_index = 0;
         foreach ($links as $link) {
             if (!$link instanceof DOMElement) {
                 continue;
@@ -260,8 +273,19 @@ function blc_replace_link_href_in_content($html, $target_href, $replacement_href
                 continue;
             }
 
+            if ($target_occurrence !== null && $match_index !== $target_occurrence) {
+                $match_index++;
+                continue;
+            }
+
             $link->setAttribute('href', $replacement_href);
             $updated = true;
+
+            if ($target_occurrence !== null) {
+                break;
+            }
+
+            $match_index++;
         }
     }
 
@@ -278,17 +302,29 @@ function blc_replace_link_href_in_content($html, $target_href, $replacement_href
 /**
  * Remove matching <a> wrappers while preserving their inner HTML.
  *
- * @param string $html        Original HTML content.
- * @param string $target_href Href attribute to search for (should already be sanitized).
+ * @param string   $html             Original HTML content.
+ * @param string   $target_href      Href attribute to search for (should already be sanitized).
+ * @param int|null $occurrence_index Zero-based occurrence index to remove. When null, all matches are removed.
  *
  * @return array{content: string, removed: bool} Updated HTML content and whether at least one link was removed.
  */
-function blc_remove_link_wrappers_from_content($html, $target_href) {
+function blc_remove_link_wrappers_from_content($html, $target_href, $occurrence_index = null) {
     $html        = (string) $html;
     $target_href = blc_prepare_posted_url($target_href);
 
     if ($target_href === '') {
         return ['content' => $html, 'removed' => false];
+    }
+
+    $target_occurrence = null;
+    if ($occurrence_index !== null) {
+        if (!is_int($occurrence_index)) {
+            $occurrence_index = (int) $occurrence_index;
+        }
+        if ($occurrence_index < 0) {
+            return ['content' => $html, 'removed' => false];
+        }
+        $target_occurrence = $occurrence_index;
     }
 
     $dom_result = blc_load_dom_from_html_fragment($html);
@@ -313,9 +349,15 @@ function blc_remove_link_wrappers_from_content($html, $target_href) {
             }
         }
 
+        $match_index = 0;
         foreach ($anchors as $anchor) {
             $href_value = blc_prepare_posted_url($anchor->getAttribute('href'));
             if ($href_value !== $target_href) {
+                continue;
+            }
+
+            if ($target_occurrence !== null && $match_index !== $target_occurrence) {
+                $match_index++;
                 continue;
             }
 
@@ -325,6 +367,12 @@ function blc_remove_link_wrappers_from_content($html, $target_href) {
 
             $anchor->parentNode->removeChild($anchor);
             $removed = true;
+
+            if ($target_occurrence !== null) {
+                break;
+            }
+
+            $match_index++;
         }
     }
 
