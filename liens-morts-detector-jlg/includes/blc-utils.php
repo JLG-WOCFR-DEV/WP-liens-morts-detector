@@ -969,6 +969,70 @@ function blc_prepare_posted_url($url) {
 
 
 /**
+ * Canonicalize a user-submitted URL for safe comparisons.
+ *
+ * This helper normalizes the scheme casing, lowercases the host for absolute
+ * and scheme-relative URLs, and lowercases bare domains while leaving relative
+ * paths untouched. It allows the plugin to compare the "raw" value entered by
+ * the user with the sanitized version produced by WordPress without rejecting
+ * innocuous changes such as host lowercasing.
+ *
+ * @param string $url URL to normalize.
+ *
+ * @return string Normalized representation suitable for string comparisons.
+ */
+function blc_normalize_user_input_url($url) {
+    $normalized = blc_normalize_url_scheme_case(blc_prepare_posted_url($url));
+
+    if ($normalized === '') {
+        return '';
+    }
+
+    $scheme_relative = false;
+    $candidate_for_parsing = $normalized;
+    if (strpos($normalized, '//') === 0) {
+        $scheme_relative       = true;
+        $candidate_for_parsing = 'placeholder:' . $normalized;
+    }
+
+    $parts = parse_url($candidate_for_parsing);
+    if (is_array($parts) && isset($parts['host']) && $parts['host'] !== '') {
+        $scheme = '';
+        if ($scheme_relative) {
+            $scheme = '//';
+        } elseif (isset($parts['scheme']) && $parts['scheme'] !== '') {
+            $scheme = strtolower($parts['scheme']) . '://';
+        }
+
+        $user_info = '';
+        if (isset($parts['user']) && $parts['user'] !== '') {
+            $user_info = $parts['user'];
+            if (isset($parts['pass']) && $parts['pass'] !== '') {
+                $user_info .= ':' . $parts['pass'];
+            }
+
+            $user_info .= '@';
+        }
+
+        $host = strtolower($parts['host']);
+        $port = isset($parts['port']) ? ':' . $parts['port'] : '';
+
+        $path      = $parts['path'] ?? '';
+        $query     = isset($parts['query']) ? '?' . $parts['query'] : '';
+        $fragment  = isset($parts['fragment']) ? '#' . $parts['fragment'] : '';
+
+        return $scheme . $user_info . $host . $port . $path . $query . $fragment;
+    }
+
+    if (blc_url_looks_like_bare_domain($normalized)) {
+        return strtolower($normalized);
+    }
+
+    return $normalized;
+}
+
+
+/**
  * Normalize the scheme casing of a URL while leaving the rest untouched.
  *
  * @param string $url Raw URL to normalize.
