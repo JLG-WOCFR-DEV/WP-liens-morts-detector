@@ -6,7 +6,7 @@ if (!defined('ABSPATH')) {
 }
 
 if (!defined('BLC_DB_VERSION')) {
-    define('BLC_DB_VERSION', '1.5.0');
+    define('BLC_DB_VERSION', '1.6.0');
 }
 
 if (!defined('BLC_TEXT_FIELD_LENGTH')) {
@@ -51,6 +51,11 @@ function blc_maybe_upgrade_database() {
         blc_maybe_add_column($table_name, 'is_internal', 'tinyint(1) NOT NULL DEFAULT 0');
         blc_maybe_add_index($table_name, 'url_host', 'url_host');
         blc_maybe_add_index($table_name, 'is_internal', 'is_internal');
+    }
+
+    if (!$installed_version || version_compare($installed_version, '1.6.0', '<')) {
+        blc_maybe_add_column($table_name, 'is_stale', 'tinyint(1) NOT NULL DEFAULT 0');
+        blc_maybe_add_index($table_name, 'is_stale', 'is_stale');
     }
 
     update_option('blc_plugin_db_version', BLC_DB_VERSION);
@@ -273,12 +278,14 @@ function blc_activation() {
         type varchar(20) NOT NULL,
         url_host varchar(191) NULL,
         is_internal tinyint(1) NOT NULL DEFAULT 0,
+        is_stale tinyint(1) NOT NULL DEFAULT 0,
         PRIMARY KEY  (id),
         KEY type (type),
         KEY post_id (post_id),
         KEY url_prefix (url(191)),
         KEY url_host (url_host),
-        KEY is_internal (is_internal)
+        KEY is_internal (is_internal),
+        KEY is_stale (is_stale)
     ) $charset_collate;";
 
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';

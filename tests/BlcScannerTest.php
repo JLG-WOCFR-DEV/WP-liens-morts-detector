@@ -105,6 +105,7 @@ class BlcScannerTest extends TestCase
     /** @var array{success: bool, data: mixed}|null */
     private ?array $ajaxResponse = null;
 
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -427,6 +428,12 @@ class BlcScannerTest extends TestCase
             public array $inserted = [];
             /** @var array<int, array<string, mixed>> */
             public array $deleted = [];
+            /** @var array<int, array<string, mixed>> */
+            public array $updated = [];
+            /** @var array<int, int|float|string|null> */
+            public array $getVarResults = [];
+            public ?\Throwable $nextInsertException = null;
+            public ?\Throwable $nextUpdateException = null;
 
             public function query(string $sql)
             {
@@ -436,6 +443,12 @@ class BlcScannerTest extends TestCase
 
             public function insert(string $table, array $data, array $formats)
             {
+                if ($this->nextInsertException instanceof \Throwable) {
+                    $exception = $this->nextInsertException;
+                    $this->nextInsertException = null;
+                    throw $exception;
+                }
+
                 $this->inserted[] = ['table' => $table, 'data' => $data, 'formats' => $formats];
                 return true;
             }
@@ -444,6 +457,34 @@ class BlcScannerTest extends TestCase
             {
                 $this->deleted[] = ['table' => $table, 'where' => $where, 'formats' => $formats];
                 return 1;
+            }
+
+            public function update(string $table, array $data, array $where, array $data_formats, array $where_formats)
+            {
+                if ($this->nextUpdateException instanceof \Throwable) {
+                    $exception = $this->nextUpdateException;
+                    $this->nextUpdateException = null;
+                    throw $exception;
+                }
+
+                $this->updated[] = [
+                    'table'         => $table,
+                    'data'          => $data,
+                    'where'         => $where,
+                    'data_formats'  => $data_formats,
+                    'where_formats' => $where_formats,
+                ];
+
+                return 1;
+            }
+
+            public function get_var(string $query)
+            {
+                if (!empty($this->getVarResults)) {
+                    return array_shift($this->getVarResults);
+                }
+
+                return 0;
             }
 
             public function prepare(string $query, $args = null): string
@@ -1704,7 +1745,22 @@ class BlcScannerTest extends TestCase
 
         blc_perform_image_check(0, true);
 
-        $this->assertCount(1, $wpdb->queries, 'Image results table should be cleared at first batch.');
+        $this->assertNotEmpty($wpdb->updated, 'Existing image entries should be marked as stale before recalculation.');
+        $firstUpdate = $wpdb->updated[0];
+        $this->assertSame('wp_blc_broken_links', $firstUpdate['table']);
+        $this->assertSame(['is_stale' => 1], $firstUpdate['data']);
+        $this->assertSame(['post_id' => 88, 'type' => 'image'], $firstUpdate['where']);
+
+        $purgeQueryFound = false;
+        foreach ($wpdb->queries as $query) {
+            $sql = $query['sql'] ?? '';
+            if (strpos($sql, 'DELETE FROM wp_blc_broken_links') !== false && strpos($sql, 'is_stale = 1') !== false) {
+                $purgeQueryFound = true;
+                break;
+            }
+        }
+
+        $this->assertTrue($purgeQueryFound, 'Stale image entries should be purged after successful recalculation.');
         $this->assertCount(1, $wpdb->inserted, 'Missing local image should be recorded.');
         $insert = $wpdb->inserted[0];
         $this->assertSame('image', $insert['data']['type']);
@@ -1722,6 +1778,81 @@ class BlcScannerTest extends TestCase
         $this->assertArrayHasKey('token', $lock_state);
         $this->assertArrayHasKey('locked_at', $lock_state);
         $this->assertSame($lock_state['token'], $this->updatedOptions['blc_image_scan_lock_token']);
+    }
+
+    public function test_blc_perform_check_restores_markers_when_exception_occurs(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 222,
+            'post_title' => 'Exceptional Post',
+            'post_content' => '<a href="https://example.com/fail">Broken</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 0,
+        ];
+
+        $wpdb->nextInsertException = new \RuntimeException('Database failure');
+        $this->setHttpResponse('HEAD', 'https://example.com/fail', ['response' => ['code' => 404]]);
+
+        try {
+            blc_perform_check(0, false);
+            $this->fail('An exception should bubble up when the database insert fails.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('Database failure', $exception->getMessage());
+        }
+
+        $this->assertGreaterThanOrEqual(2, count($wpdb->updated), 'Marking and restoration updates must be recorded.');
+        $this->assertSame(['is_stale' => 1], $wpdb->updated[0]['data']);
+        $this->assertSame(['post_id' => 222, 'type' => 'link'], $wpdb->updated[0]['where']);
+        $lastUpdate = $wpdb->updated[array_key_last($wpdb->updated)];
+        $this->assertSame(['is_stale' => 0], $lastUpdate['data'], 'Stale marker must be cleared after a failure.');
+
+        foreach ($wpdb->queries as $query) {
+            $sql = $query['sql'] ?? '';
+            $this->assertStringNotContainsString('DELETE FROM wp_blc_broken_links', $sql, 'Old entries must not be purged when recalculation fails.');
+        }
+    }
+
+    public function test_blc_perform_image_check_restores_markers_when_interrupted(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 333,
+            'post_title' => 'Image Exception Post',
+            'post_content' => '<img src="https://example.com/wp-content/uploads/missing.jpg" />',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 0,
+        ];
+
+        $wpdb->nextInsertException = new \RuntimeException('Database failure');
+
+        try {
+            blc_perform_image_check(0, true);
+            $this->fail('An exception should bubble up when the database insert fails.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('Database failure', $exception->getMessage());
+        }
+
+        $this->assertGreaterThanOrEqual(2, count($wpdb->updated), 'Marking and restoration updates must be recorded for image scans.');
+        $this->assertSame(['is_stale' => 1], $wpdb->updated[0]['data']);
+        $this->assertSame(['post_id' => 333, 'type' => 'image'], $wpdb->updated[0]['where']);
+        $lastUpdate = $wpdb->updated[array_key_last($wpdb->updated)];
+        $this->assertSame(['is_stale' => 0], $lastUpdate['data'], 'Image scan should restore stale markers after an interruption.');
+
+        foreach ($wpdb->queries as $query) {
+            $sql = $query['sql'] ?? '';
+            $this->assertStringNotContainsString('DELETE FROM wp_blc_broken_links', $sql, 'Image entries must not be deleted when the batch aborts.');
+        }
     }
 
     public function test_blc_perform_image_check_records_missing_cdn_upload_image(): void

@@ -271,6 +271,100 @@ function blc_normalize_link_url($url, $site_url, $site_scheme = null, $document_
 }
 
 /**
+ * Mark stored entries for a given post as stale prior to recalculation.
+ *
+ * @param string $table_name Database table name.
+ * @param int    $post_id    Post identifier.
+ * @param string $type       Dataset type (link or image).
+ *
+ * @return int Number of affected rows.
+ */
+function blc_mark_dataset_entries_for_post($table_name, $post_id, $type) {
+    global $wpdb;
+
+    if (!is_int($post_id) || $post_id <= 0) {
+        return 0;
+    }
+
+    $updated = $wpdb->update(
+        $table_name,
+        ['is_stale' => 1],
+        ['post_id' => $post_id, 'type' => $type],
+        ['%d'],
+        ['%d', '%s']
+    );
+
+    if ($updated === false) {
+        return 0;
+    }
+
+    return (int) $updated;
+}
+
+/**
+ * Remove the stale marker from existing entries for a post.
+ *
+ * @param string $table_name Database table name.
+ * @param int    $post_id    Post identifier.
+ * @param string $type       Dataset type (link or image).
+ */
+function blc_restore_dataset_entries_for_post($table_name, $post_id, $type) {
+    global $wpdb;
+
+    if (!is_int($post_id) || $post_id <= 0) {
+        return;
+    }
+
+    $wpdb->update(
+        $table_name,
+        ['is_stale' => 0],
+        ['post_id' => $post_id, 'type' => $type],
+        ['%d'],
+        ['%d', '%s']
+    );
+}
+
+/**
+ * Delete entries that were marked as stale once the recalculation completes.
+ *
+ * @param string $table_name Database table name.
+ * @param int    $post_id    Post identifier.
+ * @param string $type       Dataset type (link or image).
+ */
+function blc_purge_stale_entries_for_post($table_name, $post_id, $type) {
+    global $wpdb;
+
+    if (!is_int($post_id) || $post_id <= 0) {
+        return;
+    }
+
+    $size_to_remove = 0;
+    if (method_exists($wpdb, 'get_var')) {
+        $size_to_remove = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0))
+                 FROM $table_name
+                 WHERE post_id = %d AND type = %s AND is_stale = 1",
+                $post_id,
+                $type
+            )
+        );
+    }
+
+    $delete_sql = $wpdb->prepare(
+        "DELETE FROM $table_name WHERE post_id = %d AND type = %s AND is_stale = 1",
+        $post_id,
+        $type
+    );
+
+    $deleted_rows = $wpdb->query($delete_sql);
+
+    if ($deleted_rows && $size_to_remove > 0) {
+        blc_adjust_dataset_storage_footprint($type, -$size_to_remove);
+    }
+}
+
+/**
  * Generate a cache key identifier for the current scan session.
  *
  * @return string
@@ -856,28 +950,6 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         blc_adjust_dataset_storage_footprint('link', -$cleanup_size);
     }
 
-    $post_ids_in_batch = wp_list_pluck($posts, 'ID');
-    if (!empty($post_ids_in_batch)) {
-        $post_ids_in_batch = array_map('intval', $post_ids_in_batch);
-        $placeholders = implode(',', array_fill(0, count($post_ids_in_batch), '%d'));
-        $delete_sql = "DELETE FROM $table_name WHERE post_id IN ($placeholders) AND type = %s";
-        $size_to_remove = 0;
-        if (method_exists($wpdb, 'get_var')) {
-            $size_to_remove = (int) $wpdb->get_var(
-                $wpdb->prepare(
-                    "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0))
-                     FROM $table_name
-                     WHERE post_id IN ($placeholders) AND type = %s",
-                    array_merge($post_ids_in_batch, ['link'])
-                )
-            );
-        }
-        $deleted_rows = $wpdb->query($wpdb->prepare($delete_sql, array_merge($post_ids_in_batch, ['link'])));
-        if ($deleted_rows && $size_to_remove > 0) {
-            blc_adjust_dataset_storage_footprint('link', -$size_to_remove);
-        }
-    }
-
     // --- 4. Boucle d'analyse des LIENS <a> ---
     $upload_dir_info = wp_upload_dir();
     $upload_baseurl  = isset($upload_dir_info['baseurl']) ? trailingslashit($upload_dir_info['baseurl']) : '';
@@ -927,22 +999,27 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     foreach ($posts as $post) {
         if ($debug_mode) { error_log("Analyse LIENS pour : '" . $post->post_title . "'"); }
 
-        $permalink = '';
-        if (function_exists('get_permalink')) {
-            $maybe_permalink = get_permalink($post);
-            if (is_string($maybe_permalink)) {
-                $permalink = $maybe_permalink;
+        $post_id = isset($post->ID) ? (int) $post->ID : 0;
+        blc_mark_dataset_entries_for_post($table_name, $post_id, 'link');
+
+        try {
+            $permalink = '';
+            if (function_exists('get_permalink')) {
+                $maybe_permalink = get_permalink($post);
+                if (is_string($maybe_permalink)) {
+                    $permalink = $maybe_permalink;
+                }
             }
-        }
 
-        $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
+            $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
 
-        $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
-        if (!$dom instanceof DOMDocument) {
-            continue;
-        }
+            $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
+            if (!$dom instanceof DOMDocument) {
+                blc_restore_dataset_entries_for_post($table_name, $post_id, 'link');
+                continue;
+            }
 
-        foreach ($dom->getElementsByTagName('a') as $link_node) {
+            foreach ($dom->getElementsByTagName('a') as $link_node) {
             $original_url = trim(wp_kses_decode_entities($link_node->getAttribute('href')));
             if ($original_url === '') { continue; }
 
@@ -1285,6 +1362,12 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                 $scan_cache_data[$cache_entry_key] = $new_cache_entry;
                 $scan_cache_dirty = true;
             }
+            }
+
+            blc_purge_stale_entries_for_post($table_name, $post_id, 'link');
+        } catch (\Throwable $throwable) {
+            blc_restore_dataset_entries_for_post($table_name, $post_id, 'link');
+            throw $throwable;
         }
     }
 
@@ -1377,22 +1460,6 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
         }
     }
 
-    // Si c'est le premier lot, on nettoie les anciens résultats
-    if ($batch === 0) {
-        $image_cleanup_size = 0;
-        if (method_exists($wpdb, 'get_var')) {
-            $image_cleanup_size = (int) $wpdb->get_var(
-                "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0))
-                 FROM $table_name
-                 WHERE type = 'image'"
-            );
-        }
-        $deleted_images = $wpdb->query("DELETE FROM $table_name WHERE type = 'image'");
-        if ($deleted_images && $image_cleanup_size > 0) {
-            blc_adjust_dataset_storage_footprint('image', -$image_cleanup_size);
-        }
-    }
-
     $batch_size = 20;
     $args = ['post_type' => 'any', 'post_status' => 'publish', 'posts_per_page' => $batch_size, 'paged' => $batch + 1];
     $query = new WP_Query($args);
@@ -1430,16 +1497,21 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     foreach ($posts as $post) {
         if ($debug_mode) { error_log("Analyse IMAGES pour : '" . $post->post_title . "'"); }
 
+        $post_id = isset($post->ID) ? (int) $post->ID : 0;
+        blc_mark_dataset_entries_for_post($table_name, $post_id, 'image');
+
         $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
 
-        $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
-        if (!$dom instanceof DOMDocument) {
-            continue;
-        }
+        try {
+            $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
+            if (!$dom instanceof DOMDocument) {
+                blc_restore_dataset_entries_for_post($table_name, $post_id, 'image');
+                continue;
+            }
 
-        $permalink = get_permalink($post);
+            $permalink = get_permalink($post);
 
-        foreach ($dom->getElementsByTagName('img') as $image_node) {
+            foreach ($dom->getElementsByTagName('img') as $image_node) {
             $image_url = trim(wp_kses_decode_entities($image_node->getAttribute('src')));
             if ($image_url === '') { continue; }
 
@@ -1568,6 +1640,12 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
             if ($inserted) {
                 blc_adjust_dataset_storage_footprint('image', $row_bytes);
             }
+            }
+
+            blc_purge_stale_entries_for_post($table_name, $post_id, 'image');
+        } catch (\Throwable $throwable) {
+            blc_restore_dataset_entries_for_post($table_name, $post_id, 'image');
+            throw $throwable;
         }
     }
 
