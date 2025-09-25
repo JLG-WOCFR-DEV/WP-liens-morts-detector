@@ -673,7 +673,12 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             return;
         }
 
-        $safe_internal_hosts[strtolower($host)] = true;
+        $normalized_host = blc_normalize_remote_host($host);
+        if ($normalized_host === '') {
+            return;
+        }
+
+        $safe_internal_hosts[$normalized_host] = true;
     };
 
     $register_internal_host($raw_home_url);
@@ -804,7 +809,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         $excluded_domains = array_filter(
             array_map(
                 static function ($domain) {
-                    return strtolower(trim((string) $domain));
+                    return blc_normalize_remote_host($domain);
                 },
                 explode("\n", $excluded_domains_raw)
             ),
@@ -1026,7 +1031,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             if (!is_string($host) || $host === '') {
                 continue;
             }
-            $normalized_host = strtolower($host);
+            $normalized_host = blc_normalize_remote_host($host);
             $is_excluded = false;
             if (!empty($excluded_domains) && !empty($host)) {
                 foreach ($excluded_domains as $domain_to_exclude) {
@@ -1050,12 +1055,13 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
             if ($is_excluded) { continue; }
 
-            $is_internal_safe_host = isset($safe_internal_hosts[$normalized_host]);
+            $is_internal_safe_host = ($normalized_host !== '' && isset($safe_internal_hosts[$normalized_host]));
             $is_safe_remote_host   = true;
             $should_skip_remote_request = false;
 
             if (!$is_internal_safe_host) {
-                $is_safe_remote_host = blc_is_safe_remote_host($host);
+                $host_to_check = $normalized_host !== '' ? $normalized_host : $host;
+                $is_safe_remote_host = blc_is_safe_remote_host($host_to_check);
 
                 if (!$is_safe_remote_host) {
                     if ($debug_mode) { error_log("  -> Lien ignoré (IP non autorisée) : " . $normalized_url); }
@@ -1417,11 +1423,11 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     $normalized_basedir = $upload_basedir !== '' ? wp_normalize_path($upload_basedir) : '';
     $upload_baseurl_host = '';
     if ($upload_baseurl !== '') {
-        $upload_baseurl_host = function_exists('wp_parse_url')
+        $raw_upload_host = function_exists('wp_parse_url')
             ? wp_parse_url($upload_baseurl, PHP_URL_HOST)
             : parse_url($upload_baseurl, PHP_URL_HOST);
-        if (!is_string($upload_baseurl_host)) {
-            $upload_baseurl_host = '';
+        if (is_string($raw_upload_host) && $raw_upload_host !== '') {
+            $upload_baseurl_host = blc_normalize_remote_host($raw_upload_host);
         }
     }
     $site_url = home_url();
@@ -1433,8 +1439,9 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     $site_host_for_metadata = '';
     $site_host_candidate = parse_url($site_url, PHP_URL_HOST);
     if (is_string($site_host_candidate) && $site_host_candidate !== '') {
-        $site_host_for_metadata = strtolower($site_host_candidate);
+        $site_host_for_metadata = blc_normalize_remote_host($site_host_candidate);
     }
+    $normalized_site_host = $site_host_for_metadata;
 
     $blog_charset = get_bloginfo('charset');
     if (empty($blog_charset)) { $blog_charset = 'UTF-8'; }
@@ -1468,14 +1475,12 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                 continue;
             }
 
-            $image_host = parse_url($normalized_image_url, PHP_URL_HOST);
-            if ($image_host === false) { continue; }
+            $image_host_raw = parse_url($normalized_image_url, PHP_URL_HOST);
+            $image_host = is_string($image_host_raw) ? blc_normalize_remote_host($image_host_raw) : '';
+            if ($image_host === '') { continue; }
 
-            $site_host  = parse_url($site_url, PHP_URL_HOST);
-            if ($site_host === false) { continue; }
-
-            $hosts_match_site = !empty($image_host) && !empty($site_host) && strcasecmp($image_host, $site_host) === 0;
-            $hosts_match_upload = !empty($image_host) && $upload_baseurl_host !== '' && strcasecmp($image_host, $upload_baseurl_host) === 0;
+            $hosts_match_site = ($image_host !== '' && $normalized_site_host !== '' && $image_host === $normalized_site_host);
+            $hosts_match_upload = ($image_host !== '' && $upload_baseurl_host !== '' && $image_host === $upload_baseurl_host);
             if (!$hosts_match_site && !$hosts_match_upload) {
                 continue;
             }
