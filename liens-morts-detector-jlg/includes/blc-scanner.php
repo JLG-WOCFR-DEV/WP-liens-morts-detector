@@ -641,14 +641,14 @@ function blc_stage_dataset_refresh($table_name, $type, $scan_run_id, ?array $pos
     $mark_sql  = $wpdb->prepare("UPDATE $table_name SET scan_run_id = %s WHERE $where_sql", $args);
 
     if (!is_string($mark_sql)) {
-        return new \WP_Error('blc_stage_prepare_failed', __('Unable to prepare statement for staging dataset rows.', 'broken-link-checker'));
+        return new \WP_Error('blc_stage_prepare_failed', __('Unable to prepare statement for staging dataset rows.', 'liens-morts-detector-jlg'));
     }
 
     $result = $wpdb->query($mark_sql);
     if ($result === false) {
         $message = isset($wpdb->last_error) && $wpdb->last_error !== ''
             ? $wpdb->last_error
-            : __('Failed to mark dataset rows for refresh.', 'broken-link-checker');
+            : __('Failed to mark dataset rows for refresh.', 'liens-morts-detector-jlg');
 
         return new \WP_Error('blc_stage_failed', $message);
     }
@@ -703,14 +703,14 @@ function blc_commit_dataset_refresh($table_name, $type, $scan_run_id, $dataset_t
 
     $delete_sql = $wpdb->prepare("DELETE FROM $table_name WHERE $where_sql", $args);
     if (!is_string($delete_sql)) {
-        return new \WP_Error('blc_commit_prepare_failed', __('Unable to prepare cleanup query for dataset refresh.', 'broken-link-checker'));
+        return new \WP_Error('blc_commit_prepare_failed', __('Unable to prepare cleanup query for dataset refresh.', 'liens-morts-detector-jlg'));
     }
 
     $deleted = $wpdb->query($delete_sql);
     if ($deleted === false) {
         $message = isset($wpdb->last_error) && $wpdb->last_error !== ''
             ? $wpdb->last_error
-            : __('Failed to purge stale dataset entries.', 'broken-link-checker');
+            : __('Failed to purge stale dataset entries.', 'liens-morts-detector-jlg');
 
         return new \WP_Error('blc_commit_failed', $message);
     }

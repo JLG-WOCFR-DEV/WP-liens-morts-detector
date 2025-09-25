@@ -105,6 +105,9 @@ class BlcScannerTest extends TestCase
     /** @var array<int, float> */
     private array $serverLoad = [0.5, 0.4, 0.3];
 
+    /** @var array<int, array{text: string, domain: string|null}> */
+    private array $translationCalls = [];
+
     private string $currentHour = '00';
 
     private int $utcNow = 1000;
@@ -142,6 +145,8 @@ class BlcScannerTest extends TestCase
         $this->updatedOptions = [];
         $this->transients = [];
         $this->serverLoad = [0.5, 0.4, 0.3];
+        $GLOBALS['__translation_calls'] = [];
+        $this->translationCalls = &$GLOBALS['__translation_calls'];
         $this->currentHour = '00';
         $this->updatedPosts = [];
         $this->ajaxResponse = null;
@@ -399,6 +404,7 @@ class BlcScannerTest extends TestCase
         Monkey\tearDown();
         parent::tearDown();
         unset($GLOBALS['wp_query_queue'], $GLOBALS['wp_query_last_args']);
+        unset($GLOBALS['__translation_calls']);
         unset($_POST);
         $this->ajaxResponse = null;
         $this->transients = [];
@@ -549,6 +555,71 @@ class BlcScannerTest extends TestCase
             'https://example.com/blog/articles/fichier',
             blc_normalize_link_url('../fichier', 'https://example.com/blog/', 'https', $permalink)
         );
+    }
+
+    public function test_blc_stage_dataset_refresh_uses_plugin_domain_for_errors(): void
+    {
+        global $wpdb;
+        $wpdb = new class {
+            public $last_error = '';
+
+            public function prepare($query, $args = null)
+            {
+                return false;
+            }
+
+            public function query($sql)
+            {
+                return 0;
+            }
+        };
+
+        $initialCount = count($this->translationCalls);
+
+        $result = blc_stage_dataset_refresh('wp_blc_links', 'link', 'scan-token');
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('blc_stage_prepare_failed', $result->get_error_code());
+        $this->assertSame($initialCount + 1, count($this->translationCalls));
+
+        $lastCall = $this->translationCalls[$initialCount] ?? null;
+        $this->assertNotNull($lastCall, 'Translation call should be recorded for staging errors.');
+        $this->assertSame('liens-morts-detector-jlg', $lastCall['domain']);
+    }
+
+    public function test_blc_commit_dataset_refresh_uses_plugin_domain_for_errors(): void
+    {
+        global $wpdb;
+        $wpdb = new class {
+            public $last_error = '';
+
+            public function prepare($query, $args = null)
+            {
+                return false;
+            }
+
+            public function query($sql)
+            {
+                return 0;
+            }
+
+            public function get_var($query)
+            {
+                return 0;
+            }
+        };
+
+        $initialCount = count($this->translationCalls);
+
+        $result = blc_commit_dataset_refresh('wp_blc_links', 'link', 'scan-token', 'link');
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('blc_commit_prepare_failed', $result->get_error_code());
+        $this->assertSame($initialCount + 1, count($this->translationCalls));
+
+        $lastCall = $this->translationCalls[$initialCount] ?? null;
+        $this->assertNotNull($lastCall, 'Translation call should be recorded for commit errors.');
+        $this->assertSame('liens-morts-detector-jlg', $lastCall['domain']);
     }
 
     public function test_blc_perform_check_resolves_relative_links_using_permalink(): void
