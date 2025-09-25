@@ -209,7 +209,7 @@ add_action('wp_ajax_blc_edit_link', 'blc_ajax_edit_link_callback');
 function blc_ajax_edit_link_callback() {
     check_ajax_referer('blc_edit_link_nonce');
 
-    $params = blc_require_post_params(['post_id', 'row_id', 'occurrence_index', 'old_url', 'new_url']);
+    $params = blc_require_post_params(['post_id', 'row_id', 'old_url', 'new_url']);
 
     $post_id = absint($params['post_id']);
     $row_id  = absint($params['row_id']);
@@ -219,13 +219,24 @@ function blc_ajax_edit_link_callback() {
         ], 400);
     }
 
-    $occurrence_value = $params['occurrence_index'];
-    if (!is_string($occurrence_value) || preg_match('/^\d+$/', $occurrence_value) !== 1) {
+    $occurrence_value = '';
+    if (isset($_POST['occurrence_index'])) {
+        $raw_occurrence = wp_unslash($_POST['occurrence_index']);
+        if (is_string($raw_occurrence)) {
+            $occurrence_value = trim($raw_occurrence);
+        } elseif (is_scalar($raw_occurrence)) {
+            $occurrence_value = trim((string) $raw_occurrence);
+        }
+    }
+
+    $has_occurrence_index = ($occurrence_value !== '');
+    if ($has_occurrence_index && preg_match('/^\d+$/', $occurrence_value) !== 1) {
         wp_send_json_error([
             'message' => __('Indice d\'occurrence invalide.', 'liens-morts-detector-jlg'),
         ], 400);
     }
-    $occurrence_index = (int) $occurrence_value;
+
+    $occurrence_index = $has_occurrence_index ? (int) $occurrence_value : null;
 
     global $wpdb;
     $table_name = $wpdb->prefix . 'blc_broken_links';
@@ -251,10 +262,26 @@ function blc_ajax_edit_link_callback() {
         ], 409);
     }
 
-    if ((int) ($row['occurrence_index'] ?? -1) !== $occurrence_index) {
-        wp_send_json_error([
-            'message' => __('L\'occurrence du lien ne correspond plus. Veuillez relancer une analyse.', 'liens-morts-detector-jlg'),
-        ], 409);
+    $stored_occurrence_raw = $row['occurrence_index'] ?? null;
+    $stored_has_occurrence = is_numeric($stored_occurrence_raw) && (int) $stored_occurrence_raw >= 0;
+
+    if ($stored_has_occurrence) {
+        $stored_occurrence_index = (int) $stored_occurrence_raw;
+        if ($occurrence_index === null || $stored_occurrence_index !== $occurrence_index) {
+            wp_send_json_error([
+                'message' => __('L\'occurrence du lien ne correspond plus. Veuillez relancer une analyse.', 'liens-morts-detector-jlg'),
+            ], 409);
+        }
+
+        $occurrence_index = max(0, $stored_occurrence_index);
+    } else {
+        if ($has_occurrence_index) {
+            wp_send_json_error([
+                'message' => __('L\'occurrence du lien ne correspond plus. Veuillez relancer une analyse.', 'liens-morts-detector-jlg'),
+            ], 409);
+        }
+
+        $occurrence_index = null;
     }
 
     $prepared_old_url = blc_prepare_posted_url($params['old_url']);
@@ -458,7 +485,7 @@ add_action('wp_ajax_blc_unlink', 'blc_ajax_unlink_callback');
 function blc_ajax_unlink_callback() {
     check_ajax_referer('blc_unlink_nonce');
 
-    $params = blc_require_post_params(['post_id', 'row_id', 'occurrence_index', 'url_to_unlink']);
+    $params = blc_require_post_params(['post_id', 'row_id', 'url_to_unlink']);
 
     $post_id = absint($params['post_id']);
     $row_id  = absint($params['row_id']);
@@ -468,13 +495,24 @@ function blc_ajax_unlink_callback() {
         ], 400);
     }
 
-    $occurrence_value = $params['occurrence_index'];
-    if (!is_string($occurrence_value) || preg_match('/^\d+$/', $occurrence_value) !== 1) {
+    $occurrence_value = '';
+    if (isset($_POST['occurrence_index'])) {
+        $raw_occurrence = wp_unslash($_POST['occurrence_index']);
+        if (is_string($raw_occurrence)) {
+            $occurrence_value = trim($raw_occurrence);
+        } elseif (is_scalar($raw_occurrence)) {
+            $occurrence_value = trim((string) $raw_occurrence);
+        }
+    }
+
+    $has_occurrence_index = ($occurrence_value !== '');
+    if ($has_occurrence_index && preg_match('/^\d+$/', $occurrence_value) !== 1) {
         wp_send_json_error([
             'message' => __('Indice d\'occurrence invalide.', 'liens-morts-detector-jlg'),
         ], 400);
     }
-    $occurrence_index = (int) $occurrence_value;
+
+    $occurrence_index = $has_occurrence_index ? (int) $occurrence_value : null;
 
     global $wpdb;
     $table_name = $wpdb->prefix . 'blc_broken_links';
@@ -500,10 +538,26 @@ function blc_ajax_unlink_callback() {
         ], 409);
     }
 
-    if ((int) ($row['occurrence_index'] ?? -1) !== $occurrence_index) {
-        wp_send_json_error([
-            'message' => __('L\'occurrence du lien ne correspond plus. Veuillez relancer une analyse.', 'liens-morts-detector-jlg'),
-        ], 409);
+    $stored_occurrence_raw = $row['occurrence_index'] ?? null;
+    $stored_has_occurrence = is_numeric($stored_occurrence_raw) && (int) $stored_occurrence_raw >= 0;
+
+    if ($stored_has_occurrence) {
+        $stored_occurrence_index = (int) $stored_occurrence_raw;
+        if ($occurrence_index === null || $stored_occurrence_index !== $occurrence_index) {
+            wp_send_json_error([
+                'message' => __('L\'occurrence du lien ne correspond plus. Veuillez relancer une analyse.', 'liens-morts-detector-jlg'),
+            ], 409);
+        }
+
+        $occurrence_index = max(0, $stored_occurrence_index);
+    } else {
+        if ($has_occurrence_index) {
+            wp_send_json_error([
+                'message' => __('L\'occurrence du lien ne correspond plus. Veuillez relancer une analyse.', 'liens-morts-detector-jlg'),
+            ], 409);
+        }
+
+        $occurrence_index = null;
     }
 
     $raw_home_url = home_url();

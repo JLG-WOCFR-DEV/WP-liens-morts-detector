@@ -208,15 +208,21 @@ class BLC_Links_List_Table extends WP_List_Table {
      */
     protected function get_row_actions($item) {
         $actions = [];
-        $row_id = isset($item['id']) ? absint($item['id']) : 0;
-        $occurrence_index = isset($item['occurrence_index']) ? max(0, (int) $item['occurrence_index']) : 0;
-        $data_attributes = sprintf(
-            'data-postid="%d" data-url="%s" data-row-id="%d" data-occurrence-index="%d"',
-            $item['post_id'],
-            esc_attr($item['url']),
-            $row_id,
-            $occurrence_index
-        );
+        $row_id            = isset($item['id']) ? absint($item['id']) : 0;
+        $post_id           = isset($item['post_id']) ? absint($item['post_id']) : 0;
+        $occurrence_raw    = $item['occurrence_index'] ?? null;
+        $has_occurrence    = is_numeric($occurrence_raw) && (int) $occurrence_raw >= 0;
+        $data_attributes   = [
+            sprintf('data-postid="%d"', $post_id),
+            sprintf('data-url="%s"', esc_attr($item['url'])),
+            sprintf('data-row-id="%d"', $row_id),
+        ];
+
+        if ($has_occurrence) {
+            $data_attributes[] = sprintf('data-occurrence-index="%d"', (int) $occurrence_raw);
+        }
+
+        $data_attributes = implode(' ', $data_attributes);
 
         $actions['edit_link'] = sprintf(
             '<a href="#" class="blc-edit-link" %s data-nonce="%s">%s</a>',
