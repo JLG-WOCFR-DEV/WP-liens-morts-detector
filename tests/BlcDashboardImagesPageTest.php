@@ -9,6 +9,7 @@ namespace Tests {
 use Brain\Monkey;
 use Brain\Monkey\Functions;
 use PHPUnit\Framework\TestCase;
+use Tests\Stubs\OptionsStore;
 
 class BlcDashboardImagesPageTest extends TestCase
 {
@@ -27,6 +28,9 @@ class BlcDashboardImagesPageTest extends TestCase
         parent::setUp();
         require_once __DIR__ . '/../vendor/autoload.php';
         Monkey\setUp();
+
+        require_once __DIR__ . '/wp-option-stubs.php';
+        OptionsStore::reset();
 
         if (!defined('ABSPATH')) {
             define('ABSPATH', __DIR__ . '/../');
@@ -94,6 +98,7 @@ class BlcDashboardImagesPageTest extends TestCase
     protected function tearDown(): void
     {
         Monkey\tearDown();
+        OptionsStore::reset();
         parent::tearDown();
 
         if ($this->previous_wpdb !== null) {
