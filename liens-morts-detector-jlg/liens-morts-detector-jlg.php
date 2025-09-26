@@ -293,7 +293,7 @@ function blc_ajax_edit_link_callback() {
     $prepared_new_url = blc_prepare_posted_url($params['new_url']);
 
     if ($prepared_old_url === '' || $prepared_new_url === '') {
-        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')], 400);
     }
 
     $stored_old_url = blc_prepare_url_for_storage($prepared_old_url);
@@ -327,14 +327,14 @@ function blc_ajax_edit_link_callback() {
 
     $sanitized_new_url = wp_kses_bad_protocol($prepared_new_url, ['http', 'https']);
     if (!is_string($sanitized_new_url) || $sanitized_new_url === '') {
-        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')], 400);
     }
 
     $normalized_sanitized_new_url = blc_normalize_user_input_url($sanitized_new_url);
     $normalized_prepared_new_url = blc_normalize_user_input_url($prepared_new_url);
 
     if ($normalized_sanitized_new_url !== $normalized_prepared_new_url) {
-        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')], 400);
     }
 
     $clean_new_url = $sanitized_new_url;
@@ -366,7 +366,7 @@ function blc_ajax_edit_link_callback() {
         empty($validated_new_parts['scheme']) ||
         !in_array($validated_new_parts['scheme'], ['http', 'https'], true)
     ) {
-        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')], 400);
     }
 
     $final_new_url = $clean_new_url;
@@ -379,7 +379,7 @@ function blc_ajax_edit_link_callback() {
 
     if (!$is_explicit_new_url) {
         if (!$validated_new_url || $normalized_new_url === '') {
-            wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
+            wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')], 400);
         }
 
         if ($looks_like_domain_input && $normalized_new_url !== '') {
@@ -395,7 +395,7 @@ function blc_ajax_edit_link_callback() {
 
     if (!$post) {
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')]);
+            wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')], 403);
         }
 
         $deleted = $wpdb->delete(
@@ -420,13 +420,13 @@ function blc_ajax_edit_link_callback() {
     }
 
     if (!current_user_can('edit_post', $post_id)) {
-        wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')]);
+        wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')], 403);
     }
 
     $old_url = $prepared_old_url;
     $new_url = esc_url_raw($final_new_url);
     if ($new_url === '') {
-        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')], 400);
     }
 
     $normalized_content = blc_normalize_post_content_encoding($post->post_content);
@@ -435,7 +435,7 @@ function blc_ajax_edit_link_callback() {
     if (!$replacement['updated']) {
         wp_send_json_error([
             'message' => __('Impossible de localiser cette occurrence du lien. Le contenu a peut-être été modifié.', 'liens-morts-detector-jlg'),
-        ]);
+        ], 409);
     }
 
     $new_content = $replacement['content'];
@@ -451,7 +451,7 @@ function blc_ajax_edit_link_callback() {
             $error_message .= ' ' . $update_result->get_error_message();
         }
 
-        wp_send_json_error(['message' => $error_message]);
+        wp_send_json_error(['message' => $error_message], 500);
         return;
     }
 
@@ -467,7 +467,7 @@ function blc_ajax_edit_link_callback() {
             $error_message .= ' ' . $delete_result->get_error_message();
         }
 
-        wp_send_json_error(['message' => $error_message]);
+        wp_send_json_error(['message' => $error_message], 500);
         return;
     }
 
@@ -579,12 +579,12 @@ function blc_ajax_unlink_callback() {
 
     $prepared_url_to_unlink = blc_prepare_posted_url($params['url_to_unlink']);
     if ($prepared_url_to_unlink === '') {
-        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')], 400);
     }
 
     $sanitized_url_to_unlink = esc_url_raw($prepared_url_to_unlink);
     if ($sanitized_url_to_unlink === '') {
-        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')], 400);
     }
 
     $stored_url_to_unlink = blc_prepare_url_for_storage($prepared_url_to_unlink);
@@ -599,7 +599,7 @@ function blc_ajax_unlink_callback() {
 
     $normalized_parts = $normalized_url !== '' ? parse_url($normalized_url) : false;
     if (!$normalized_url || $normalized_parts === false || empty($normalized_parts['scheme']) || !in_array($normalized_parts['scheme'], ['http', 'https'], true)) {
-        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')]);
+        wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')], 400);
     }
 
     $row_to_delete = [
@@ -611,7 +611,7 @@ function blc_ajax_unlink_callback() {
     $post = get_post($post_id);
     if (!$post) {
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')]);
+            wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')], 403);
         }
 
         $deleted = $wpdb->delete(
@@ -636,7 +636,7 @@ function blc_ajax_unlink_callback() {
     }
 
     if (!current_user_can('edit_post', $post_id)) {
-        wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')]);
+        wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')], 403);
     }
 
     $normalized_content = blc_normalize_post_content_encoding($post->post_content);
@@ -645,7 +645,7 @@ function blc_ajax_unlink_callback() {
     if (!$removal['removed']) {
         wp_send_json_error([
             'message' => __('Impossible de localiser cette occurrence du lien. Le contenu a peut-être été modifié.', 'liens-morts-detector-jlg'),
-        ]);
+        ], 409);
     }
 
     $new_content = blc_restore_post_content_encoding($removal['content']);
@@ -660,7 +660,7 @@ function blc_ajax_unlink_callback() {
             $error_message .= ' ' . $update_result->get_error_message();
         }
 
-        wp_send_json_error(['message' => $error_message]);
+        wp_send_json_error(['message' => $error_message], 500);
         return;
     }
 
@@ -676,7 +676,7 @@ function blc_ajax_unlink_callback() {
             $error_message .= ' ' . $delete_result->get_error_message();
         }
 
-        wp_send_json_error(['message' => $error_message]);
+        wp_send_json_error(['message' => $error_message], 500);
         return;
     }
 
