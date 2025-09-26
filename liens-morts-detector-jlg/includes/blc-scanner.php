@@ -785,14 +785,19 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     $rest_end_hour   = (int) blc_normalize_hour_option($rest_end_hour_option, '20');
     $link_delay_ms   = max(0, (int) get_option('blc_link_delay', 200));
     $batch_delay_s   = max(0, (int) get_option('blc_batch_delay', 60));
+    $remote_request_timeouts = get_option('blc_remote_request_timeouts', []);
+    if (!is_array($remote_request_timeouts)) {
+        $remote_request_timeouts = [];
+    }
+
     $head_request_timeout = blc_normalize_timeout_option(
-        get_option('blc_head_request_timeout', 5),
+        $remote_request_timeouts['head'] ?? get_option('blc_head_request_timeout', 5),
         5,
         1.0,
         30.0
     );
     $get_request_timeout = blc_normalize_timeout_option(
-        get_option('blc_get_request_timeout', 10),
+        $remote_request_timeouts['get'] ?? get_option('blc_get_request_timeout', 10),
         10,
         1.0,
         60.0

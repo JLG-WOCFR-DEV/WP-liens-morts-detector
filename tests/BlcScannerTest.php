@@ -148,6 +148,10 @@ class BlcScannerTest extends TestCase
             'blc_batch_delay'      => 60,
             'blc_head_request_timeout' => 5,
             'blc_get_request_timeout'  => 10,
+            'blc_remote_request_timeouts' => [
+                'head' => 5,
+                'get'  => 10,
+            ],
             'blc_scan_method'      => 'precise',
             'blc_excluded_domains' => '',
             'blc_last_check_time'  => 0,
@@ -1200,8 +1204,10 @@ class BlcScannerTest extends TestCase
         global $wpdb;
         $wpdb = $this->createWpdbStub();
 
-        $this->options['blc_head_request_timeout'] = '7.5';
-        $this->options['blc_get_request_timeout'] = '120';
+        $this->options['blc_remote_request_timeouts'] = [
+            'head' => '7.5',
+            'get'  => '120',
+        ];
 
         $post = (object) [
             'ID' => 321,
