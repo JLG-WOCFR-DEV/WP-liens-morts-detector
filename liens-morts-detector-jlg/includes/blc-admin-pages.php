@@ -299,6 +299,20 @@ function blc_settings_page() {
         $batch_delay = max(0, intval($batch_delay_raw));
         update_option('blc_batch_delay', $batch_delay);
 
+        $previous_head_timeout = get_option('blc_head_request_timeout', 5);
+        $head_timeout_raw = isset($_POST['blc_head_request_timeout'])
+            ? wp_unslash($_POST['blc_head_request_timeout'])
+            : $previous_head_timeout;
+        $head_timeout = blc_normalize_timeout_option($head_timeout_raw, $previous_head_timeout, 1.0, 30.0);
+        update_option('blc_head_request_timeout', $head_timeout);
+
+        $previous_get_timeout = get_option('blc_get_request_timeout', 10);
+        $get_timeout_raw = isset($_POST['blc_get_request_timeout'])
+            ? wp_unslash($_POST['blc_get_request_timeout'])
+            : $previous_get_timeout;
+        $get_timeout = blc_normalize_timeout_option($get_timeout_raw, $previous_get_timeout, 1.0, 60.0);
+        update_option('blc_get_request_timeout', $get_timeout);
+
         $scan_method_raw = isset($_POST['blc_scan_method']) ? wp_unslash($_POST['blc_scan_method']) : '';
         $scan_method = sanitize_text_field($scan_method_raw);
         update_option('blc_scan_method', $scan_method);
@@ -356,6 +370,18 @@ function blc_settings_page() {
     $rest_end_hour = blc_prepare_time_input_value($rest_end_hour_option, '20');
     $link_delay = max(0, (int) get_option('blc_link_delay', 200));
     $batch_delay = max(0, (int) get_option('blc_batch_delay', 60));
+    $head_request_timeout = blc_normalize_timeout_option(
+        get_option('blc_head_request_timeout', 5),
+        5,
+        1.0,
+        30.0
+    );
+    $get_request_timeout = blc_normalize_timeout_option(
+        get_option('blc_get_request_timeout', 10),
+        10,
+        1.0,
+        60.0
+    );
     $scan_method = get_option('blc_scan_method', 'precise');
     $excluded_domains = get_option('blc_excluded_domains', "x.com\ntwitter.com\nlinkedin.com");
     $debug_mode = get_option('blc_debug_mode', false);
@@ -429,11 +455,25 @@ function blc_settings_page() {
                            <p class="description"><?php esc_html_e('Pause après la vérification de chaque URL. (Défaut : 200)', 'liens-morts-detector-jlg'); ?></p>
                         </td>
                     </tr>
-                     <tr>
+                    <tr>
                         <th scope="row"><label for="blc_batch_delay"><?php esc_html_e('⚙️ Délai entre chaque lot', 'liens-morts-detector-jlg'); ?></label></th>
                         <td>
                            <input type="number" name="blc_batch_delay" id="blc_batch_delay" value="<?php echo esc_attr($batch_delay); ?>" min="10" step="10"> <?php esc_html_e('secondes', 'liens-morts-detector-jlg'); ?>
                            <p class="description"><?php esc_html_e('Pause entre chaque groupe de 20 articles analysés. (Défaut : 60)', 'liens-morts-detector-jlg'); ?></p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><label for="blc_head_request_timeout"><?php esc_html_e('⏱️ Timeout requêtes HEAD', 'liens-morts-detector-jlg'); ?></label></th>
+                        <td>
+                           <input type="number" name="blc_head_request_timeout" id="blc_head_request_timeout" value="<?php echo esc_attr($head_request_timeout); ?>" min="1" max="30" step="0.5"> <?php esc_html_e('secondes', 'liens-morts-detector-jlg'); ?>
+                           <p class="description"><?php esc_html_e('Durée maximale accordée à chaque requête HEAD. (Défaut : 5)', 'liens-morts-detector-jlg'); ?></p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><label for="blc_get_request_timeout"><?php esc_html_e('⏱️ Timeout requêtes GET', 'liens-morts-detector-jlg'); ?></label></th>
+                        <td>
+                           <input type="number" name="blc_get_request_timeout" id="blc_get_request_timeout" value="<?php echo esc_attr($get_request_timeout); ?>" min="1" max="60" step="0.5"> <?php esc_html_e('secondes', 'liens-morts-detector-jlg'); ?>
+                           <p class="description"><?php esc_html_e('Durée maximale accordée à chaque requête GET lors du fallback. (Défaut : 10)', 'liens-morts-detector-jlg'); ?></p>
                         </td>
                     </tr>
                  </tbody>

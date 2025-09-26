@@ -143,6 +143,8 @@ class BlcScannerTest extends TestCase
             'blc_rest_end_hour'    => '00',
             'blc_link_delay'       => 0,
             'blc_batch_delay'      => 60,
+            'blc_head_request_timeout' => 5,
+            'blc_get_request_timeout'  => 10,
             'blc_scan_method'      => 'precise',
             'blc_excluded_domains' => '',
             'blc_last_check_time'  => 0,
@@ -1184,6 +1186,39 @@ class BlcScannerTest extends TestCase
         $this->assertSame(131072, $getRequest['args']['limit_response_size']);
 
         $this->assertCount(0, $wpdb->inserted, 'Successful GET fallback should prevent false positives.');
+    }
+
+    public function test_blc_perform_check_injects_configured_request_timeouts(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_head_request_timeout'] = '7.5';
+        $this->options['blc_get_request_timeout'] = '120';
+
+        $post = (object) [
+            'ID' => 321,
+            'post_title' => 'Custom Timeouts',
+            'post_content' => '<a href="http://example.com/custom-timeouts">Timeouts</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'http://example.com/custom-timeouts', ['response' => ['code' => 405]]);
+        $this->setHttpResponse('GET', 'http://example.com/custom-timeouts', ['response' => ['code' => 200]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(2, $this->httpRequests, 'HEAD followed by GET should be performed when HEAD is not allowed.');
+
+        $headRequest = $this->httpRequests[0];
+        $this->assertSame(7.5, $headRequest['args']['timeout']);
+
+        $getRequest = $this->httpRequests[1];
+        $this->assertSame(60.0, $getRequest['args']['timeout']);
     }
 
     public function test_blc_perform_check_uses_gmt_dates_for_incremental_scans(): void

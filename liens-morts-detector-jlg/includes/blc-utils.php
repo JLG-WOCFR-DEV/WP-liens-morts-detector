@@ -730,6 +730,66 @@ function blc_prepare_time_input_value($value, $default = '00') {
 }
 
 /**
+ * Normalize a timeout option coming from a settings form.
+ *
+ * @param mixed $value   Raw submitted value.
+ * @param float $default Fallback value when the input is invalid.
+ * @param float $min     Minimum allowed timeout in seconds.
+ * @param float $max     Maximum allowed timeout in seconds.
+ *
+ * @return float Timeout value between $min and $max.
+ */
+function blc_normalize_timeout_option($value, $default, $min, $max) {
+    $default = (float) $default;
+    $min     = (float) $min;
+    $max     = (float) $max;
+
+    if ($min > $max) {
+        $tmp = $min;
+        $min = $max;
+        $max = $tmp;
+    }
+
+    $candidate = $default;
+
+    if (is_scalar($value)) {
+        $value_string = trim((string) $value);
+        if ($value_string !== '') {
+            $value_string = str_replace(',', '.', $value_string);
+            if (is_numeric($value_string)) {
+                $candidate = (float) $value_string;
+            }
+        }
+    }
+
+    if (!is_finite($candidate)) {
+        $candidate = $default;
+    }
+
+    if (!is_finite($min)) {
+        $min = $default;
+    }
+
+    if (!is_finite($max)) {
+        $max = $default;
+    }
+
+    if ($min === $max) {
+        return (float) $min;
+    }
+
+    if ($candidate < $min) {
+        $candidate = $min;
+    }
+
+    if ($candidate > $max) {
+        $candidate = $max;
+    }
+
+    return (float) $candidate;
+}
+
+/**
  * Check whether a resolved IP address is considered public and safe for remote requests.
  *
  * @param string $ip Raw IP address.
