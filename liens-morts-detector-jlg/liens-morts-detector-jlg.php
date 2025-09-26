@@ -230,13 +230,19 @@ function blc_ajax_edit_link_callback() {
     }
 
     $has_occurrence_index = ($occurrence_value !== '');
-    if ($has_occurrence_index && preg_match('/^\d+$/', $occurrence_value) !== 1) {
-        wp_send_json_error([
-            'message' => __('Indice d\'occurrence invalide.', 'liens-morts-detector-jlg'),
-        ], 400);
-    }
+    $occurrence_index = null;
+    if ($has_occurrence_index) {
+        if (preg_match('/^-?\d+$/', $occurrence_value) !== 1) {
+            wp_send_json_error([
+                'message' => __('Indice d\'occurrence invalide.', 'liens-morts-detector-jlg'),
+            ], 400);
+        }
 
-    $occurrence_index = $has_occurrence_index ? (int) $occurrence_value : null;
+        $candidate_index = (int) $occurrence_value;
+        if ($candidate_index >= 0) {
+            $occurrence_index = $candidate_index;
+        }
+    }
 
     global $wpdb;
     $table_name = $wpdb->prefix . 'blc_broken_links';
@@ -263,10 +269,15 @@ function blc_ajax_edit_link_callback() {
     }
 
     $stored_occurrence_raw = $row['occurrence_index'] ?? null;
-    $stored_has_occurrence = is_numeric($stored_occurrence_raw) && (int) $stored_occurrence_raw >= 0;
+    $stored_occurrence_index = null;
+    if (is_numeric($stored_occurrence_raw)) {
+        $stored_candidate = (int) $stored_occurrence_raw;
+        if ($stored_candidate >= 0) {
+            $stored_occurrence_index = $stored_candidate;
+        }
+    }
 
-    if ($stored_has_occurrence) {
-        $stored_occurrence_index = (int) $stored_occurrence_raw;
+    if ($stored_occurrence_index !== null) {
         if ($occurrence_index === null || $stored_occurrence_index !== $occurrence_index) {
             wp_send_json_error([
                 'message' => __('L\'occurrence du lien ne correspond plus. Veuillez relancer une analyse.', 'liens-morts-detector-jlg'),
@@ -275,12 +286,6 @@ function blc_ajax_edit_link_callback() {
 
         $occurrence_index = max(0, $stored_occurrence_index);
     } else {
-        if ($has_occurrence_index) {
-            wp_send_json_error([
-                'message' => __('L\'occurrence du lien ne correspond plus. Veuillez relancer une analyse.', 'liens-morts-detector-jlg'),
-            ], 409);
-        }
-
         $occurrence_index = null;
     }
 
@@ -506,13 +511,19 @@ function blc_ajax_unlink_callback() {
     }
 
     $has_occurrence_index = ($occurrence_value !== '');
-    if ($has_occurrence_index && preg_match('/^\d+$/', $occurrence_value) !== 1) {
-        wp_send_json_error([
-            'message' => __('Indice d\'occurrence invalide.', 'liens-morts-detector-jlg'),
-        ], 400);
-    }
+    $occurrence_index = null;
+    if ($has_occurrence_index) {
+        if (preg_match('/^-?\d+$/', $occurrence_value) !== 1) {
+            wp_send_json_error([
+                'message' => __('Indice d\'occurrence invalide.', 'liens-morts-detector-jlg'),
+            ], 400);
+        }
 
-    $occurrence_index = $has_occurrence_index ? (int) $occurrence_value : null;
+        $candidate_index = (int) $occurrence_value;
+        if ($candidate_index >= 0) {
+            $occurrence_index = $candidate_index;
+        }
+    }
 
     global $wpdb;
     $table_name = $wpdb->prefix . 'blc_broken_links';
@@ -539,10 +550,15 @@ function blc_ajax_unlink_callback() {
     }
 
     $stored_occurrence_raw = $row['occurrence_index'] ?? null;
-    $stored_has_occurrence = is_numeric($stored_occurrence_raw) && (int) $stored_occurrence_raw >= 0;
+    $stored_occurrence_index = null;
+    if (is_numeric($stored_occurrence_raw)) {
+        $stored_candidate = (int) $stored_occurrence_raw;
+        if ($stored_candidate >= 0) {
+            $stored_occurrence_index = $stored_candidate;
+        }
+    }
 
-    if ($stored_has_occurrence) {
-        $stored_occurrence_index = (int) $stored_occurrence_raw;
+    if ($stored_occurrence_index !== null) {
         if ($occurrence_index === null || $stored_occurrence_index !== $occurrence_index) {
             wp_send_json_error([
                 'message' => __('L\'occurrence du lien ne correspond plus. Veuillez relancer une analyse.', 'liens-morts-detector-jlg'),
@@ -551,12 +567,6 @@ function blc_ajax_unlink_callback() {
 
         $occurrence_index = max(0, $stored_occurrence_index);
     } else {
-        if ($has_occurrence_index) {
-            wp_send_json_error([
-                'message' => __('L\'occurrence du lien ne correspond plus. Veuillez relancer une analyse.', 'liens-morts-detector-jlg'),
-            ], 409);
-        }
-
         $occurrence_index = null;
     }
 
