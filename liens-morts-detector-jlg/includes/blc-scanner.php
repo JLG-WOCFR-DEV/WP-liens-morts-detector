@@ -1095,6 +1095,28 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     $batch_exception = null;
     $batch_wp_error = null;
 
+    $pending_link_inserts = [];
+    $register_pending_link_insert = static function ($post_id, $row_bytes) use (&$pending_link_inserts, $wpdb) {
+        $post_id = (int) $post_id;
+        if ($post_id <= 0) {
+            return;
+        }
+
+        $row_id = isset($wpdb->insert_id) ? (int) $wpdb->insert_id : 0;
+        if ($row_id <= 0) {
+            return;
+        }
+
+        if (!isset($pending_link_inserts[$post_id])) {
+            $pending_link_inserts[$post_id] = [];
+        }
+
+        $pending_link_inserts[$post_id][] = [
+            'id'    => $row_id,
+            'bytes' => (int) $row_bytes,
+        ];
+    };
+
     foreach ($posts as $post) {
         try {
             if ($debug_mode) { error_log("Analyse LIENS pour : '" . $post->post_title . "'"); }
@@ -1194,6 +1216,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                             ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d']
                         );
                         if ($inserted) {
+                            $register_pending_link_insert($post->ID, $row_bytes);
                             blc_adjust_dataset_storage_footprint('link', $row_bytes);
                         }
                         continue;
@@ -1254,6 +1277,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                         ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d']
                     );
                     if ($inserted) {
+                        $register_pending_link_insert($post->ID, $row_bytes);
                         blc_adjust_dataset_storage_footprint('link', $row_bytes);
                     }
                     $should_skip_remote_request = true;
@@ -1452,6 +1476,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                     ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d']
                 );
                 if ($inserted) {
+                    $register_pending_link_insert($post->ID, $row_bytes);
                     blc_adjust_dataset_storage_footprint('link', $row_bytes);
                 }
             }
@@ -1490,10 +1515,34 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                 $batch_wp_error = $commit_result;
                 break;
             }
+
+            if (isset($pending_link_inserts[$post->ID])) {
+                unset($pending_link_inserts[$post->ID]);
+            }
         }
     }
 
-    if ($scan_run_token !== '' && ($batch_exception !== null || $batch_wp_error instanceof \WP_Error)) {
+    $should_cleanup_pending_links = ($batch_exception !== null || $batch_wp_error instanceof \WP_Error);
+    if ($should_cleanup_pending_links && !empty($pending_link_inserts)) {
+        foreach ($pending_link_inserts as $post_pending_entries) {
+            foreach ($post_pending_entries as $entry) {
+                $row_id = isset($entry['id']) ? (int) $entry['id'] : 0;
+                $bytes  = isset($entry['bytes']) ? (int) $entry['bytes'] : 0;
+
+                if ($row_id > 0) {
+                    $wpdb->delete($table_name, ['id' => $row_id], ['%d']);
+                }
+
+                if ($bytes !== 0) {
+                    blc_adjust_dataset_storage_footprint('link', -$bytes);
+                }
+            }
+        }
+
+        $pending_link_inserts = [];
+    }
+
+    if ($scan_run_token !== '' && $should_cleanup_pending_links) {
         blc_restore_dataset_refresh($table_name, 'link', $scan_run_token);
     }
 
@@ -1649,6 +1698,28 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     $batch_exception = null;
     $batch_wp_error = null;
 
+    $pending_image_inserts = [];
+    $register_pending_image_insert = static function ($post_id, $row_bytes) use (&$pending_image_inserts, $wpdb) {
+        $post_id = (int) $post_id;
+        if ($post_id <= 0) {
+            return;
+        }
+
+        $row_id = isset($wpdb->insert_id) ? (int) $wpdb->insert_id : 0;
+        if ($row_id <= 0) {
+            return;
+        }
+
+        if (!isset($pending_image_inserts[$post_id])) {
+            $pending_image_inserts[$post_id] = [];
+        }
+
+        $pending_image_inserts[$post_id][] = [
+            'id'    => $row_id,
+            'bytes' => (int) $row_bytes,
+        ];
+    };
+
     foreach ($posts as $post) {
         try {
             if ($debug_mode) { error_log("Analyse IMAGES pour : '" . $post->post_title . "'"); }
@@ -1794,6 +1865,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                 ['%s', '%s', '%d', '%s', '%s', '%s', '%d']
             );
             if ($inserted) {
+                $register_pending_image_insert($post->ID, $row_bytes);
                 blc_adjust_dataset_storage_footprint('image', $row_bytes);
             }
         }
@@ -1809,10 +1881,34 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                 $batch_wp_error = $commit_result;
                 break;
             }
+
+            if (isset($pending_image_inserts[$post->ID])) {
+                unset($pending_image_inserts[$post->ID]);
+            }
         }
     }
 
-    if ($scan_run_token !== '' && ($batch_exception !== null || $batch_wp_error instanceof \WP_Error)) {
+    $should_cleanup_pending_images = ($batch_exception !== null || $batch_wp_error instanceof \WP_Error);
+    if ($should_cleanup_pending_images && !empty($pending_image_inserts)) {
+        foreach ($pending_image_inserts as $post_pending_entries) {
+            foreach ($post_pending_entries as $entry) {
+                $row_id = isset($entry['id']) ? (int) $entry['id'] : 0;
+                $bytes  = isset($entry['bytes']) ? (int) $entry['bytes'] : 0;
+
+                if ($row_id > 0) {
+                    $wpdb->delete($table_name, ['id' => $row_id], ['%d']);
+                }
+
+                if ($bytes !== 0) {
+                    blc_adjust_dataset_storage_footprint('image', -$bytes);
+                }
+            }
+        }
+
+        $pending_image_inserts = [];
+    }
+
+    if ($scan_run_token !== '' && $should_cleanup_pending_images) {
         blc_restore_dataset_refresh($table_name, 'image', $scan_run_token);
     }
 
