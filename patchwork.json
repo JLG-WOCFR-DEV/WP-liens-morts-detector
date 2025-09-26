@@ -3,6 +3,7 @@
         "sys_getloadavg",
         "time",
         "dns_get_record",
-        "gethostbynamel"
+        "gethostbynamel",
+        "error_log"
     ]
 }

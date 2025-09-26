@@ -62,11 +62,27 @@ function blc_dashboard_links_page() {
         $is_full = isset($_POST['blc_full_scan']);
         $bypass_rest_window = $is_full;
         wp_clear_scheduled_hook('blc_manual_check_batch');
-        wp_schedule_single_event(time(), 'blc_manual_check_batch', array(0, $is_full, $bypass_rest_window));
-        printf(
-            '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
-            esc_html__("La vérification des liens a été programmée et s'exécute en arrière-plan.", 'liens-morts-detector-jlg')
-        );
+        $scheduled = wp_schedule_single_event(time(), 'blc_manual_check_batch', array(0, $is_full, $bypass_rest_window));
+
+        if (false === $scheduled) {
+            error_log(
+                sprintf(
+                    'BLC: Failed to schedule manual link check (full scan: %s, bypass rest window: %s).',
+                    $is_full ? 'true' : 'false',
+                    $bypass_rest_window ? 'true' : 'false'
+                )
+            );
+            do_action('blc_manual_check_schedule_failed', $is_full, $bypass_rest_window);
+            printf(
+                '<div class="notice notice-error is-dismissible"><p>%s</p></div>',
+                esc_html__("La vérification des liens n'a pas pu être programmée. Veuillez réessayer.", 'liens-morts-detector-jlg')
+            );
+        } else {
+            printf(
+                '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
+                esc_html__("La vérification des liens a été programmée et s'exécute en arrière-plan.", 'liens-morts-detector-jlg')
+            );
+        }
     }
 
     // Préparation des données et des statistiques pour les liens
@@ -155,11 +171,21 @@ function blc_dashboard_images_page() {
         }
 
         wp_clear_scheduled_hook('blc_check_image_batch');
-        wp_schedule_single_event(time(), 'blc_check_image_batch', array(0, true));
-        printf(
-            '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
-            esc_html__("La vérification des images a été programmée et s'exécute en arrière-plan.", 'liens-morts-detector-jlg')
-        );
+        $scheduled = wp_schedule_single_event(time(), 'blc_check_image_batch', array(0, true));
+
+        if (false === $scheduled) {
+            error_log('BLC: Failed to schedule manual image check.');
+            do_action('blc_manual_image_check_schedule_failed');
+            printf(
+                '<div class="notice notice-error is-dismissible"><p>%s</p></div>',
+                esc_html__("La vérification des images n'a pas pu être programmée. Veuillez réessayer.", 'liens-morts-detector-jlg')
+            );
+        } else {
+            printf(
+                '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
+                esc_html__("La vérification des images a été programmée et s'exécute en arrière-plan.", 'liens-morts-detector-jlg')
+            );
+        }
     }
 
     global $wpdb;
