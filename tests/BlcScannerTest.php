@@ -587,6 +587,37 @@ class BlcScannerTest extends TestCase
         $this->assertSame('liens-morts-detector-jlg', $lastCall['domain']);
     }
 
+    public function test_blc_stage_dataset_refresh_translates_query_failures_with_plugin_domain(): void
+    {
+        global $wpdb;
+        $wpdb = new class {
+            public $last_error = '';
+
+            public function prepare($query, $args = null)
+            {
+                return 'SQL';
+            }
+
+            public function query($sql)
+            {
+                return false;
+            }
+        };
+
+        $initialCount = count($this->translationCalls);
+
+        $result = blc_stage_dataset_refresh('wp_blc_links', 'link', 'scan-token');
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('blc_stage_failed', $result->get_error_code());
+        $this->assertSame('Failed to mark dataset rows for refresh.', $result->get_error_message());
+        $this->assertSame($initialCount + 1, count($this->translationCalls));
+
+        $lastCall = $this->translationCalls[$initialCount] ?? null;
+        $this->assertNotNull($lastCall, 'Translation call should be recorded for staging query failures.');
+        $this->assertSame('liens-morts-detector-jlg', $lastCall['domain']);
+    }
+
     public function test_blc_commit_dataset_refresh_uses_plugin_domain_for_errors(): void
     {
         global $wpdb;
@@ -619,6 +650,42 @@ class BlcScannerTest extends TestCase
 
         $lastCall = $this->translationCalls[$initialCount] ?? null;
         $this->assertNotNull($lastCall, 'Translation call should be recorded for commit errors.');
+        $this->assertSame('liens-morts-detector-jlg', $lastCall['domain']);
+    }
+
+    public function test_blc_commit_dataset_refresh_translates_query_failures_with_plugin_domain(): void
+    {
+        global $wpdb;
+        $wpdb = new class {
+            public $last_error = '';
+
+            public function prepare($query, $args = null)
+            {
+                return 'SQL';
+            }
+
+            public function query($sql)
+            {
+                return false;
+            }
+
+            public function get_var($query)
+            {
+                return 0;
+            }
+        };
+
+        $initialCount = count($this->translationCalls);
+
+        $result = blc_commit_dataset_refresh('wp_blc_links', 'link', 'scan-token', 'link');
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('blc_commit_failed', $result->get_error_code());
+        $this->assertSame('Failed to purge stale dataset entries.', $result->get_error_message());
+        $this->assertSame($initialCount + 1, count($this->translationCalls));
+
+        $lastCall = $this->translationCalls[$initialCount] ?? null;
+        $this->assertNotNull($lastCall, 'Translation call should be recorded for commit query failures.');
         $this->assertSame('liens-morts-detector-jlg', $lastCall['domain']);
     }
 
