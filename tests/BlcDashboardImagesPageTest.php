@@ -10,7 +10,7 @@ use Brain\Monkey;
 use Brain\Monkey\Functions;
 use PHPUnit\Framework\TestCase;
 
-class BlcDashboardLinksPageTest extends TestCase
+class BlcDashboardImagesPageTest extends TestCase
 {
     /**
      * @var array<string, mixed>
@@ -41,7 +41,7 @@ class BlcDashboardLinksPageTest extends TestCase
         }
 
         $this->options = [
-            'blc_last_check_time' => 0,
+            'blc_last_image_check_time' => 0,
         ];
 
         $this->previous_wpdb = $GLOBALS['wpdb'] ?? null;
@@ -60,19 +60,9 @@ class BlcDashboardLinksPageTest extends TestCase
                 return 0;
             }
 
-            public function get_row($query, $output = ARRAY_A)
-            {
-                return ['total' => 0, 'internal_count' => 0, 'external_count' => 0];
-            }
-
             public function get_results($query, $output = ARRAY_A)
             {
                 return [];
-            }
-
-            public function esc_like($text)
-            {
-                return $text;
             }
         };
 
@@ -81,17 +71,10 @@ class BlcDashboardLinksPageTest extends TestCase
         Functions\when('get_option')->alias(static function ($name, $default = false) use ($test_case) {
             return $test_case->getStoredOption((string) $name, $default);
         });
-        Functions\when('home_url')->justReturn('https://example.com');
-        Functions\when('remove_query_arg')->alias(static fn($key, $url = null) => 'admin.php');
-        Functions\when('add_query_arg')->alias(static function ($key, $value = null, $url = null) {
-            $args = is_array($key) ? $key : [$key => $value];
-
-            return 'admin.php?' . http_build_query($args);
-        });
         Functions\when('wp_clear_scheduled_hook')->justReturn(true);
+        Functions\when('wp_schedule_single_event')->justReturn(true);
         Functions\when('check_admin_referer')->justReturn(true);
         Functions\when('current_user_can')->justReturn(true);
-        Functions\when('wp_schedule_single_event')->justReturn(true);
         Functions\when('wp_nonce_field')->alias(static function () {
             echo '';
 
@@ -120,54 +103,26 @@ class BlcDashboardLinksPageTest extends TestCase
         $_POST = [];
     }
 
-    public function test_last_check_time_uses_site_timezone(): void
+    public function test_manual_image_check_shows_error_notice_when_schedule_fails(): void
     {
-        $timestamp = gmmktime(23, 0, 0, 12, 31, 2023);
-        $this->setStoredOption('blc_last_check_time', $timestamp);
-
-        $timezone = new \DateTimeZone('Pacific/Kiritimati');
-
-        Functions\when('wp_timezone')->alias(static fn() => $timezone);
-        Functions\when('wp_date')->alias(static function ($format, $timestamp = null, $tz = null) use ($timezone) {
-            $timestamp = $timestamp ?? time();
-            $target_tz = $tz ?? $timezone;
-
-            $date = new \DateTime('@' . $timestamp);
-            $date->setTimezone($target_tz);
-
-            return $date->format($format);
-        });
-
-        ob_start();
-        blc_dashboard_links_page();
-        $output = (string) ob_get_clean();
-
-        $this->assertStringContainsString('1 Jan 2024', $output);
-    }
-
-    public function test_manual_check_shows_error_notice_when_schedule_fails(): void
-    {
-        $_POST['blc_manual_check'] = '1';
-        $_POST['blc_full_scan'] = '1';
+        $_POST['blc_manual_image_check'] = '1';
 
         Functions\when('wp_schedule_single_event')->justReturn(false);
         Functions\expect('error_log')->once()->withArgs(static function ($message) {
             return is_string($message)
-                && str_contains($message, 'Failed to schedule manual link check');
+                && str_contains($message, 'Failed to schedule manual image check');
         });
-        Functions\expect('do_action')->once()->withArgs(static function ($hook, $is_full, $bypass_rest_window) {
-            return 'blc_manual_check_schedule_failed' === $hook
-                && true === $is_full
-                && true === $bypass_rest_window;
+        Functions\expect('do_action')->once()->withArgs(static function ($hook) {
+            return 'blc_manual_image_check_schedule_failed' === $hook;
         })->andReturnNull();
 
         ob_start();
-        blc_dashboard_links_page();
+        blc_dashboard_images_page();
         $output = (string) ob_get_clean();
 
         $this->assertStringContainsString('notice-error', $output);
-        $this->assertStringContainsString("La vérification des liens n'a pas pu être programmée.", $output);
-        $this->assertStringNotContainsString("La vérification des liens a été programmée", $output);
+        $this->assertStringContainsString("La vérification des images n'a pas pu être programmée.", $output);
+        $this->assertStringNotContainsString("La vérification des images a été programmée", $output);
     }
 
     /**
@@ -192,4 +147,3 @@ class BlcDashboardLinksPageTest extends TestCase
 }
 
 }
-
