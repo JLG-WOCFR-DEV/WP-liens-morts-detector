@@ -560,24 +560,16 @@ function blc_get_dataset_storage_footprint_bytes($type) {
  */
 function blc_adjust_dataset_storage_footprint($type, $delta) {
     $option_name = blc_get_dataset_size_cache_key($type);
-    if ($option_name === '') {
+    if ($option_name === '' || !function_exists('get_option') || !function_exists('update_option')) {
         return;
     }
 
-    if (!function_exists('update_option')) {
-        return;
+    $cached = get_option($option_name, 0);
+    if (!is_numeric($cached)) {
+        $cached = 0;
     }
 
-    $cached = 0;
-    if (function_exists('get_option')) {
-        $cached = get_option($option_name, 0);
-        if (!is_numeric($cached)) {
-            $cached = 0;
-        }
-    }
-
-    $current = max(0, (int) $cached);
-    $new_value = $current + (int) $delta;
+    $new_value = (int) $cached + (int) $delta;
     if ($new_value < 0) {
         $new_value = 0;
     }

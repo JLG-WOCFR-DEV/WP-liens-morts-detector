@@ -87,5 +87,18 @@ class BlcDatasetSizeCacheTest extends TestCase
 
         $this->assertSame(0, $GLOBALS['wpdb']->getVarCalls);
     }
+
+    public function test_adjust_dataset_storage_footprint_ignores_invalid_cache_value(): void
+    {
+        $type = 'image';
+        $cacheKey = \blc_get_dataset_size_cache_key($type);
+        $this->assertNotSame('', $cacheKey);
+
+        OptionsStore::$options[$cacheKey] = 'not-a-number';
+
+        \blc_adjust_dataset_storage_footprint($type, 75);
+
+        $this->assertSame(75, OptionsStore::$options[$cacheKey] ?? null);
+    }
 }
 }
