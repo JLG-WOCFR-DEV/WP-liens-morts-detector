@@ -1228,6 +1228,39 @@ class BlcScannerTest extends TestCase
         $this->assertSame(60.0, $getRequest['args']['timeout']);
     }
 
+    public function test_blc_perform_check_enforces_timeout_boundaries(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_head_request_timeout'] = '0.25';
+        $this->options['blc_get_request_timeout'] = '600';
+
+        $post = (object) [
+            'ID' => 654,
+            'post_title' => 'Bounded Timeouts',
+            'post_content' => '<a href="http://example.com/bounded-timeouts">Timeouts</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'http://example.com/bounded-timeouts', ['response' => ['code' => 405]]);
+        $this->setHttpResponse('GET', 'http://example.com/bounded-timeouts', ['response' => ['code' => 200]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(2, $this->httpRequests, 'HEAD followed by GET should be performed when HEAD is not allowed.');
+
+        $headRequest = $this->httpRequests[0];
+        $this->assertSame(1.0, $headRequest['args']['timeout']);
+
+        $getRequest = $this->httpRequests[1];
+        $this->assertSame(60.0, $getRequest['args']['timeout']);
+    }
+
     public function test_blc_perform_check_uses_gmt_dates_for_incremental_scans(): void
     {
         global $wpdb;
