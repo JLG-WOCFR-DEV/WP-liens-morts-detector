@@ -1002,7 +1002,18 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     $last_check_time = (int) get_option('blc_last_check_time', 0);
     $table_name      = $wpdb->prefix . 'blc_broken_links';
 
-    $args = ['post_type' => 'any', 'post_status' => 'publish', 'posts_per_page' => $batch_size, 'paged' => $batch + 1];
+    $public_post_types = get_post_types(['public' => true]);
+    if (empty($public_post_types)) {
+        $public_post_types = ['post'];
+    }
+
+    // Restreint la requête aux contenus publics détectés dynamiquement tout en conservant la pagination ($batch + 1).
+    $args = [
+        'post_type'      => array_values($public_post_types),
+        'post_status'    => 'publish',
+        'posts_per_page' => $batch_size,
+        'paged'          => $batch + 1,
+    ];
     if (!$is_full_scan && $last_check_time > 0) {
         $threshold = gmdate('Y-m-d H:i:s', $last_check_time);
         $args['date_query'] = [[
@@ -1644,7 +1655,18 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     }
 
     $batch_size = 20;
-    $args = ['post_type' => 'any', 'post_status' => 'publish', 'posts_per_page' => $batch_size, 'paged' => $batch + 1];
+    $public_post_types = get_post_types(['public' => true]);
+    if (empty($public_post_types)) {
+        $public_post_types = ['post'];
+    }
+
+    // Restreint la requête aux contenus publics détectés dynamiquement tout en conservant la pagination ($batch + 1).
+    $args = [
+        'post_type'      => array_values($public_post_types),
+        'post_status'    => 'publish',
+        'posts_per_page' => $batch_size,
+        'paged'          => $batch + 1,
+    ];
     $query = new WP_Query($args);
     $posts = $query->posts;
     $checked_local_paths = [];

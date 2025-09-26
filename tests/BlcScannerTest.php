@@ -202,6 +202,13 @@ class BlcScannerTest extends TestCase
 
             return preg_replace('#^[a-z0-9+.-]+://#i', $scheme . '://', $url);
         });
+        Functions\when('get_post_types')->alias(static function (array $args = [], string $output = 'names', string $operator = 'and') {
+            if (isset($args['public']) && $args['public'] === true) {
+                return ['post', 'page'];
+            }
+
+            return ['post', 'page'];
+        });
         Functions\when('wp_parse_url')->alias(function ($url, $component = -1) {
             if ($component === -1) {
                 return parse_url((string) $url);
@@ -1869,6 +1876,67 @@ class BlcScannerTest extends TestCase
         $this->assertSame(['id' => 2], $wpdb->deleted[0]['where']);
     }
 
+    public function test_blc_perform_check_uses_public_post_types_for_queries(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        Functions\when('get_post_types')->alias(static function (array $args = [], string $output = 'names', string $operator = 'and') {
+            if (isset($args['public']) && $args['public'] === true) {
+                return ['post', 'page', 'landing'];
+            }
+
+            return ['post', 'page', 'landing'];
+        });
+
+        $post = (object) [
+            'ID' => 5010,
+            'post_title' => 'Landing Page',
+            'post_content' => '<a href="http://ok.com/resource">Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_check(0, true);
+
+        $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should be instantiated during the scan.');
+        $args = $GLOBALS['wp_query_last_args'][0];
+        $this->assertSame(['post', 'page', 'landing'], $args['post_type'], 'Only public post types should be scanned.');
+        $this->assertSame(1, $args['paged'], 'Existing pagination must be preserved.');
+        $this->assertSame(20, $args['posts_per_page'], 'Batch size should remain unchanged.');
+    }
+
+    public function test_blc_perform_check_falls_back_to_post_type_when_none_detected(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        Functions\when('get_post_types')->alias(static function () {
+            return [];
+        });
+
+        $post = (object) [
+            'ID' => 5011,
+            'post_title' => 'Fallback Post',
+            'post_content' => '<a href="http://ok.com/resource">Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_check(0, true);
+
+        $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'The scan should still execute when no public types are detected.');
+        $args = $GLOBALS['wp_query_last_args'][0];
+        $this->assertSame(['post'], $args['post_type'], 'A missing public list should fall back to the default post type.');
+        $this->assertSame(1, $args['paged'], 'Pagination should remain consistent when falling back.');
+    }
+
     public function test_blc_perform_check_batches_and_reschedules_next_batch(): void
     {
         global $wpdb;
@@ -2223,6 +2291,38 @@ class BlcScannerTest extends TestCase
 
             return 'https://example.com/post/';
         });
+    }
+
+    public function test_blc_perform_image_check_uses_public_post_types_for_queries(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        Functions\when('get_post_types')->alias(static function (array $args = [], string $output = 'names', string $operator = 'and') {
+            if (isset($args['public']) && $args['public'] === true) {
+                return ['post', 'page', 'portfolio'];
+            }
+
+            return ['post', 'page', 'portfolio'];
+        });
+
+        $post = (object) [
+            'ID' => 880,
+            'post_title' => 'Portfolio Item',
+            'post_content' => '<img src="https://example.com/wp-content/uploads/2024/05/missing.jpg" />',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_image_check(0, true);
+
+        $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query must run for image scans.');
+        $args = $GLOBALS['wp_query_last_args'][0];
+        $this->assertSame(['post', 'page', 'portfolio'], $args['post_type'], 'Image scans should target public post types.');
+        $this->assertSame(1, $args['paged'], 'Image scan pagination should remain unchanged.');
     }
 
     public function test_blc_perform_image_check_cleans_table_and_reschedules(): void
