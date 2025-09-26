@@ -785,6 +785,18 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     $rest_end_hour   = (int) blc_normalize_hour_option($rest_end_hour_option, '20');
     $link_delay_ms   = max(0, (int) get_option('blc_link_delay', 200));
     $batch_delay_s   = max(0, (int) get_option('blc_batch_delay', 60));
+    $head_request_timeout = blc_normalize_timeout_option(
+        get_option('blc_head_request_timeout', 5),
+        5,
+        1.0,
+        30.0
+    );
+    $get_request_timeout = blc_normalize_timeout_option(
+        get_option('blc_get_request_timeout', 10),
+        10,
+        1.0,
+        60.0
+    );
     $scan_method     = get_option('blc_scan_method', 'precise');
     $excluded_domains_raw = get_option('blc_excluded_domains', '');
     $last_remote_request_completed_at = 0.0;
@@ -1330,13 +1342,13 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             $fallback_due_to_temporary_status = false;
             if (!$should_use_cache) {
                 $head_request_args = [
-                    'timeout'             => 5,
+                    'timeout'             => $head_request_timeout,
                     'limit_response_size' => 1024,
                     'redirection'         => 5,
                 ];
 
                 $get_request_args = [
-                    'timeout'             => 10,
+                    'timeout'             => $get_request_timeout,
                     'user-agent'          => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
                     'method'              => 'GET',
                     'limit_response_size' => 131072,
