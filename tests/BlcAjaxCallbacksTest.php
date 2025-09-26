@@ -14,6 +14,7 @@ namespace Tests {
 use PHPUnit\Framework\TestCase;
 use Brain\Monkey;
 use Brain\Monkey\Functions;
+use Tests\Stubs\OptionsStore;
 
 class BlcAjaxCallbacksTest extends TestCase
 {
@@ -22,6 +23,9 @@ class BlcAjaxCallbacksTest extends TestCase
         parent::setUp();
         require_once __DIR__ . '/../vendor/autoload.php';
         Monkey\setUp();
+
+        require_once __DIR__ . '/wp-option-stubs.php';
+        OptionsStore::reset();
 
         if (!defined('ABSPATH')) {
             define('ABSPATH', __DIR__ . '/../');
@@ -116,6 +120,7 @@ class BlcAjaxCallbacksTest extends TestCase
     protected function tearDown(): void
     {
         Monkey\tearDown();
+        OptionsStore::reset();
         parent::tearDown();
         $_POST = [];
         global $wpdb;
