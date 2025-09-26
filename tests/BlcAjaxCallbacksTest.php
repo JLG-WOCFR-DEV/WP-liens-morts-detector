@@ -383,6 +383,344 @@ class BlcAjaxCallbacksTest extends TestCase
         blc_ajax_edit_link_callback();
     }
 
+    public function test_edit_link_returns_not_found_when_database_row_missing(): void
+    {
+        $_POST = [
+            'post_id' => 14,
+            'row_id' => '14',
+            'occurrence_index' => '0',
+            'old_url' => 'http://old.com',
+            'new_url' => 'http://new.com',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(function () {
+            return true;
+        });
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub(static function () {
+            return null;
+        });
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => 'Le lien sélectionné est introuvable. Veuillez relancer une analyse.',
+        ], 404)->andReturnUsing(static function () {
+            throw new \RuntimeException('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_edit_link_callback();
+    }
+
+    public function test_edit_link_returns_conflict_when_database_row_belongs_to_other_post(): void
+    {
+        $_POST = [
+            'post_id' => 15,
+            'row_id' => '15',
+            'occurrence_index' => '0',
+            'old_url' => 'http://old.example',
+            'new_url' => 'http://new.example',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(function () {
+            return true;
+        });
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->get_row_result = [
+            'id' => 15,
+            'post_id' => 153,
+            'url' => 'http://old.example',
+            'anchor' => '',
+            'post_title' => 'Sample',
+            'occurrence_index' => null,
+        ];
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => 'Le lien sélectionné ne correspond plus à cet article. Veuillez actualiser la page.',
+        ], 409)->andReturnUsing(static function () {
+            throw new \RuntimeException('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_edit_link_callback();
+    }
+
+    public function test_edit_link_returns_conflict_when_occurrence_index_mismatch(): void
+    {
+        $_POST = [
+            'post_id' => 16,
+            'row_id' => '16',
+            'occurrence_index' => '0',
+            'old_url' => 'http://old.test',
+            'new_url' => 'http://new.test',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(function () {
+            return true;
+        });
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->get_row_result = [
+            'id' => 16,
+            'post_id' => 16,
+            'url' => 'http://old.test',
+            'anchor' => '',
+            'post_title' => 'Sample',
+            'occurrence_index' => 3,
+        ];
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => "L'occurrence du lien ne correspond plus. Veuillez relancer une analyse.",
+        ], 409)->andReturnUsing(static function () {
+            throw new \RuntimeException('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_edit_link_callback();
+    }
+
+    public function test_edit_link_returns_conflict_when_stored_url_differs_from_request(): void
+    {
+        $_POST = [
+            'post_id' => 17,
+            'row_id' => '17',
+            'occurrence_index' => '0',
+            'old_url' => 'http://old-different.test',
+            'new_url' => 'http://new-different.test',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(function () {
+            return true;
+        });
+        Functions\when('blc_prepare_url_for_storage')->alias(static function ($url) {
+            return $url === 'http://old-different.test' ? 'stored-old-url' : $url;
+        });
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->get_row_result = [
+            'id' => 17,
+            'post_id' => 17,
+            'url' => 'stored-other-url',
+            'anchor' => '',
+            'post_title' => 'Sample',
+            'occurrence_index' => null,
+        ];
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => 'Le lien sélectionné est introuvable. Veuillez relancer une analyse.',
+        ], 409)->andReturnUsing(static function () {
+            throw new \RuntimeException('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_edit_link_callback();
+    }
+
+    public function test_edit_link_returns_forbidden_when_post_missing_and_user_cannot_manage(): void
+    {
+        $_POST = [
+            'post_id' => 18,
+            'row_id' => '18',
+            'occurrence_index' => '0',
+            'old_url' => 'http://old.manage',
+            'new_url' => 'http://new.manage',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(static function ($capability) {
+            return $capability !== 'manage_options';
+        });
+        Functions\expect('get_post')->once()->with(18)->andReturn(null);
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->prefix = 'wp_';
+        $wpdb->get_row_result = [
+            'id' => 18,
+            'post_id' => 18,
+            'url' => 'http://old.manage',
+            'anchor' => '',
+            'post_title' => 'Sample',
+            'occurrence_index' => null,
+        ];
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => 'Permissions insuffisantes.',
+        ], 403)->andReturnUsing(static function () {
+            throw new \RuntimeException('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_edit_link_callback();
+    }
+
+    public function test_edit_link_returns_conflict_when_replacement_target_not_found(): void
+    {
+        $_POST = [
+            'post_id' => 19,
+            'row_id' => '19',
+            'occurrence_index' => '0',
+            'old_url' => 'http://old.replace',
+            'new_url' => 'http://new.replace',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(function () {
+            return true;
+        });
+        Functions\expect('get_post')->once()->with(19)->andReturn((object) ['post_content' => '<a href="http://old.replace">Link</a>']);
+        Functions\when('esc_url_raw')->alias(static function ($url) {
+            return $url;
+        });
+        Functions\when('blc_replace_link_href_in_content')->alias(static function () {
+            return [
+                'updated' => false,
+                'content' => '<a href="http://old.replace">Link</a>',
+            ];
+        });
+        Functions\when('blc_normalize_post_content_encoding')->alias(static function ($content) {
+            return $content;
+        });
+        Functions\when('blc_restore_post_content_encoding')->alias(static function ($content) {
+            return $content;
+        });
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->get_row_result = [
+            'id' => 19,
+            'post_id' => 19,
+            'url' => 'http://old.replace',
+            'anchor' => '',
+            'post_title' => 'Sample',
+            'occurrence_index' => null,
+        ];
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => "Impossible de localiser cette occurrence du lien. Le contenu a peut-être été modifié.",
+        ], 409)->andReturnUsing(static function () {
+            throw new \RuntimeException('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_edit_link_callback();
+    }
+
+    public function test_edit_link_returns_internal_error_when_update_post_fails(): void
+    {
+        $_POST = [
+            'post_id' => 20,
+            'row_id' => '20',
+            'occurrence_index' => '0',
+            'old_url' => 'http://old.update',
+            'new_url' => 'http://new.update',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(function () {
+            return true;
+        });
+        Functions\expect('get_post')->once()->with(20)->andReturn((object) ['post_content' => '<a href="http://old.update">Link</a>']);
+        Functions\when('esc_url_raw')->alias(static function ($url) {
+            return $url;
+        });
+        Functions\when('blc_normalize_post_content_encoding')->alias(static function ($content) {
+            return $content;
+        });
+        Functions\when('blc_replace_link_href_in_content')->alias(static function () {
+            return [
+                'updated' => true,
+                'content' => '<a href="http://new.update">Link</a>',
+            ];
+        });
+        Functions\when('blc_restore_post_content_encoding')->alias(static function ($content) {
+            return $content;
+        });
+        Functions\expect('wp_update_post')->once()->andReturn(false);
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->get_row_result = [
+            'id' => 20,
+            'post_id' => 20,
+            'url' => 'http://old.update',
+            'anchor' => '',
+            'post_title' => 'Sample',
+            'occurrence_index' => null,
+        ];
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => "La mise à jour de l'article a échoué.",
+        ], 500)->andReturnUsing(static function () {
+            throw new \RuntimeException('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_edit_link_callback();
+    }
+
+    public function test_edit_link_returns_internal_error_when_database_deletion_fails(): void
+    {
+        $_POST = [
+            'post_id' => 21,
+            'row_id' => '21',
+            'occurrence_index' => '0',
+            'old_url' => 'http://old.delete',
+            'new_url' => 'http://new.delete',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(function () {
+            return true;
+        });
+        Functions\expect('get_post')->once()->with(21)->andReturn((object) ['post_content' => '<a href="http://old.delete">Link</a>']);
+        Functions\when('esc_url_raw')->alias(static function ($url) {
+            return $url;
+        });
+        Functions\when('blc_normalize_post_content_encoding')->alias(static function ($content) {
+            return $content;
+        });
+        Functions\when('blc_replace_link_href_in_content')->alias(static function () {
+            return [
+                'updated' => true,
+                'content' => '<a href="http://new.delete">Link</a>',
+            ];
+        });
+        Functions\when('blc_restore_post_content_encoding')->alias(static function ($content) {
+            return $content;
+        });
+        Functions\expect('wp_update_post')->once()->andReturn(true);
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->get_row_result = [
+            'id' => 21,
+            'post_id' => 21,
+            'url' => 'http://old.delete',
+            'anchor' => '',
+            'post_title' => 'Sample',
+            'occurrence_index' => null,
+        ];
+        $wpdb->delete_return_value = false;
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => 'La suppression du lien dans la base de données a échoué.',
+        ], 500)->andReturnUsing(static function () {
+            throw new \RuntimeException('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_edit_link_callback();
+    }
+
     public function test_edit_link_allows_user_with_permission(): void
     {
         $_POST['post_id'] = 2;
@@ -971,6 +1309,336 @@ class BlcAjaxCallbacksTest extends TestCase
         Functions\expect('get_post')->once()->with(3)->andReturn((object) ['post_content' => '<a href="http://old.com">Link</a>']);
         Functions\expect('wp_send_json_error')->once()->with(['message' => 'Permissions insuffisantes.'], 403)->andReturnUsing(function () {
             throw new \Exception('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_unlink_callback();
+    }
+
+    public function test_unlink_returns_not_found_when_database_row_missing(): void
+    {
+        $_POST = [
+            'post_id' => 44,
+            'row_id' => '44',
+            'occurrence_index' => '0',
+            'url_to_unlink' => 'http://missing.test',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(function () {
+            return true;
+        });
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub(static function () {
+            return null;
+        });
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => 'Le lien sélectionné est introuvable. Veuillez relancer une analyse.',
+        ], 404)->andReturnUsing(static function () {
+            throw new \RuntimeException('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_unlink_callback();
+    }
+
+    public function test_unlink_returns_conflict_when_database_row_belongs_to_other_post(): void
+    {
+        $_POST = [
+            'post_id' => 45,
+            'row_id' => '45',
+            'occurrence_index' => '0',
+            'url_to_unlink' => 'http://conflict-post.test',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(function () {
+            return true;
+        });
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->get_row_result = [
+            'id' => 45,
+            'post_id' => 999,
+            'url' => 'stored-old',
+            'anchor' => '',
+            'post_title' => 'Sample',
+            'occurrence_index' => null,
+        ];
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => 'Le lien sélectionné ne correspond plus à cet article. Veuillez actualiser la page.',
+        ], 409)->andReturnUsing(static function () {
+            throw new \RuntimeException('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_unlink_callback();
+    }
+
+    public function test_unlink_returns_conflict_when_occurrence_index_mismatch(): void
+    {
+        $_POST = [
+            'post_id' => 46,
+            'row_id' => '46',
+            'occurrence_index' => '0',
+            'url_to_unlink' => 'http://occurrence.test',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(function () {
+            return true;
+        });
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->get_row_result = [
+            'id' => 46,
+            'post_id' => 46,
+            'url' => 'http://occurrence.test',
+            'anchor' => '',
+            'post_title' => 'Sample',
+            'occurrence_index' => 2,
+        ];
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => "L'occurrence du lien ne correspond plus. Veuillez relancer une analyse.",
+        ], 409)->andReturnUsing(static function () {
+            throw new \RuntimeException('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_unlink_callback();
+    }
+
+    public function test_unlink_returns_conflict_when_database_url_differs_from_request(): void
+    {
+        $_POST = [
+            'post_id' => 47,
+            'row_id' => '47',
+            'occurrence_index' => '0',
+            'url_to_unlink' => 'http://unlink-mismatch.test',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(function () {
+            return true;
+        });
+        Functions\when('blc_prepare_url_for_storage')->alias(static function ($url) {
+            return $url === 'http://unlink-mismatch.test' ? 'stored-request-url' : $url;
+        });
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->get_row_result = [
+            'id' => 47,
+            'post_id' => 47,
+            'url' => 'stored-different-url',
+            'anchor' => '',
+            'post_title' => 'Sample',
+            'occurrence_index' => null,
+        ];
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => 'Le lien sélectionné est introuvable. Veuillez relancer une analyse.',
+        ], 409)->andReturnUsing(static function () {
+            throw new \RuntimeException('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_unlink_callback();
+    }
+
+    public function test_unlink_returns_forbidden_when_post_missing_and_user_cannot_manage(): void
+    {
+        $_POST = [
+            'post_id' => 48,
+            'row_id' => '48',
+            'occurrence_index' => '0',
+            'url_to_unlink' => 'http://manage-unlink.test',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(static function ($capability) {
+            return $capability !== 'manage_options';
+        });
+        Functions\expect('get_post')->once()->with(48)->andReturn(null);
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->prefix = 'wp_';
+        $wpdb->get_row_result = [
+            'id' => 48,
+            'post_id' => 48,
+            'url' => 'stored-manage-url',
+            'anchor' => '',
+            'post_title' => 'Sample',
+            'occurrence_index' => null,
+        ];
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => 'Permissions insuffisantes.',
+        ], 403)->andReturnUsing(static function () {
+            throw new \RuntimeException('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_unlink_callback();
+    }
+
+    public function test_unlink_returns_conflict_when_removal_target_not_found(): void
+    {
+        $_POST = [
+            'post_id' => 49,
+            'row_id' => '49',
+            'occurrence_index' => '0',
+            'url_to_unlink' => 'http://unlink-remove.test',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(function () {
+            return true;
+        });
+        Functions\expect('get_post')->once()->with(49)->andReturn((object) ['post_content' => '<a href="http://unlink-remove.test">Link</a>']);
+        Functions\when('esc_url_raw')->alias(static function ($url) {
+            return $url;
+        });
+        Functions\when('blc_normalize_post_content_encoding')->alias(static function ($content) {
+            return $content;
+        });
+        Functions\when('blc_remove_link_wrappers_from_content')->alias(static function () {
+            return [
+                'removed' => false,
+                'content' => '<a href="http://unlink-remove.test">Link</a>',
+            ];
+        });
+        Functions\when('blc_restore_post_content_encoding')->alias(static function ($content) {
+            return $content;
+        });
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->get_row_result = [
+            'id' => 49,
+            'post_id' => 49,
+            'url' => 'http://unlink-remove.test',
+            'anchor' => '',
+            'post_title' => 'Sample',
+            'occurrence_index' => null,
+        ];
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => "Impossible de localiser cette occurrence du lien. Le contenu a peut-être été modifié.",
+        ], 409)->andReturnUsing(static function () {
+            throw new \RuntimeException('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_unlink_callback();
+    }
+
+    public function test_unlink_returns_internal_error_when_update_post_fails(): void
+    {
+        $_POST = [
+            'post_id' => 50,
+            'row_id' => '50',
+            'occurrence_index' => '0',
+            'url_to_unlink' => 'http://unlink-update.test',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(function () {
+            return true;
+        });
+        Functions\expect('get_post')->once()->with(50)->andReturn((object) ['post_content' => '<a href="http://unlink-update.test">Link</a>']);
+        Functions\when('esc_url_raw')->alias(static function ($url) {
+            return $url;
+        });
+        Functions\when('blc_normalize_post_content_encoding')->alias(static function ($content) {
+            return $content;
+        });
+        Functions\when('blc_remove_link_wrappers_from_content')->alias(static function () {
+            return [
+                'removed' => true,
+                'content' => '<p>Updated</p>',
+            ];
+        });
+        Functions\when('blc_restore_post_content_encoding')->alias(static function ($content) {
+            return $content;
+        });
+        Functions\expect('wp_update_post')->once()->andReturn(false);
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->get_row_result = [
+            'id' => 50,
+            'post_id' => 50,
+            'url' => 'http://unlink-update.test',
+            'anchor' => '',
+            'post_title' => 'Sample',
+            'occurrence_index' => null,
+        ];
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => "La mise à jour de l'article a échoué.",
+        ], 500)->andReturnUsing(static function () {
+            throw new \RuntimeException('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_unlink_callback();
+    }
+
+    public function test_unlink_returns_internal_error_when_database_deletion_fails(): void
+    {
+        $_POST = [
+            'post_id' => 51,
+            'row_id' => '51',
+            'occurrence_index' => '0',
+            'url_to_unlink' => 'http://unlink-delete.test',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\when('current_user_can')->alias(function () {
+            return true;
+        });
+        Functions\expect('get_post')->once()->with(51)->andReturn((object) ['post_content' => '<a href="http://unlink-delete.test">Link</a>']);
+        Functions\when('esc_url_raw')->alias(static function ($url) {
+            return $url;
+        });
+        Functions\when('blc_normalize_post_content_encoding')->alias(static function ($content) {
+            return $content;
+        });
+        Functions\when('blc_remove_link_wrappers_from_content')->alias(static function () {
+            return [
+                'removed' => true,
+                'content' => '<p>Updated</p>',
+            ];
+        });
+        Functions\when('blc_restore_post_content_encoding')->alias(static function ($content) {
+            return $content;
+        });
+        Functions\expect('wp_update_post')->once()->andReturn(true);
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->get_row_result = [
+            'id' => 51,
+            'post_id' => 51,
+            'url' => 'http://unlink-delete.test',
+            'anchor' => '',
+            'post_title' => 'Sample',
+            'occurrence_index' => null,
+        ];
+        $wpdb->delete_return_value = false;
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => 'La suppression du lien dans la base de données a échoué.',
+        ], 500)->andReturnUsing(static function () {
+            throw new \RuntimeException('error');
         });
 
         $this->expectExceptionMessage('error');
