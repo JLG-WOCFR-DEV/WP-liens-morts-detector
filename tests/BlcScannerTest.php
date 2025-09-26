@@ -127,6 +127,9 @@ class BlcScannerTest extends TestCase
     /** @var array{success: bool, data: mixed}|null */
     private ?array $ajaxResponse = null;
 
+    /** @var array<int, string> */
+    private array $publicPostTypes = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -164,6 +167,7 @@ class BlcScannerTest extends TestCase
         $this->utcNow = 1000;
         $GLOBALS['wp_query_queue'] = [];
         $GLOBALS['wp_query_last_args'] = [];
+        $this->publicPostTypes = ['post', 'page'];
 
         Functions\when('get_option')->alias(fn(string $name, $default = false) => $this->options[$name] ?? $default);
         Functions\when('get_transient')->alias(fn(string $key) => $this->transients[$key] ?? false);
@@ -274,6 +278,9 @@ class BlcScannerTest extends TestCase
         });
         Functions\when('trailingslashit')->alias(function ($value) {
             return rtrim((string) $value, "\\/\t\n\r\f ") . '/';
+        });
+        Functions\when('get_post_types')->alias(function ($args = [], $output = 'names', $operator = 'and') {
+            return $this->publicPostTypes;
         });
         Functions\when('get_permalink')->alias(function ($post = null) {
             if (is_object($post) && isset($post->ID)) {
@@ -1375,6 +1382,52 @@ class BlcScannerTest extends TestCase
         );
     }
 
+    public function test_blc_perform_check_limits_queries_to_public_post_types(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->publicPostTypes = ['portfolio', 'case-study'];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_check(0, true);
+
+        $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should run during scans.');
+        $args = end($GLOBALS['wp_query_last_args']);
+        $this->assertSame(
+            $this->publicPostTypes,
+            $args['post_type'] ?? null,
+            'Link scans must restrict queries to the list of public post types.'
+        );
+    }
+
+    public function test_blc_perform_check_falls_back_to_post_type_when_public_list_is_empty(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->publicPostTypes = [];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_check(0, true);
+
+        $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should run even when no public post types are available.');
+        $args = end($GLOBALS['wp_query_last_args']);
+        $this->assertSame(
+            ['post'],
+            $args['post_type'] ?? null,
+            'Link scans should default to the "post" type when the public list is empty.'
+        );
+    }
+
     public function test_blc_perform_check_skips_excluded_domains_case_insensitively(): void
     {
         global $wpdb;
@@ -2203,6 +2256,29 @@ class BlcScannerTest extends TestCase
         if ($cacheKey !== '') {
             $this->assertSame(0, $this->options[$cacheKey] ?? null, 'Dataset footprint should be restored after rollback.');
         }
+    }
+
+    public function test_blc_perform_image_check_limits_queries_to_public_post_types(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->publicPostTypes = ['portfolio', 'case-study'];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_image_check(0, true);
+
+        $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should be executed during image scans.');
+        $args = end($GLOBALS['wp_query_last_args']);
+        $this->assertSame(
+            $this->publicPostTypes,
+            $args['post_type'] ?? null,
+            'Image scans must restrict queries to the list of public post types.'
+        );
     }
 
     public function test_blc_perform_image_check_restores_markers_when_interrupted(): void
