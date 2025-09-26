@@ -444,6 +444,9 @@ function blc_ajax_edit_link_callback() {
     }
 
     $old_url = $prepared_old_url;
+    if (strpos($final_new_url, '//') === 0) {
+        $final_new_url = set_url_scheme($final_new_url, $site_scheme);
+    }
     $new_url = esc_url_raw($final_new_url);
     if ($new_url === '') {
         wp_send_json_error(['message' => __('URL invalide.', 'liens-morts-detector-jlg')], BLC_HTTP_BAD_REQUEST);
