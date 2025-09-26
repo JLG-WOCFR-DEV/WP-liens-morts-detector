@@ -210,8 +210,12 @@ class BLC_Links_List_Table extends WP_List_Table {
         $actions = [];
         $row_id            = isset($item['id']) ? absint($item['id']) : 0;
         $post_id           = isset($item['post_id']) ? absint($item['post_id']) : 0;
-        $occurrence_raw    = $item['occurrence_index'] ?? null;
-        $has_occurrence    = is_numeric($occurrence_raw) && (int) $occurrence_raw >= 0;
+        $occurrence_raw     = $item['occurrence_index'] ?? null;
+        $occurrence_index   = null;
+        if (is_numeric($occurrence_raw)) {
+            $occurrence_index = (int) $occurrence_raw;
+        }
+        $has_occurrence = ($occurrence_index !== null && $occurrence_index >= 0);
         $data_attributes   = [
             sprintf('data-postid="%d"', $post_id),
             sprintf('data-url="%s"', esc_attr($item['url'])),
@@ -219,7 +223,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         ];
 
         if ($has_occurrence) {
-            $data_attributes[] = sprintf('data-occurrence-index="%d"', (int) $occurrence_raw);
+            $data_attributes[] = sprintf('data-occurrence-index="%d"', $occurrence_index);
         }
 
         $data_attributes = implode(' ', $data_attributes);

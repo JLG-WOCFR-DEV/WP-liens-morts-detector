@@ -6,7 +6,7 @@ if (!defined('ABSPATH')) {
 }
 
 if (!defined('BLC_DB_VERSION')) {
-    define('BLC_DB_VERSION', '1.7.1');
+    define('BLC_DB_VERSION', '1.7.2');
 }
 
 if (!defined('BLC_TEXT_FIELD_LENGTH')) {
@@ -54,7 +54,8 @@ function blc_maybe_upgrade_database() {
     }
 
     if (!$installed_version || version_compare($installed_version, '1.6.0', '<')) {
-        blc_maybe_add_column($table_name, 'occurrence_index', 'int(10) unsigned NULL DEFAULT NULL');
+        blc_maybe_add_column($table_name, 'occurrence_index', 'int(10) NULL DEFAULT NULL');
+        blc_mark_occurrence_indexes_as_unknown($table_name);
     }
 
     if (!$installed_version || version_compare($installed_version, '1.7.0', '<')) {
@@ -62,7 +63,7 @@ function blc_maybe_upgrade_database() {
         blc_maybe_add_index($table_name, 'scan_run_id', 'scan_run_id');
     }
 
-    if (!$installed_version || version_compare($installed_version, '1.7.1', '<')) {
+    if (!$installed_version || version_compare($installed_version, '1.7.2', '<')) {
         blc_maybe_make_occurrence_index_nullable($table_name);
     }
 
@@ -220,20 +221,32 @@ function blc_maybe_make_occurrence_index_nullable($table_name) {
     $is_nullable   = strtolower((string) ($column_definition->Null ?? '')) === 'yes';
     $default_value = $column_definition->Default;
 
-    $needs_alter = !$is_nullable || $default_value !== null;
+    $is_int_type = strpos($current_type, 'int') !== false;
+    $is_unsigned = strpos($current_type, 'unsigned') !== false;
 
-    if (strpos($current_type, 'int(10) unsigned') === false) {
-        $needs_alter = true;
-    }
+    $needs_alter = !$is_int_type || $is_unsigned || !$is_nullable || $default_value !== null;
 
     if ($needs_alter) {
         $wpdb->query(
-            "ALTER TABLE `$table` MODIFY `occurrence_index` int(10) unsigned NULL DEFAULT NULL"
+            "ALTER TABLE `$table` MODIFY `occurrence_index` int(10) NULL DEFAULT NULL"
         );
     }
 
+    blc_mark_occurrence_indexes_as_unknown($table_name);
+}
+
+/**
+ * Replace placeholder occurrence indexes with a sentinel value that indicates an unknown position.
+ *
+ * @param string $table_name Database table name.
+ */
+function blc_mark_occurrence_indexes_as_unknown($table_name) {
+    global $wpdb;
+
+    $table = esc_sql($table_name);
+
     $wpdb->query(
-        "UPDATE `$table` SET `occurrence_index` = NULL WHERE `occurrence_index` = 0"
+        "UPDATE `$table` SET `occurrence_index` = NULL WHERE `occurrence_index` IS NOT NULL AND `occurrence_index` <= 0"
     );
 }
 
@@ -319,7 +332,7 @@ function blc_activation() {
         post_id bigint(20) unsigned NOT NULL,
         post_title varchar(" . BLC_TEXT_FIELD_LENGTH . ") NULL,
         type varchar(20) NOT NULL,
-        occurrence_index int(10) unsigned NULL DEFAULT NULL,
+        occurrence_index int(10) NULL DEFAULT NULL,
         url_host varchar(191) NULL,
         is_internal tinyint(1) NOT NULL DEFAULT 0,
         PRIMARY KEY  (id),
