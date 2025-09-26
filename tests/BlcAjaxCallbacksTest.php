@@ -1277,6 +1277,92 @@ class BlcAjaxCallbacksTest extends TestCase
         $this->assertStringNotContainsString('http://cdn.example.com/asset.js', $captured_update[0]['post_content']);
     }
 
+    public function test_edit_link_converts_scheme_relative_url_before_escaping(): void
+    {
+        $_POST = [
+            'post_id' => 46,
+            'row_id' => '46',
+            'occurrence_index' => '0',
+            'old_url' => 'https://example.com/old-asset.js',
+            'new_url' => '//cdn.example.com/asset.js',
+        ];
+
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('current_user_can')->once()->with('edit_post', 46)->andReturn(true);
+
+        $post = (object) ['post_content' => '<script src="https://example.com/old-asset.js"></script>'];
+        Functions\expect('get_post')->once()->with(46)->andReturn($post);
+
+        Functions\when('blc_normalize_post_content_encoding')->alias(static function ($content) {
+            return $content;
+        });
+        Functions\when('blc_restore_post_content_encoding')->alias(static function ($content) {
+            return $content;
+        });
+
+        Functions\when('esc_url_raw')->alias(static function ($url) {
+            if (strpos($url, '//') === 0) {
+                return 'http:' . $url;
+            }
+
+            return $url;
+        });
+
+        $captured_new_url = null;
+        Functions\when('blc_replace_link_href_in_content')->alias(function ($content, $old, $new, $index) use (&$captured_new_url) {
+            $captured_new_url = $new;
+
+            TestCase::assertSame('https://example.com/old-asset.js', $old);
+            TestCase::assertNull($index);
+
+            return [
+                'updated' => true,
+                'content' => str_replace($old, $new, $content),
+            ];
+        });
+
+        $captured_update = null;
+        Functions\expect('wp_update_post')->once()->andReturnUsing(function () use (&$captured_update) {
+            $captured_update = func_get_args();
+
+            return true;
+        });
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->get_row_result = [
+            'id' => 46,
+            'post_id' => 46,
+            'url' => 'https://example.com/old-asset.js',
+            'anchor' => '',
+            'post_title' => 'Sample Asset',
+            'occurrence_index' => null,
+        ];
+
+        Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
+            throw new \Exception('success');
+        });
+
+        $initial = libxml_use_internal_errors();
+
+        try {
+            blc_ajax_edit_link_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\Exception $e) {
+            $this->assertSame('success', $e->getMessage());
+        }
+
+        $this->assertSame($initial, libxml_use_internal_errors());
+        $this->assertSame('https://cdn.example.com/asset.js', $captured_new_url);
+
+        $this->assertIsArray($captured_update);
+        $this->assertCount(2, $captured_update);
+        $this->assertIsArray($captured_update[0]);
+        $this->assertSame(46, $captured_update[0]['ID']);
+        $this->assertStringContainsString('https://cdn.example.com/asset.js', $captured_update[0]['post_content']);
+        $this->assertStringNotContainsString('http://cdn.example.com/asset.js', $captured_update[0]['post_content']);
+    }
+
     public function test_edit_and_unlink_handle_long_urls(): void
     {
         $long_old_url = 'https://example.com/' . str_repeat('very-long-path/', 16) . '?query=' . str_repeat('a', 140);
