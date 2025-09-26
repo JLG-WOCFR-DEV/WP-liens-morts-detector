@@ -18,7 +18,9 @@ $options_to_delete = [
     'blc_scan_method',
     'blc_excluded_domains',
     'blc_debug_mode',
-    'blc_plugin_db_version'
+    'blc_plugin_db_version',
+    'blc_dataset_size_link',
+    'blc_dataset_size_image',
 ];
 
 $cleanup_site = static function () use ($options_to_delete) {
