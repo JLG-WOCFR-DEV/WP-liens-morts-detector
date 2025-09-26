@@ -1030,7 +1030,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         $public_post_types = ['post'];
     }
 
-    // Limiter la requête aux types de contenus publics tout en conservant la pagination et prévoir un repli sur « post ».
+    // Limiter la requête aux types de contenus publics (repli sur « post ») tout en conservant la pagination existante.
     $args = [
         'post_type'      => $public_post_types,
         'post_status'    => 'publish',
@@ -1689,7 +1689,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
         $public_post_types = ['post'];
     }
 
-    // Limiter la requête aux types de contenus publics tout en conservant la pagination et prévoir un repli sur « post ».
+    // Limiter la requête aux types de contenus publics (repli sur « post ») tout en conservant la pagination existante.
     $args = [
         'post_type'      => $public_post_types,
         'post_status'    => 'publish',

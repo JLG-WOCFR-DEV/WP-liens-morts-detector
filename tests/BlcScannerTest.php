@@ -130,6 +130,9 @@ class BlcScannerTest extends TestCase
     /** @var array<int, string> */
     private array $publicPostTypes = [];
 
+    /** @var array<int, array{args: array, output: string, operator: string}> */
+    private array $getPostTypesCalls = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -168,6 +171,7 @@ class BlcScannerTest extends TestCase
         $GLOBALS['wp_query_queue'] = [];
         $GLOBALS['wp_query_last_args'] = [];
         $this->publicPostTypes = ['post', 'page'];
+        $this->getPostTypesCalls = [];
 
         Functions\when('get_option')->alias(fn(string $name, $default = false) => $this->options[$name] ?? $default);
         Functions\when('get_transient')->alias(fn(string $key) => $this->transients[$key] ?? false);
@@ -280,6 +284,12 @@ class BlcScannerTest extends TestCase
             return rtrim((string) $value, "\\/\t\n\r\f ") . '/';
         });
         Functions\when('get_post_types')->alias(function ($args = [], $output = 'names', $operator = 'and') {
+            $this->getPostTypesCalls[] = [
+                'args' => is_array($args) ? $args : [],
+                'output' => (string) $output,
+                'operator' => (string) $operator,
+            ];
+
             return $this->publicPostTypes;
         });
         Functions\when('get_permalink')->alias(function ($post = null) {
@@ -1431,6 +1441,11 @@ class BlcScannerTest extends TestCase
 
         $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should run during scans.');
         $args = end($GLOBALS['wp_query_last_args']);
+        $this->assertNotEmpty($this->getPostTypesCalls, 'The scan should request the list of public post types.');
+        $lastPostTypeCall = end($this->getPostTypesCalls);
+        $this->assertSame(['public' => true], $lastPostTypeCall['args']);
+        $this->assertSame('names', $lastPostTypeCall['output']);
+        $this->assertSame('and', $lastPostTypeCall['operator']);
         $this->assertSame(
             $this->publicPostTypes,
             $args['post_type'] ?? null,
@@ -1458,6 +1473,29 @@ class BlcScannerTest extends TestCase
             ['post'],
             $args['post_type'] ?? null,
             'Link scans should default to the "post" type when the public list is empty.'
+        );
+    }
+
+    public function test_blc_perform_image_check_falls_back_to_post_type_when_public_list_is_empty(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->publicPostTypes = [];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_image_check(0, true);
+
+        $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should still run with a fallback post type.');
+        $args = end($GLOBALS['wp_query_last_args']);
+        $this->assertSame(
+            ['post'],
+            $args['post_type'] ?? null,
+            'Image scans should default to the "post" type when the public list is empty.'
         );
     }
 
