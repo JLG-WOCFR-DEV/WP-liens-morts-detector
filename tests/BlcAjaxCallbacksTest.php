@@ -375,7 +375,7 @@ class BlcAjaxCallbacksTest extends TestCase
         global $wpdb;
         $wpdb = $this->createAjaxWpdbStub();
         Functions\expect('get_post')->once()->with(1)->andReturn((object) ['post_content' => '<a href="http://old.com">Link</a>']);
-        Functions\expect('wp_send_json_error')->once()->with(['message' => 'Permissions insuffisantes.'])->andReturnUsing(function () {
+        Functions\expect('wp_send_json_error')->once()->with(['message' => 'Permissions insuffisantes.'], 403)->andReturnUsing(function () {
             throw new \Exception('error');
         });
 
@@ -721,7 +721,7 @@ class BlcAjaxCallbacksTest extends TestCase
         $wpdb = $this->createAjaxWpdbStub();
         $wpdb->prefix = 'wp_';
 
-        Functions\expect('wp_send_json_error')->once()->with(['message' => 'URL invalide.'])->andReturnUsing(function () {
+        Functions\expect('wp_send_json_error')->once()->with(['message' => 'URL invalide.'], 400)->andReturnUsing(function () {
             throw new \Exception('error');
         });
 
@@ -871,13 +871,16 @@ class BlcAjaxCallbacksTest extends TestCase
         Functions\when('esc_url_raw')->alias(function ($url) {
             return $url;
         });
-        Functions\when('wp_send_json_error')->alias(function ($response = null) {
+        Functions\when('wp_send_json_error')->alias(function ($response = null, $status = null) {
             $message = '';
             if (is_array($response) && isset($response['message'])) {
                 $message = (string) $response['message'];
             }
 
-            throw new \RuntimeException($message === '' ? 'error' : 'error: ' . $message);
+            $suffix = $message === '' ? '' : ': ' . $message;
+            $code_suffix = $status === null ? '' : ' [' . $status . ']';
+
+            throw new \RuntimeException('error' . $code_suffix . $suffix);
         });
 
         $posts = [
@@ -966,7 +969,7 @@ class BlcAjaxCallbacksTest extends TestCase
         $wpdb = $this->createAjaxWpdbStub();
         $wpdb->prefix = 'wp_';
         Functions\expect('get_post')->once()->with(3)->andReturn((object) ['post_content' => '<a href="http://old.com">Link</a>']);
-        Functions\expect('wp_send_json_error')->once()->with(['message' => 'Permissions insuffisantes.'])->andReturnUsing(function () {
+        Functions\expect('wp_send_json_error')->once()->with(['message' => 'Permissions insuffisantes.'], 403)->andReturnUsing(function () {
             throw new \Exception('error');
         });
 
