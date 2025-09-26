@@ -730,6 +730,76 @@ function blc_prepare_time_input_value($value, $default = '00') {
 }
 
 /**
+ * Retrieve the timeout constraints used for remote requests.
+ *
+ * @return array{
+ *     head: array{default: float, min: float, max: float},
+ *     get: array{default: float, min: float, max: float}
+ * }
+ */
+function blc_get_request_timeout_constraints() {
+    $defaults = [
+        'head' => [
+            'default' => 5.0,
+            'min'     => 1.0,
+            'max'     => 30.0,
+        ],
+        'get'  => [
+            'default' => 10.0,
+            'min'     => 1.0,
+            'max'     => 60.0,
+        ],
+    ];
+
+    $candidates = apply_filters('blc_request_timeout_constraints', $defaults);
+    if (!is_array($candidates)) {
+        $candidates = [];
+    }
+
+    $normalized = [];
+
+    foreach ($defaults as $type => $definition) {
+        $candidate = isset($candidates[$type]) && is_array($candidates[$type]) ? $candidates[$type] : [];
+
+        $default = isset($candidate['default']) ? (float) $candidate['default'] : $definition['default'];
+        $min     = isset($candidate['min']) ? (float) $candidate['min'] : $definition['min'];
+        $max     = isset($candidate['max']) ? (float) $candidate['max'] : $definition['max'];
+
+        if (!is_finite($default)) {
+            $default = $definition['default'];
+        }
+
+        if (!is_finite($min)) {
+            $min = $definition['min'];
+        }
+
+        if (!is_finite($max)) {
+            $max = $definition['max'];
+        }
+
+        if ($min > $max) {
+            $tmp = $min;
+            $min = $max;
+            $max = $tmp;
+        }
+
+        if ($default < $min) {
+            $default = $min;
+        } elseif ($default > $max) {
+            $default = $max;
+        }
+
+        $normalized[$type] = [
+            'default' => (float) $default,
+            'min'     => (float) $min,
+            'max'     => (float) $max,
+        ];
+    }
+
+    return $normalized;
+}
+
+/**
  * Normalize a timeout option coming from a settings form.
  *
  * @param mixed $value   Raw submitted value.

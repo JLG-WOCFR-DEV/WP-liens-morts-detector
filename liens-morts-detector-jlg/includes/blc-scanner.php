@@ -785,17 +785,22 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     $rest_end_hour   = (int) blc_normalize_hour_option($rest_end_hour_option, '20');
     $link_delay_ms   = max(0, (int) get_option('blc_link_delay', 200));
     $batch_delay_s   = max(0, (int) get_option('blc_batch_delay', 60));
+
+    $timeout_constraints = blc_get_request_timeout_constraints();
+    $head_timeout_limits = $timeout_constraints['head'];
+    $get_timeout_limits  = $timeout_constraints['get'];
+
     $head_request_timeout = blc_normalize_timeout_option(
-        get_option('blc_head_request_timeout', 5),
-        5,
-        1.0,
-        30.0
+        get_option('blc_head_request_timeout', $head_timeout_limits['default']),
+        $head_timeout_limits['default'],
+        $head_timeout_limits['min'],
+        $head_timeout_limits['max']
     );
     $get_request_timeout = blc_normalize_timeout_option(
-        get_option('blc_get_request_timeout', 10),
-        10,
-        1.0,
-        60.0
+        get_option('blc_get_request_timeout', $get_timeout_limits['default']),
+        $get_timeout_limits['default'],
+        $get_timeout_limits['min'],
+        $get_timeout_limits['max']
     );
     $scan_method     = get_option('blc_scan_method', 'precise');
     $excluded_domains_raw = get_option('blc_excluded_domains', '');
