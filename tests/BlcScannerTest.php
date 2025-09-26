@@ -49,6 +49,15 @@ namespace {
         define('OBJECT', 'OBJECT');
     }
 
+    if (!function_exists('sanitize_key')) {
+        function sanitize_key($key)
+        {
+            $key = strtolower((string) $key);
+
+            return preg_replace('/[^a-z0-9_\-]/', '', $key);
+        }
+    }
+
     if (!class_exists('WP_Query')) {
         class WP_Query
         {
@@ -444,12 +453,16 @@ class BlcScannerTest extends TestCase
             /** @var array<int, array<string, mixed>> */
             public array $deleted = [];
             /** @var array<int, array<string, mixed>> */
+            public array $rows = [];
+            /** @var array<int, array<string, mixed>> */
             public array $selectedRows = [];
             /** @var array<int, mixed> */
             public array $queryResults = [];
             /** @var array<int, mixed> */
             public array $getVarResults = [];
+            public int $insert_id = 0;
             public string $last_error = '';
+            private int $autoIncrement = 1;
 
             public function query(string $sql)
             {
@@ -464,13 +477,31 @@ class BlcScannerTest extends TestCase
             public function insert(string $table, array $data, array $formats)
             {
                 $this->inserted[] = ['table' => $table, 'data' => $data, 'formats' => $formats];
+                $id = $this->autoIncrement++;
+                $this->insert_id = $id;
+                $this->rows[$id] = [
+                    'id'    => $id,
+                    'table' => $table,
+                    'data'  => $data,
+                ];
+
                 return true;
             }
 
             public function delete(string $table, array $where, array $formats)
             {
                 $this->deleted[] = ['table' => $table, 'where' => $where, 'formats' => $formats];
-                return 1;
+
+                $affected = 0;
+                if (isset($where['id'])) {
+                    $id = (int) $where['id'];
+                    if (isset($this->rows[$id]) && $this->rows[$id]['table'] === $table) {
+                        unset($this->rows[$id]);
+                        $affected = 1;
+                    }
+                }
+
+                return $affected;
             }
 
             public function get_var(string $query)
@@ -2093,6 +2124,50 @@ class BlcScannerTest extends TestCase
         }
 
         $this->assertTrue($restoreQueryFound, 'Markers should be restored after a failed commit.');
+    }
+
+    public function test_blc_perform_check_rolls_back_pending_rows_when_commit_fails(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+        $wpdb->queryResults = [true, true, false, true];
+        $wpdb->getVarResults = [0, 256];
+        $wpdb->last_error = 'Simulated failure';
+
+        $cacheKey = blc_get_dataset_size_cache_key('link');
+        if ($cacheKey !== '') {
+            $this->options[$cacheKey] = 0;
+        }
+
+        $post = (object) [
+            'ID' => 504,
+            'post_title' => 'Rollback Post',
+            'post_content' => '<a href="http://rollback.example.com/broken">Broken Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'http://rollback.example.com/broken', ['response' => ['code' => 404]]);
+
+        $result = blc_perform_check(0, false);
+
+        $this->assertInstanceOf(\WP_Error::class, $result, 'Commit failures should surface as WP_Error.');
+        $this->assertSame('Simulated failure', $result->get_error_message(), 'Database error should be propagated.');
+
+        $table_name = $wpdb->prefix . 'blc_broken_links';
+        $remaining_rows = array_filter(
+            $wpdb->rows,
+            static fn($row) => ($row['table'] ?? '') === $table_name
+        );
+        $this->assertSame([], $remaining_rows, 'Pending link rows should be removed when the commit fails.');
+        $this->assertNotEmpty($wpdb->deleted, 'Pending rows must be deleted after a failed commit.');
+
+        if ($cacheKey !== '') {
+            $this->assertSame(0, $this->options[$cacheKey] ?? null, 'Dataset footprint should be restored after rollback.');
+        }
     }
 
     public function test_blc_perform_image_check_restores_markers_when_interrupted(): void
