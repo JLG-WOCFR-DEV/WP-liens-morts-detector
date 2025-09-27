@@ -778,7 +778,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     if ($current_hook === 'blc_check_links') {
         $bypass_rest_window = false;
     }
-    
+
     $rest_start_hour_option = get_option('blc_rest_start_hour', '08');
     $rest_end_hour_option   = get_option('blc_rest_end_hour', '20');
     $rest_start_hour = (int) blc_normalize_hour_option($rest_start_hour_option, '08');
@@ -999,7 +999,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             error_log('Contrôle de charge ignoré : sys_getloadavg() n\'a pas retourné de données valides.');
         }
     }
-    
+
     $excluded_domains = [];
     if (!empty($excluded_domains_raw)) {
         $excluded_domains = array_filter(
@@ -1159,90 +1159,152 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         ];
     };
 
-    foreach ($posts as $post) {
-        try {
-            if ($debug_mode) { error_log("Analyse LIENS pour : '" . $post->post_title . "'"); }
+    try {
+        foreach ($posts as $post) {
+            try {
+                if ($debug_mode) { error_log("Analyse LIENS pour : '" . $post->post_title . "'"); }
 
-            $permalink = '';
-            if (function_exists('get_permalink')) {
-                $maybe_permalink = get_permalink($post);
-                if (is_string($maybe_permalink)) {
-                    $permalink = $maybe_permalink;
+                $permalink = '';
+                if (function_exists('get_permalink')) {
+                    $maybe_permalink = get_permalink($post);
+                    if (is_string($maybe_permalink)) {
+                        $permalink = $maybe_permalink;
+                    }
                 }
-            }
 
-        $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
+            $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
 
-        $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
-        if (!$dom instanceof DOMDocument) {
-            if ($scan_run_token !== '') {
-                $commit_result = blc_commit_dataset_refresh($table_name, 'link', $scan_run_token, 'link', [$post->ID]);
-                if (is_wp_error($commit_result)) {
-                    $batch_wp_error = $commit_result;
-                    break;
+            $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
+            if (!$dom instanceof DOMDocument) {
+                if ($scan_run_token !== '') {
+                    $commit_result = blc_commit_dataset_refresh($table_name, 'link', $scan_run_token, 'link', [$post->ID]);
+                    if (is_wp_error($commit_result)) {
+                        $batch_wp_error = $commit_result;
+                        break;
+                    }
                 }
-            }
-            continue;
-        }
-
-        $occurrence_counters = [];
-
-        foreach ($dom->getElementsByTagName('a') as $link_node) {
-            $original_url = trim(wp_kses_decode_entities($link_node->getAttribute('href')));
-            if ($original_url === '') { continue; }
-
-            $anchor_text = wp_strip_all_tags($link_node->textContent);
-            $anchor_text = trim(preg_replace('/\s+/u', ' ', $anchor_text));
-            if ($anchor_text === '') { $anchor_text = '[Lien sans texte]'; }
-
-            $url_for_storage    = blc_prepare_url_for_storage($original_url);
-            $anchor_for_storage = blc_prepare_text_field_for_storage($anchor_text);
-
-            $normalized_url = blc_normalize_link_url($original_url, $site_url, $site_scheme, $permalink);
-            if ($normalized_url === '') {
                 continue;
             }
 
-            $metadata  = blc_get_url_metadata_for_storage($original_url, $normalized_url, $site_host);
-            $row_bytes = blc_calculate_row_storage_footprint_bytes($url_for_storage, $anchor_for_storage, $post_title_for_storage);
+            $occurrence_counters = [];
 
-            $parsed_url = parse_url($normalized_url);
-            if ($parsed_url === false) {
-                continue;
-            }
+            foreach ($dom->getElementsByTagName('a') as $link_node) {
+                $original_url = trim(wp_kses_decode_entities($link_node->getAttribute('href')));
+                if ($original_url === '') { continue; }
 
-            if (empty($parsed_url['scheme']) || !in_array($parsed_url['scheme'], ['http', 'https'], true)) { continue; }
+                $anchor_text = wp_strip_all_tags($link_node->textContent);
+                $anchor_text = trim(preg_replace('/\s+/u', ' ', $anchor_text));
+                if ($anchor_text === '') { $anchor_text = '[Lien sans texte]'; }
 
-            $counter_key = $url_for_storage;
-            if (!isset($occurrence_counters[$counter_key])) {
-                $occurrence_counters[$counter_key] = 0;
-            }
-            $occurrence_index = $occurrence_counters[$counter_key];
-            $occurrence_counters[$counter_key]++;
+                $url_for_storage    = blc_prepare_url_for_storage($original_url);
+                $anchor_for_storage = blc_prepare_text_field_for_storage($anchor_text);
 
-            if ($upload_basedir && $upload_base_host && isset($parsed_url['host']) && isset($parsed_url['path'])) {
-                if (strcasecmp($upload_base_host, $parsed_url['host']) === 0 && $upload_base_path !== '' && strpos($parsed_url['path'], $upload_base_path) === 0) {
-                    $relative_path = ltrim(substr($parsed_url['path'], strlen($upload_base_path)), '/');
-                    if ($relative_path === '') {
-                        continue;
+                $normalized_url = blc_normalize_link_url($original_url, $site_url, $site_scheme, $permalink);
+                if ($normalized_url === '') {
+                    continue;
+                }
+
+                $metadata  = blc_get_url_metadata_for_storage($original_url, $normalized_url, $site_host);
+                $row_bytes = blc_calculate_row_storage_footprint_bytes($url_for_storage, $anchor_for_storage, $post_title_for_storage);
+
+                $parsed_url = parse_url($normalized_url);
+                if ($parsed_url === false) {
+                    continue;
+                }
+
+                if (empty($parsed_url['scheme']) || !in_array($parsed_url['scheme'], ['http', 'https'], true)) { continue; }
+
+                $counter_key = $url_for_storage;
+                if (!isset($occurrence_counters[$counter_key])) {
+                    $occurrence_counters[$counter_key] = 0;
+                }
+                $occurrence_index = $occurrence_counters[$counter_key];
+                $occurrence_counters[$counter_key]++;
+
+                if ($upload_basedir && $upload_base_host && isset($parsed_url['host']) && isset($parsed_url['path'])) {
+                    if (strcasecmp($upload_base_host, $parsed_url['host']) === 0 && $upload_base_path !== '' && strpos($parsed_url['path'], $upload_base_path) === 0) {
+                        $relative_path = ltrim(substr($parsed_url['path'], strlen($upload_base_path)), '/');
+                        if ($relative_path === '') {
+                            continue;
+                        }
+                        $decoded_relative_path = rawurldecode($relative_path);
+                        $decoded_relative_path = ltrim($decoded_relative_path, '/\\');
+                        if ($decoded_relative_path === '') {
+                            continue;
+                        }
+
+                        if (preg_match('#(^|[\\\\/])\.\.([\\\\/]|$)#', $decoded_relative_path)) {
+                            continue;
+                        }
+
+                        $file_path = wp_normalize_path(trailingslashit($upload_basedir) . $decoded_relative_path);
+                        if ($normalized_upload_basedir !== '' && strpos($file_path, $normalized_upload_basedir) !== 0) {
+                            continue;
+                        }
+
+                        if (!file_exists($file_path)) {
+                            if ($debug_mode) { error_log("  -> Ressource locale introuvable : " . $normalized_url); }
+                            $inserted = $wpdb->insert(
+                                $table_name,
+                                [
+                                    'url'         => $url_for_storage,
+                                    'anchor'      => $anchor_for_storage,
+                                    'post_id'     => $post->ID,
+                                    'post_title'  => $post_title_for_storage,
+                                    'type'        => 'link',
+                                    'occurrence_index' => $occurrence_index,
+                                    'url_host'    => $metadata['host'],
+                                    'is_internal' => $metadata['is_internal'],
+                                ],
+                                ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d']
+                            );
+                            if ($inserted) {
+                                $register_pending_link_insert($post->ID, $row_bytes);
+                                blc_adjust_dataset_storage_footprint('link', $row_bytes);
+                            }
+                            continue;
+                        }
                     }
-                    $decoded_relative_path = rawurldecode($relative_path);
-                    $decoded_relative_path = ltrim($decoded_relative_path, '/\\');
-                    if ($decoded_relative_path === '') {
-                        continue;
-                    }
+                }
 
-                    if (preg_match('#(^|[\\\\/])\.\.([\\\\/]|$)#', $decoded_relative_path)) {
-                        continue;
-                    }
+                $host = parse_url($normalized_url, PHP_URL_HOST);
+                if (!is_string($host) || $host === '') {
+                    continue;
+                }
+                $normalized_host = blc_normalize_remote_host($host);
+                $is_excluded = false;
+                if (!empty($excluded_domains) && !empty($host)) {
+                    foreach ($excluded_domains as $domain_to_exclude) {
+                        if ($domain_to_exclude === '') {
+                            continue;
+                        }
 
-                    $file_path = wp_normalize_path(trailingslashit($upload_basedir) . $decoded_relative_path);
-                    if ($normalized_upload_basedir !== '' && strpos($file_path, $normalized_upload_basedir) !== 0) {
-                        continue;
-                    }
+                        if ($normalized_host === $domain_to_exclude) {
+                            $is_excluded = true;
+                            break;
+                        }
 
-                    if (!file_exists($file_path)) {
-                        if ($debug_mode) { error_log("  -> Ressource locale introuvable : " . $normalized_url); }
+                        $suffix = '.' . $domain_to_exclude;
+                        $suffix_length = strlen($suffix);
+                        if (strlen($normalized_host) > $suffix_length && substr($normalized_host, -$suffix_length) === $suffix) {
+                            $is_excluded = true;
+                            break;
+                        }
+                    }
+                }
+
+                if ($is_excluded) { continue; }
+
+                $is_internal_safe_host = ($normalized_host !== '' && isset($safe_internal_hosts[$normalized_host]));
+                $is_safe_remote_host   = true;
+                $should_skip_remote_request = false;
+
+                if (!$is_internal_safe_host) {
+                    $host_to_check = $normalized_host !== '' ? $normalized_host : $host;
+                    $is_safe_remote_host = blc_is_safe_remote_host($host_to_check);
+
+                    if (!$is_safe_remote_host) {
+                        if ($debug_mode) { error_log("  -> Lien ignoré (IP non autorisée) : " . $normalized_url); }
                         $inserted = $wpdb->insert(
                             $table_name,
                             [
@@ -1261,49 +1323,192 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                             $register_pending_link_insert($post->ID, $row_bytes);
                             blc_adjust_dataset_storage_footprint('link', $row_bytes);
                         }
-                        continue;
+                        $should_skip_remote_request = true;
                     }
                 }
-            }
 
-            $host = parse_url($normalized_url, PHP_URL_HOST);
-            if (!is_string($host) || $host === '') {
-                continue;
-            }
-            $normalized_host = blc_normalize_remote_host($host);
-            $is_excluded = false;
-            if (!empty($excluded_domains) && !empty($host)) {
-                foreach ($excluded_domains as $domain_to_exclude) {
-                    if ($domain_to_exclude === '') {
-                        continue;
-                    }
+                if ($should_skip_remote_request) {
+                    continue;
+                }
 
-                    if ($normalized_host === $domain_to_exclude) {
-                        $is_excluded = true;
-                        break;
-                    }
+                $should_insert_broken_link = false;
+                $should_retry_later = false;
+                $response_code = null;
+                $cache_entry_key = '';
+                $cache_entry = null;
+                $should_use_cache = false;
 
-                    $suffix = '.' . $domain_to_exclude;
-                    $suffix_length = strlen($suffix);
-                    if (strlen($normalized_host) > $suffix_length && substr($normalized_host, -$suffix_length) === $suffix) {
-                        $is_excluded = true;
-                        break;
+                if ($scan_cache_identifier !== '') {
+                    $cache_entry_key = md5($normalized_url);
+                    if (isset($scan_cache_data[$cache_entry_key]) && is_array($scan_cache_data[$cache_entry_key])) {
+                        $cache_entry = $scan_cache_data[$cache_entry_key];
                     }
                 }
-            }
 
-            if ($is_excluded) { continue; }
+                if (is_array($cache_entry) && isset($cache_entry['action'])) {
+                    $cache_action = (string) $cache_entry['action'];
+                    if ($cache_action === 'retry') {
+                        $checked_at = isset($cache_entry['checked_at']) ? (int) $cache_entry['checked_at'] : 0;
+                        $retry_ttl = apply_filters('blc_retry_cache_ttl', 300, $normalized_url, $cache_entry);
+                        if (!is_int($retry_ttl)) {
+                            $retry_ttl = 300;
+                        }
 
-            $is_internal_safe_host = ($normalized_host !== '' && isset($safe_internal_hosts[$normalized_host]));
-            $is_safe_remote_host   = true;
-            $should_skip_remote_request = false;
+                        if ($retry_ttl <= 0 || ($checked_at > 0 && (time() - $checked_at) <= $retry_ttl)) {
+                            $should_retry_later = true;
+                            $should_use_cache = true;
+                        }
+                    } elseif ($cache_action === 'broken') {
+                        $should_insert_broken_link = true;
+                        $should_use_cache = true;
+                    } elseif ($cache_action === 'ok') {
+                        $should_use_cache = true;
+                    }
 
-            if (!$is_internal_safe_host) {
-                $host_to_check = $normalized_host !== '' ? $normalized_host : $host;
-                $is_safe_remote_host = blc_is_safe_remote_host($host_to_check);
+                    if ($should_use_cache && isset($cache_entry['response_code'])) {
+                        $response_code = (int) $cache_entry['response_code'];
+                    }
+                }
 
-                if (!$is_safe_remote_host) {
-                    if ($debug_mode) { error_log("  -> Lien ignoré (IP non autorisée) : " . $normalized_url); }
+                $fallback_due_to_temporary_status = false;
+                if (!$should_use_cache) {
+                    $head_request_args = [
+                        'timeout'             => $head_request_timeout,
+                        'limit_response_size' => 1024,
+                        'redirection'         => 5,
+                    ];
+
+                    $get_request_args = [
+                        'timeout'             => $get_request_timeout,
+                        'user-agent'          => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+                        'method'              => 'GET',
+                        'limit_response_size' => 131072,
+                    ];
+
+                    if ($scan_method === 'precise') {
+                        $response = null;
+                        $wait_for_remote_slot();
+                        $head_response = wp_safe_remote_head($normalized_url, $head_request_args);
+                        $mark_remote_request_complete();
+                        $needs_get_fallback = false;
+
+                        if (is_wp_error($head_response)) {
+                            $needs_get_fallback = true;
+                        } else {
+                            $head_status = (int) wp_remote_retrieve_response_code($head_response);
+                            if (in_array($head_status, $temporary_http_statuses, true)) {
+                                $needs_get_fallback = true;
+                                $fallback_due_to_temporary_status = true;
+                            } elseif ($head_status === 403) {
+                                $needs_get_fallback = true;
+                            } elseif ($head_status === 405 || $head_status === 501) {
+                                $needs_get_fallback = true;
+                            } else {
+                                $response = $head_response;
+                            }
+                        }
+
+                        if ($needs_get_fallback) {
+                            $wait_for_remote_slot();
+                            $response = wp_safe_remote_get($normalized_url, $get_request_args);
+                            $mark_remote_request_complete();
+                        }
+                    } else {
+                        $wait_for_remote_slot();
+                        $response = wp_safe_remote_head($normalized_url, $head_request_args);
+                        $mark_remote_request_complete();
+                    }
+
+                    if (is_wp_error($response)) {
+                        if ($fallback_due_to_temporary_status) {
+                            $should_retry_later = true;
+                        } else {
+                            $temporary_wp_error_codes = apply_filters(
+                                'blc_temporary_wp_error_codes',
+                                ['request_timed_out', 'connect_timeout', 'could_not_resolve_host', 'dns_unresolved_hostname', 'timeout']
+                            );
+                            if (!is_array($temporary_wp_error_codes)) {
+                                $temporary_wp_error_codes = [];
+                            }
+                            $temporary_wp_error_codes = array_values(array_unique(array_filter(array_map('strval', $temporary_wp_error_codes))));
+
+                            $error_code = method_exists($response, 'get_error_code') ? (string) $response->get_error_code() : '';
+                            if ($error_code !== '' && in_array($error_code, $temporary_wp_error_codes, true)) {
+                                $should_retry_later = true;
+                            } else {
+                                $temporary_wp_error_indicators = apply_filters(
+                                    'blc_temporary_wp_error_indicators',
+                                    ['timed out', 'timeout', 'temporarily unavailable', 'temporary failure', 'could not resolve host']
+                                );
+                                if (!is_array($temporary_wp_error_indicators)) {
+                                    $temporary_wp_error_indicators = [];
+                                }
+
+                                $error_message = method_exists($response, 'get_error_message') ? (string) $response->get_error_message() : '';
+                                foreach ($temporary_wp_error_indicators as $indicator) {
+                                    $indicator = (string) $indicator;
+                                    if ($indicator === '') {
+                                        continue;
+                                    }
+
+                                    if ($error_message !== '' && stripos($error_message, $indicator) !== false) {
+                                        $should_retry_later = true;
+                                        break;
+                                    }
+                                }
+
+                                if (!$should_retry_later && method_exists($response, 'get_error_data')) {
+                                    $error_data = $response->get_error_data();
+                                    if (is_array($error_data) && isset($error_data['status'])) {
+                                        $maybe_status = (int) $error_data['status'];
+                                        if (in_array($maybe_status, $temporary_http_statuses, true)) {
+                                            $should_retry_later = true;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (!$should_retry_later) {
+                                $should_insert_broken_link = true;
+                            }
+                        }
+                    } else {
+                        $response_code = (int) wp_remote_retrieve_response_code($response);
+                        if ($response_code >= 400) {
+                            if (in_array($response_code, $temporary_http_statuses, true)) {
+                                $should_retry_later = true;
+                            } else {
+                                $should_insert_broken_link = true;
+                            }
+                        }
+                    }
+                }
+
+                if ($should_retry_later) {
+                    if (!$temporary_retry_scheduled) {
+                        $retry_delay = (int) apply_filters(
+                            'blc_temporary_retry_delay',
+                            max(60, $batch_delay_s),
+                            $normalized_url,
+                            $response_code
+                        );
+                        if ($retry_delay < 0) {
+                            $retry_delay = 0;
+                        }
+
+                        $scheduled = wp_schedule_single_event(
+                            time() + $retry_delay,
+                            'blc_check_batch',
+                            array($batch, $is_full_scan, $bypass_rest_window)
+                        );
+                        if (false === $scheduled) {
+                            error_log(sprintf('BLC: Failed to schedule temporary retry for link batch #%d.', $batch));
+                            do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'temporary_retry');
+                        } else {
+                            $temporary_retry_scheduled = true;
+                        }
+                    }
+                } elseif ($should_insert_broken_link) {
                     $inserted = $wpdb->insert(
                         $table_name,
                         [
@@ -1322,310 +1527,108 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                         $register_pending_link_insert($post->ID, $row_bytes);
                         blc_adjust_dataset_storage_footprint('link', $row_bytes);
                     }
-                    $should_skip_remote_request = true;
+                }
+
+                if (!$should_use_cache && $cache_entry_key !== '') {
+                    $cache_timestamp = time();
+                    $cache_action = 'ok';
+                    if ($should_retry_later) {
+                        $cache_action = 'retry';
+                    } elseif ($should_insert_broken_link) {
+                        $cache_action = 'broken';
+                    }
+
+                    $new_cache_entry = [
+                        'action'     => $cache_action,
+                        'checked_at' => $cache_timestamp,
+                    ];
+
+                    if ($response_code !== null) {
+                        $new_cache_entry['response_code'] = $response_code;
+                    }
+
+                    $scan_cache_data[$cache_entry_key] = $new_cache_entry;
+                    $scan_cache_dirty = true;
                 }
             }
 
-            if ($should_skip_remote_request) {
-                continue;
-            }
-
-            $should_insert_broken_link = false;
-            $should_retry_later = false;
-            $response_code = null;
-            $cache_entry_key = '';
-            $cache_entry = null;
-            $should_use_cache = false;
-
-            if ($scan_cache_identifier !== '') {
-                $cache_entry_key = md5($normalized_url);
-                if (isset($scan_cache_data[$cache_entry_key]) && is_array($scan_cache_data[$cache_entry_key])) {
-                    $cache_entry = $scan_cache_data[$cache_entry_key];
-                }
-            }
-
-            if (is_array($cache_entry) && isset($cache_entry['action'])) {
-                $cache_action = (string) $cache_entry['action'];
-                if ($cache_action === 'retry') {
-                    $checked_at = isset($cache_entry['checked_at']) ? (int) $cache_entry['checked_at'] : 0;
-                    $retry_ttl = apply_filters('blc_retry_cache_ttl', 300, $normalized_url, $cache_entry);
-                    if (!is_int($retry_ttl)) {
-                        $retry_ttl = 300;
-                    }
-
-                    if ($retry_ttl <= 0 || ($checked_at > 0 && (time() - $checked_at) <= $retry_ttl)) {
-                        $should_retry_later = true;
-                        $should_use_cache = true;
-                    }
-                } elseif ($cache_action === 'broken') {
-                    $should_insert_broken_link = true;
-                    $should_use_cache = true;
-                } elseif ($cache_action === 'ok') {
-                    $should_use_cache = true;
-                }
-
-                if ($should_use_cache && isset($cache_entry['response_code'])) {
-                    $response_code = (int) $cache_entry['response_code'];
-                }
-            }
-
-            $fallback_due_to_temporary_status = false;
-            if (!$should_use_cache) {
-                $head_request_args = [
-                    'timeout'             => $head_request_timeout,
-                    'limit_response_size' => 1024,
-                    'redirection'         => 5,
-                ];
-
-                $get_request_args = [
-                    'timeout'             => $get_request_timeout,
-                    'user-agent'          => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
-                    'method'              => 'GET',
-                    'limit_response_size' => 131072,
-                ];
-
-                if ($scan_method === 'precise') {
-                    $response = null;
-                    $wait_for_remote_slot();
-                    $head_response = wp_safe_remote_head($normalized_url, $head_request_args);
-                    $mark_remote_request_complete();
-                    $needs_get_fallback = false;
-
-                    if (is_wp_error($head_response)) {
-                        $needs_get_fallback = true;
-                    } else {
-                        $head_status = (int) wp_remote_retrieve_response_code($head_response);
-                        if (in_array($head_status, $temporary_http_statuses, true)) {
-                            $needs_get_fallback = true;
-                            $fallback_due_to_temporary_status = true;
-                        } elseif ($head_status === 403) {
-                            $needs_get_fallback = true;
-                        } elseif ($head_status === 405 || $head_status === 501) {
-                            $needs_get_fallback = true;
-                        } else {
-                            $response = $head_response;
-                        }
-                    }
-
-                    if ($needs_get_fallback) {
-                        $wait_for_remote_slot();
-                        $response = wp_safe_remote_get($normalized_url, $get_request_args);
-                        $mark_remote_request_complete();
-                    }
-                } else {
-                    $wait_for_remote_slot();
-                    $response = wp_safe_remote_head($normalized_url, $head_request_args);
-                    $mark_remote_request_complete();
-                }
-
-                if (is_wp_error($response)) {
-                    if ($fallback_due_to_temporary_status) {
-                        $should_retry_later = true;
-                    } else {
-                        $temporary_wp_error_codes = apply_filters(
-                            'blc_temporary_wp_error_codes',
-                            ['request_timed_out', 'connect_timeout', 'could_not_resolve_host', 'dns_unresolved_hostname', 'timeout']
-                        );
-                        if (!is_array($temporary_wp_error_codes)) {
-                            $temporary_wp_error_codes = [];
-                        }
-                        $temporary_wp_error_codes = array_values(array_unique(array_filter(array_map('strval', $temporary_wp_error_codes))));
-
-                        $error_code = method_exists($response, 'get_error_code') ? (string) $response->get_error_code() : '';
-                        if ($error_code !== '' && in_array($error_code, $temporary_wp_error_codes, true)) {
-                            $should_retry_later = true;
-                        } else {
-                            $temporary_wp_error_indicators = apply_filters(
-                                'blc_temporary_wp_error_indicators',
-                                ['timed out', 'timeout', 'temporarily unavailable', 'temporary failure', 'could not resolve host']
-                            );
-                            if (!is_array($temporary_wp_error_indicators)) {
-                                $temporary_wp_error_indicators = [];
-                            }
-
-                            $error_message = method_exists($response, 'get_error_message') ? (string) $response->get_error_message() : '';
-                            foreach ($temporary_wp_error_indicators as $indicator) {
-                                $indicator = (string) $indicator;
-                                if ($indicator === '') {
-                                    continue;
-                                }
-
-                                if ($error_message !== '' && stripos($error_message, $indicator) !== false) {
-                                    $should_retry_later = true;
-                                    break;
-                                }
-                            }
-
-                            if (!$should_retry_later && method_exists($response, 'get_error_data')) {
-                                $error_data = $response->get_error_data();
-                                if (is_array($error_data) && isset($error_data['status'])) {
-                                    $maybe_status = (int) $error_data['status'];
-                                    if (in_array($maybe_status, $temporary_http_statuses, true)) {
-                                        $should_retry_later = true;
-                                    }
-                                }
-                            }
-                        }
-
-                        if (!$should_retry_later) {
-                            $should_insert_broken_link = true;
-                        }
-                    }
-                } else {
-                    $response_code = (int) wp_remote_retrieve_response_code($response);
-                    if ($response_code >= 400) {
-                        if (in_array($response_code, $temporary_http_statuses, true)) {
-                            $should_retry_later = true;
-                        } else {
-                            $should_insert_broken_link = true;
-                        }
-                    }
-                }
-            }
-
-            if ($should_retry_later) {
-                if (!$temporary_retry_scheduled) {
-                    $retry_delay = (int) apply_filters(
-                        'blc_temporary_retry_delay',
-                        max(60, $batch_delay_s),
-                        $normalized_url,
-                        $response_code
-                    );
-                    if ($retry_delay < 0) {
-                        $retry_delay = 0;
-                    }
-
-                    $scheduled = wp_schedule_single_event(
-                        time() + $retry_delay,
-                        'blc_check_batch',
-                        array($batch, $is_full_scan, $bypass_rest_window)
-                    );
-                    if (false === $scheduled) {
-                        error_log(sprintf('BLC: Failed to schedule temporary retry for link batch #%d.', $batch));
-                        do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'temporary_retry');
-                    } else {
-                        $temporary_retry_scheduled = true;
-                    }
-                }
-            } elseif ($should_insert_broken_link) {
-                $inserted = $wpdb->insert(
-                    $table_name,
-                    [
-                        'url'         => $url_for_storage,
-                        'anchor'      => $anchor_for_storage,
-                        'post_id'     => $post->ID,
-                        'post_title'  => $post_title_for_storage,
-                        'type'        => 'link',
-                        'occurrence_index' => $occurrence_index,
-                        'url_host'    => $metadata['host'],
-                        'is_internal' => $metadata['is_internal'],
-                    ],
-                    ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d']
-                );
-                if ($inserted) {
-                    $register_pending_link_insert($post->ID, $row_bytes);
-                    blc_adjust_dataset_storage_footprint('link', $row_bytes);
-                }
-            }
-
-            if (!$should_use_cache && $cache_entry_key !== '') {
-                $cache_timestamp = time();
-                $cache_action = 'ok';
-                if ($should_retry_later) {
-                    $cache_action = 'retry';
-                } elseif ($should_insert_broken_link) {
-                    $cache_action = 'broken';
-                }
-
-                $new_cache_entry = [
-                    'action'     => $cache_action,
-                    'checked_at' => $cache_timestamp,
-                ];
-
-                if ($response_code !== null) {
-                    $new_cache_entry['response_code'] = $response_code;
-                }
-
-                $scan_cache_data[$cache_entry_key] = $new_cache_entry;
-                $scan_cache_dirty = true;
-            }
-        }
-
-        } catch (\Throwable $caught_exception) {
-            $batch_exception = $caught_exception;
-            break;
-        }
-
-        if ($scan_run_token !== '') {
-            $commit_result = blc_commit_dataset_refresh($table_name, 'link', $scan_run_token, 'link', [$post->ID]);
-            if (is_wp_error($commit_result)) {
-                $batch_wp_error = $commit_result;
+            } catch (\Throwable $caught_exception) {
+                $batch_exception = $caught_exception;
                 break;
             }
 
-            if (isset($pending_link_inserts[$post->ID])) {
-                unset($pending_link_inserts[$post->ID]);
-            }
-        }
-    }
-
-    $should_cleanup_pending_links = ($batch_exception !== null || $batch_wp_error instanceof \WP_Error);
-    if ($should_cleanup_pending_links && !empty($pending_link_inserts)) {
-        foreach ($pending_link_inserts as $post_pending_entries) {
-            foreach ($post_pending_entries as $entry) {
-                $row_id = isset($entry['id']) ? (int) $entry['id'] : 0;
-                $bytes  = isset($entry['bytes']) ? (int) $entry['bytes'] : 0;
-
-                if ($row_id > 0) {
-                    $wpdb->delete($table_name, ['id' => $row_id], ['%d']);
+            if ($scan_run_token !== '') {
+                $commit_result = blc_commit_dataset_refresh($table_name, 'link', $scan_run_token, 'link', [$post->ID]);
+                if (is_wp_error($commit_result)) {
+                    $batch_wp_error = $commit_result;
+                    break;
                 }
 
-                if ($bytes !== 0) {
-                    blc_adjust_dataset_storage_footprint('link', -$bytes);
+                if (isset($pending_link_inserts[$post->ID])) {
+                    unset($pending_link_inserts[$post->ID]);
                 }
             }
         }
 
-        $pending_link_inserts = [];
-    }
+        $should_cleanup_pending_links = ($batch_exception !== null || $batch_wp_error instanceof \WP_Error);
+        if ($should_cleanup_pending_links && !empty($pending_link_inserts)) {
+            foreach ($pending_link_inserts as $post_pending_entries) {
+                foreach ($post_pending_entries as $entry) {
+                    $row_id = isset($entry['id']) ? (int) $entry['id'] : 0;
+                    $bytes  = isset($entry['bytes']) ? (int) $entry['bytes'] : 0;
 
-    if ($scan_run_token !== '' && $should_cleanup_pending_links) {
-        blc_restore_dataset_refresh($table_name, 'link', $scan_run_token);
-    }
+                    if ($row_id > 0) {
+                        $wpdb->delete($table_name, ['id' => $row_id], ['%d']);
+                    }
 
-    if ($batch_exception instanceof \Throwable) {
-        throw $batch_exception;
-    }
+                    if ($bytes !== 0) {
+                        blc_adjust_dataset_storage_footprint('link', -$bytes);
+                    }
+                }
+            }
 
-    if ($batch_wp_error instanceof \WP_Error) {
-        return $batch_wp_error;
-    }
-
-    // --- 5. Sauvegarde et planification ---
-    wp_reset_postdata();
-
-    if ($scan_cache_dirty) {
-        blc_save_scan_cache($scan_cache_context, $scan_cache_data);
-        $scan_cache_dirty = false;
-    }
-
-    if ($temporary_retry_scheduled) {
-        if ($debug_mode) { error_log('Scan reporté : statut HTTP temporaire détecté, nouveau passage planifié.'); }
-        return;
-    }
-
-    if ($wp_query->max_num_pages > ($batch + 1)) {
-        $scheduled = wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan, $bypass_rest_window));
-        if (false === $scheduled) {
-            error_log(sprintf('BLC: Failed to schedule next link batch #%d.', $batch + 1));
-            do_action('blc_check_batch_schedule_failed', $batch + 1, $is_full_scan, $bypass_rest_window, 'next_batch');
+            $pending_link_inserts = [];
         }
-    } else {
-        update_option('blc_last_check_time', current_time('timestamp', true));
-        blc_clear_scan_cache($scan_cache_context);
-    }
 
-    if ($debug_mode) { error_log("--- Fin du scan LIENS (Lot #$batch) ---"); }
+        if ($scan_run_token !== '' && $should_cleanup_pending_links) {
+            blc_restore_dataset_refresh($table_name, 'link', $scan_run_token);
+        }
+
+        if ($batch_exception instanceof \Throwable) {
+            throw $batch_exception;
+        }
+
+        if ($batch_wp_error instanceof \WP_Error) {
+            return $batch_wp_error;
+        }
+
+        // --- 5. Sauvegarde et planification ---
+
+        if ($scan_cache_dirty) {
+            blc_save_scan_cache($scan_cache_context, $scan_cache_data);
+            $scan_cache_dirty = false;
+        }
+
+        if ($temporary_retry_scheduled) {
+            if ($debug_mode) { error_log('Scan reporté : statut HTTP temporaire détecté, nouveau passage planifié.'); }
+            return;
+        }
+
+        if ($wp_query->max_num_pages > ($batch + 1)) {
+            $scheduled = wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan, $bypass_rest_window));
+            if (false === $scheduled) {
+                error_log(sprintf('BLC: Failed to schedule next link batch #%d.', $batch + 1));
+                do_action('blc_check_batch_schedule_failed', $batch + 1, $is_full_scan, $bypass_rest_window, 'next_batch');
+            }
+        } else {
+            update_option('blc_last_check_time', current_time('timestamp', true));
+            blc_clear_scan_cache($scan_cache_context);
+        }
+
+        if ($debug_mode) { error_log("--- Fin du scan LIENS (Lot #$batch) ---"); }
+    } finally {
+        wp_reset_postdata();
+    }
 }
 
 
@@ -1800,236 +1803,238 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
         ];
     };
 
-    foreach ($posts as $post) {
-        try {
-            if ($debug_mode) { error_log("Analyse IMAGES pour : '" . $post->post_title . "'"); }
+    try {
+        foreach ($posts as $post) {
+            try {
+                if ($debug_mode) { error_log("Analyse IMAGES pour : '" . $post->post_title . "'"); }
 
-            $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
+                $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
 
-            $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
-            if (!$dom instanceof DOMDocument) {
-                if ($scan_run_token !== '') {
-                    $commit_result = blc_commit_dataset_refresh($table_name, 'image', $scan_run_token, 'image', [$post->ID]);
-                    if (is_wp_error($commit_result)) {
-                        $batch_wp_error = $commit_result;
-                        break;
+                $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
+                if (!$dom instanceof DOMDocument) {
+                    if ($scan_run_token !== '') {
+                        $commit_result = blc_commit_dataset_refresh($table_name, 'image', $scan_run_token, 'image', [$post->ID]);
+                        if (is_wp_error($commit_result)) {
+                            $batch_wp_error = $commit_result;
+                            break;
+                        }
                     }
-                }
-                continue;
-            }
-
-        $permalink = get_permalink($post);
-
-        foreach ($dom->getElementsByTagName('img') as $image_node) {
-            $image_url = trim(wp_kses_decode_entities($image_node->getAttribute('src')));
-            if ($image_url === '') { continue; }
-
-            $original_image_url = $image_url;
-
-            $normalized_image_url = blc_normalize_link_url(
-                $image_url,
-                $home_url_with_trailing_slash,
-                $site_scheme,
-                $permalink
-            );
-
-            if (!is_string($normalized_image_url) || $normalized_image_url === '') {
-                continue;
-            }
-
-            $image_host_raw = parse_url($normalized_image_url, PHP_URL_HOST);
-            $image_host = is_string($image_host_raw) ? blc_normalize_remote_host($image_host_raw) : '';
-            if ($image_host === '') { continue; }
-
-            $hosts_match_site = ($image_host !== '' && $normalized_site_host !== '' && $image_host === $normalized_site_host);
-            $hosts_match_upload = ($image_host !== '' && $upload_baseurl_host !== '' && $image_host === $upload_baseurl_host);
-            if (!$hosts_match_site && !$hosts_match_upload) {
-                continue;
-            }
-            if (!$hosts_match_site && $hosts_match_upload) {
-                $is_safe_remote_host = blc_is_safe_remote_host($image_host);
-                if (!$is_safe_remote_host) {
-                    if ($debug_mode) { error_log("  -> Image ignorée (IP non autorisée) : " . $normalized_image_url); }
                     continue;
                 }
+
+            $permalink = get_permalink($post);
+
+            foreach ($dom->getElementsByTagName('img') as $image_node) {
+                $image_url = trim(wp_kses_decode_entities($image_node->getAttribute('src')));
+                if ($image_url === '') { continue; }
+
+                $original_image_url = $image_url;
+
+                $normalized_image_url = blc_normalize_link_url(
+                    $image_url,
+                    $home_url_with_trailing_slash,
+                    $site_scheme,
+                    $permalink
+                );
+
+                if (!is_string($normalized_image_url) || $normalized_image_url === '') {
+                    continue;
+                }
+
+                $image_host_raw = parse_url($normalized_image_url, PHP_URL_HOST);
+                $image_host = is_string($image_host_raw) ? blc_normalize_remote_host($image_host_raw) : '';
+                if ($image_host === '') { continue; }
+
+                $hosts_match_site = ($image_host !== '' && $normalized_site_host !== '' && $image_host === $normalized_site_host);
+                $hosts_match_upload = ($image_host !== '' && $upload_baseurl_host !== '' && $image_host === $upload_baseurl_host);
+                if (!$hosts_match_site && !$hosts_match_upload) {
+                    continue;
+                }
+                if (!$hosts_match_site && $hosts_match_upload) {
+                    $is_safe_remote_host = blc_is_safe_remote_host($image_host);
+                    if (!$is_safe_remote_host) {
+                        if ($debug_mode) { error_log("  -> Image ignorée (IP non autorisée) : " . $normalized_image_url); }
+                        continue;
+                    }
+                }
+                if (empty($upload_baseurl) || empty($upload_basedir) || empty($normalized_basedir)) {
+                    continue;
+                }
+
+                $image_scheme = parse_url($normalized_image_url, PHP_URL_SCHEME);
+                $normalized_upload_baseurl = $upload_baseurl;
+                if ($image_scheme && $upload_baseurl !== '') {
+                    $normalized_upload_baseurl = set_url_scheme($upload_baseurl, $image_scheme);
+                }
+
+                $normalized_upload_baseurl_length = strlen($normalized_upload_baseurl);
+                if (
+                    $normalized_upload_baseurl_length === 0 ||
+                    strncasecmp($normalized_image_url, $normalized_upload_baseurl, $normalized_upload_baseurl_length) !== 0
+                ) {
+                    continue;
+                }
+
+                $image_path_from_url = function_exists('wp_parse_url')
+                    ? wp_parse_url($normalized_image_url, PHP_URL_PATH)
+                    : parse_url($normalized_image_url, PHP_URL_PATH);
+                if (!is_string($image_path_from_url) || $image_path_from_url === '') {
+                    continue;
+                }
+
+                $image_path = wp_normalize_path($image_path_from_url);
+
+                $parsed_upload_baseurl = function_exists('wp_parse_url') ? wp_parse_url($normalized_upload_baseurl) : parse_url($normalized_upload_baseurl);
+                $upload_base_path = '';
+                if (is_array($parsed_upload_baseurl) && !empty($parsed_upload_baseurl['path'])) {
+                    $upload_base_path = wp_normalize_path($parsed_upload_baseurl['path']);
+                }
+
+                $upload_base_path_trimmed = ltrim(trailingslashit($upload_base_path), '/');
+                $upload_base_path_trimmed_length = strlen($upload_base_path_trimmed);
+                $image_path_trimmed = ltrim($image_path, '/');
+
+                if (
+                    $upload_base_path_trimmed_length === 0 ||
+                    strncasecmp($image_path_trimmed, $upload_base_path_trimmed, $upload_base_path_trimmed_length) !== 0
+                ) {
+                    continue;
+                }
+
+                $relative_path = ltrim(substr($image_path_trimmed, $upload_base_path_trimmed_length), '/');
+                if ($relative_path === '') {
+                    continue;
+                }
+
+                $decoded_relative_path = rawurldecode($relative_path);
+                $decoded_relative_path = ltrim($decoded_relative_path, '/\\');
+                if ($decoded_relative_path === '') {
+                    continue;
+                }
+
+                if (preg_match('#(^|[\\/])\.\.([\\/]|$)#', $decoded_relative_path)) {
+                    continue;
+                }
+
+                $file_path = wp_normalize_path(trailingslashit($upload_basedir) . $decoded_relative_path);
+                if (strpos($file_path, $normalized_basedir) !== 0) {
+                    continue;
+                }
+
+                if (!isset($checked_local_paths[$file_path])) {
+                    $checked_local_paths[$file_path] = file_exists($file_path);
+                }
+
+                if ($checked_local_paths[$file_path]) {
+                    continue;
+                }
+
+                if ($debug_mode) { error_log("  -> Image Cassée Trouvée : " . $image_url); }
+                $url_for_storage    = blc_prepare_url_for_storage($original_image_url);
+                $image_filename = wp_basename($decoded_relative_path);
+                $anchor_for_storage = blc_prepare_text_field_for_storage($image_filename);
+                $metadata  = blc_get_url_metadata_for_storage($original_image_url, $normalized_image_url, $site_host_for_metadata);
+                $row_bytes = blc_calculate_row_storage_footprint_bytes($url_for_storage, $anchor_for_storage, $post_title_for_storage);
+                $inserted = $wpdb->insert(
+                    $table_name,
+                    [
+                        'url'         => $url_for_storage,
+                        'anchor'      => $anchor_for_storage,
+                        'post_id'     => $post->ID,
+                        'post_title'  => $post_title_for_storage,
+                        'type'        => 'image',
+                        'url_host'    => $metadata['host'],
+                        'is_internal' => $metadata['is_internal'],
+                    ],
+                    ['%s', '%s', '%d', '%s', '%s', '%s', '%d']
+                );
+                if ($inserted) {
+                    $register_pending_image_insert($post->ID, $row_bytes);
+                    blc_adjust_dataset_storage_footprint('image', $row_bytes);
+                }
             }
-            if (empty($upload_baseurl) || empty($upload_basedir) || empty($normalized_basedir)) {
-                continue;
-            }
 
-            $image_scheme = parse_url($normalized_image_url, PHP_URL_SCHEME);
-            $normalized_upload_baseurl = $upload_baseurl;
-            if ($image_scheme && $upload_baseurl !== '') {
-                $normalized_upload_baseurl = set_url_scheme($upload_baseurl, $image_scheme);
-            }
-
-            $normalized_upload_baseurl_length = strlen($normalized_upload_baseurl);
-            if (
-                $normalized_upload_baseurl_length === 0 ||
-                strncasecmp($normalized_image_url, $normalized_upload_baseurl, $normalized_upload_baseurl_length) !== 0
-            ) {
-                continue;
-            }
-
-            $image_path_from_url = function_exists('wp_parse_url')
-                ? wp_parse_url($normalized_image_url, PHP_URL_PATH)
-                : parse_url($normalized_image_url, PHP_URL_PATH);
-            if (!is_string($image_path_from_url) || $image_path_from_url === '') {
-                continue;
-            }
-
-            $image_path = wp_normalize_path($image_path_from_url);
-
-            $parsed_upload_baseurl = function_exists('wp_parse_url') ? wp_parse_url($normalized_upload_baseurl) : parse_url($normalized_upload_baseurl);
-            $upload_base_path = '';
-            if (is_array($parsed_upload_baseurl) && !empty($parsed_upload_baseurl['path'])) {
-                $upload_base_path = wp_normalize_path($parsed_upload_baseurl['path']);
-            }
-
-            $upload_base_path_trimmed = ltrim(trailingslashit($upload_base_path), '/');
-            $upload_base_path_trimmed_length = strlen($upload_base_path_trimmed);
-            $image_path_trimmed = ltrim($image_path, '/');
-
-            if (
-                $upload_base_path_trimmed_length === 0 ||
-                strncasecmp($image_path_trimmed, $upload_base_path_trimmed, $upload_base_path_trimmed_length) !== 0
-            ) {
-                continue;
-            }
-
-            $relative_path = ltrim(substr($image_path_trimmed, $upload_base_path_trimmed_length), '/');
-            if ($relative_path === '') {
-                continue;
-            }
-
-            $decoded_relative_path = rawurldecode($relative_path);
-            $decoded_relative_path = ltrim($decoded_relative_path, '/\\');
-            if ($decoded_relative_path === '') {
-                continue;
-            }
-
-            if (preg_match('#(^|[\\/])\.\.([\\/]|$)#', $decoded_relative_path)) {
-                continue;
-            }
-
-            $file_path = wp_normalize_path(trailingslashit($upload_basedir) . $decoded_relative_path);
-            if (strpos($file_path, $normalized_basedir) !== 0) {
-                continue;
-            }
-
-            if (!isset($checked_local_paths[$file_path])) {
-                $checked_local_paths[$file_path] = file_exists($file_path);
-            }
-
-            if ($checked_local_paths[$file_path]) {
-                continue;
-            }
-
-            if ($debug_mode) { error_log("  -> Image Cassée Trouvée : " . $image_url); }
-            $url_for_storage    = blc_prepare_url_for_storage($original_image_url);
-            $image_filename = wp_basename($decoded_relative_path);
-            $anchor_for_storage = blc_prepare_text_field_for_storage($image_filename);
-            $metadata  = blc_get_url_metadata_for_storage($original_image_url, $normalized_image_url, $site_host_for_metadata);
-            $row_bytes = blc_calculate_row_storage_footprint_bytes($url_for_storage, $anchor_for_storage, $post_title_for_storage);
-            $inserted = $wpdb->insert(
-                $table_name,
-                [
-                    'url'         => $url_for_storage,
-                    'anchor'      => $anchor_for_storage,
-                    'post_id'     => $post->ID,
-                    'post_title'  => $post_title_for_storage,
-                    'type'        => 'image',
-                    'url_host'    => $metadata['host'],
-                    'is_internal' => $metadata['is_internal'],
-                ],
-                ['%s', '%s', '%d', '%s', '%s', '%s', '%d']
-            );
-            if ($inserted) {
-                $register_pending_image_insert($post->ID, $row_bytes);
-                blc_adjust_dataset_storage_footprint('image', $row_bytes);
-            }
-        }
-
-        } catch (\Throwable $caught_exception) {
-            $batch_exception = $caught_exception;
-            break;
-        }
-
-        if ($scan_run_token !== '') {
-            $commit_result = blc_commit_dataset_refresh($table_name, 'image', $scan_run_token, 'image', [$post->ID]);
-            if (is_wp_error($commit_result)) {
-                $batch_wp_error = $commit_result;
+            } catch (\Throwable $caught_exception) {
+                $batch_exception = $caught_exception;
                 break;
             }
 
-            if (isset($pending_image_inserts[$post->ID])) {
-                unset($pending_image_inserts[$post->ID]);
-            }
-        }
-    }
-
-    $should_cleanup_pending_images = ($batch_exception !== null || $batch_wp_error instanceof \WP_Error);
-    if ($should_cleanup_pending_images && !empty($pending_image_inserts)) {
-        foreach ($pending_image_inserts as $post_pending_entries) {
-            foreach ($post_pending_entries as $entry) {
-                $row_id = isset($entry['id']) ? (int) $entry['id'] : 0;
-                $bytes  = isset($entry['bytes']) ? (int) $entry['bytes'] : 0;
-
-                if ($row_id > 0) {
-                    $wpdb->delete($table_name, ['id' => $row_id], ['%d']);
+            if ($scan_run_token !== '') {
+                $commit_result = blc_commit_dataset_refresh($table_name, 'image', $scan_run_token, 'image', [$post->ID]);
+                if (is_wp_error($commit_result)) {
+                    $batch_wp_error = $commit_result;
+                    break;
                 }
 
-                if ($bytes !== 0) {
-                    blc_adjust_dataset_storage_footprint('image', -$bytes);
+                if (isset($pending_image_inserts[$post->ID])) {
+                    unset($pending_image_inserts[$post->ID]);
                 }
             }
         }
 
-        $pending_image_inserts = [];
-    }
+        $should_cleanup_pending_images = ($batch_exception !== null || $batch_wp_error instanceof \WP_Error);
+        if ($should_cleanup_pending_images && !empty($pending_image_inserts)) {
+            foreach ($pending_image_inserts as $post_pending_entries) {
+                foreach ($post_pending_entries as $entry) {
+                    $row_id = isset($entry['id']) ? (int) $entry['id'] : 0;
+                    $bytes  = isset($entry['bytes']) ? (int) $entry['bytes'] : 0;
 
-    if ($scan_run_token !== '' && $should_cleanup_pending_images) {
-        blc_restore_dataset_refresh($table_name, 'image', $scan_run_token);
-    }
+                    if ($row_id > 0) {
+                        $wpdb->delete($table_name, ['id' => $row_id], ['%d']);
+                    }
 
-    if ($batch_exception instanceof \Throwable) {
-        if ($lock_token !== '') {
-            blc_release_image_scan_lock($lock_token);
+                    if ($bytes !== 0) {
+                        blc_adjust_dataset_storage_footprint('image', -$bytes);
+                    }
+                }
+            }
+
+            $pending_image_inserts = [];
         }
-        throw $batch_exception;
-    }
 
-    if ($batch_wp_error instanceof \WP_Error) {
-        if ($lock_token !== '') {
-            blc_release_image_scan_lock($lock_token);
+        if ($scan_run_token !== '' && $should_cleanup_pending_images) {
+            blc_restore_dataset_refresh($table_name, 'image', $scan_run_token);
         }
-        return $batch_wp_error;
-    }
 
-    wp_reset_postdata();
-
-    if ($query->max_num_pages > ($batch + 1)) {
-        // On utilise un hook de batch différent pour ne pas interférer
-        blc_refresh_image_scan_lock($lock_token, $lock_timeout);
-        $scheduled = wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_image_batch', array($batch + 1, true));
-        if (false === $scheduled) {
-            error_log(sprintf('BLC: Failed to schedule next image batch #%d.', $batch + 1));
-            do_action('blc_check_image_batch_schedule_failed', $batch + 1, true, 'next_batch');
-
+        if ($batch_exception instanceof \Throwable) {
             if ($lock_token !== '') {
                 blc_release_image_scan_lock($lock_token);
             }
-
-            delete_option('blc_image_scan_lock_token');
-
-            return new WP_Error(
-                'blc_image_schedule_failed',
-                sprintf('Failed to schedule next image batch #%d.', $batch + 1)
-            );
+            throw $batch_exception;
         }
-    } else {
-        if ($debug_mode) { error_log("--- Scan IMAGES terminé ---"); }
-        update_option('blc_last_image_check_time', current_time('timestamp', true));
-        blc_release_image_scan_lock($lock_token);
+
+        if ($batch_wp_error instanceof \WP_Error) {
+            if ($lock_token !== '') {
+                blc_release_image_scan_lock($lock_token);
+            }
+            return $batch_wp_error;
+        }
+
+        if ($query->max_num_pages > ($batch + 1)) {
+            // On utilise un hook de batch différent pour ne pas interférer
+            blc_refresh_image_scan_lock($lock_token, $lock_timeout);
+            $scheduled = wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_image_batch', array($batch + 1, true));
+            if (false === $scheduled) {
+                error_log(sprintf('BLC: Failed to schedule next image batch #%d.', $batch + 1));
+                do_action('blc_check_image_batch_schedule_failed', $batch + 1, true, 'next_batch');
+
+                if ($lock_token !== '') {
+                    blc_release_image_scan_lock($lock_token);
+                }
+
+                delete_option('blc_image_scan_lock_token');
+
+                return new WP_Error(
+                    'blc_image_schedule_failed',
+                    sprintf('Failed to schedule next image batch #%d.', $batch + 1)
+                );
+            }
+        } else {
+            if ($debug_mode) { error_log("--- Scan IMAGES terminé ---"); }
+            update_option('blc_last_image_check_time', current_time('timestamp', true));
+            blc_release_image_scan_lock($lock_token);
+        }
+    } finally {
+        wp_reset_postdata();
     }
 }
