@@ -1172,20 +1172,16 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                     }
                 }
 
-            $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
+                $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
 
-            $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
-            if (!$dom instanceof DOMDocument) {
-                error_log(sprintf('BLC: Failed to load DOM for post %d during link scan; previous results restored.', $post->ID));
-                if ($scan_run_token !== '') {
-                    $restore_result = blc_restore_dataset_refresh($table_name, 'link', $scan_run_token, [$post->ID]);
-                    if (is_wp_error($restore_result)) {
-                        $batch_wp_error = $restore_result;
-                        break;
+                $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
+                if (!$dom instanceof DOMDocument) {
+                    error_log(sprintf('BLC: DOM creation failed during link scan for post ID %d; restoring staged entries.', $post->ID));
+                    if ($scan_run_token !== '') {
+                        blc_restore_dataset_refresh($table_name, 'link', $scan_run_token, [$post->ID]);
                     }
+                    continue;
                 }
-                continue;
-            }
 
             $occurrence_counters = [];
 
@@ -1813,13 +1809,9 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
 
                 $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
                 if (!$dom instanceof DOMDocument) {
-                    error_log(sprintf('BLC: Failed to load DOM for post %d during image scan; previous results restored.', $post->ID));
+                    error_log(sprintf('BLC: DOM creation failed during image scan for post ID %d; restoring staged entries.', $post->ID));
                     if ($scan_run_token !== '') {
-                        $restore_result = blc_restore_dataset_refresh($table_name, 'image', $scan_run_token, [$post->ID]);
-                        if (is_wp_error($restore_result)) {
-                            $batch_wp_error = $restore_result;
-                            break;
-                        }
+                        blc_restore_dataset_refresh($table_name, 'image', $scan_run_token, [$post->ID]);
                     }
                     continue;
                 }
