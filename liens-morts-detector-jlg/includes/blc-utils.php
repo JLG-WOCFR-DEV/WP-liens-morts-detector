@@ -645,8 +645,14 @@ function blc_get_url_metadata_for_storage($original_url, $normalized_url, $site_
         }
     }
 
+    $host_for_storage = '';
+    if ($host !== '') {
+        $max_host_length = defined('BLC_URL_HOST_LENGTH') ? (int) BLC_URL_HOST_LENGTH : 191;
+        $host_for_storage = blc_truncate_for_storage($host, $max_host_length, false);
+    }
+
     return [
-        'host'        => $host,
+        'host'        => $host_for_storage,
         'is_internal' => $is_internal,
     ];
 }
