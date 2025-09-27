@@ -256,7 +256,9 @@ function blc_settings_page() {
                 esc_html__(
                     "Vous n'avez pas l'autorisation de modifier ces réglages.",
                     'liens-morts-detector-jlg'
-                )
+                ),
+                esc_html__('Accès refusé', 'liens-morts-detector-jlg'),
+                array('response' => 403)
             );
 
             return;
