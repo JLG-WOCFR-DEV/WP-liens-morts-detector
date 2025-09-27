@@ -69,6 +69,7 @@ class BlcSettingsPageTest extends TestCase
 
             return true;
         });
+        Functions\when('wp_next_scheduled')->justReturn(false);
         Functions\when('wp_clear_scheduled_hook')->justReturn(true);
         Functions\when('wp_nonce_field')->alias(static function ($action = -1, $name = '_wpnonce', $referer = true, $echo = true) {
             echo '';
@@ -162,9 +163,14 @@ class BlcSettingsPageTest extends TestCase
         Functions\when('current_user_can')->alias(static fn($capability) => 'manage_options' === $capability ? false : true);
         Functions\expect('wp_die')
             ->once()
-            ->withArgs(static function ($message) {
+            ->withArgs(static function ($message, $title = '', $args = array()) {
                 return is_string($message)
-                    && str_contains($message, "n'avez pas l'autorisation");
+                    && str_contains($message, "n'avez pas l'autorisation")
+                    && is_string($title)
+                    && str_contains($title, 'Accès refusé')
+                    && is_array($args)
+                    && array_key_exists('response', $args)
+                    && 403 === $args['response'];
             })
             ->andReturnNull();
         Functions\expect('wp_schedule_event')->never();
