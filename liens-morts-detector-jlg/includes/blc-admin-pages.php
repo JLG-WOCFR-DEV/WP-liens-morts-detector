@@ -348,18 +348,87 @@ function blc_settings_page() {
         $debug_mode = isset($_POST['blc_debug_mode']);
         update_option('blc_debug_mode', $debug_mode);
 
-        wp_clear_scheduled_hook('blc_check_links');
-        wp_schedule_event(time(), $frequency, 'blc_check_links');
-        if ($frequency_warning !== '') {
-            printf(
-                '<div class="notice notice-warning is-dismissible"><p>%s</p></div>',
-                $frequency_warning
-            );
-        }
-        printf(
-            '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
-            esc_html__('Réglages enregistrés !', 'liens-morts-detector-jlg')
+        $notices = array(
+            'success' => array(),
+            'warning' => array(),
+            'error'   => array(),
         );
+
+        if ($frequency_warning !== '') {
+            $notices['warning'][] = $frequency_warning;
+        }
+
+        $previous_event_timestamp = wp_next_scheduled('blc_check_links');
+        wp_clear_scheduled_hook('blc_check_links');
+        $scheduled = wp_schedule_event(time(), $frequency, 'blc_check_links');
+
+        if (false === $scheduled) {
+            error_log(
+                sprintf(
+                    'BLC: Failed to schedule automatic link check (frequency: %s).',
+                    $frequency
+                )
+            );
+            do_action('blc_check_links_schedule_failed', $frequency);
+
+            $restore_message_for_error = '';
+            if (false !== $previous_event_timestamp && null !== $previous_event_timestamp) {
+                $restore_timestamp = (int) $previous_event_timestamp;
+                if ($restore_timestamp <= time()) {
+                    $restore_timestamp = time() + HOUR_IN_SECONDS;
+                }
+
+                $restored = wp_schedule_event($restore_timestamp, $previous_frequency_sanitized, 'blc_check_links');
+
+                if (false === $restored) {
+                    error_log(
+                        sprintf(
+                            'BLC: Failed to restore previous automatic link check schedule (frequency: %s).',
+                            $previous_frequency_sanitized
+                        )
+                    );
+                    $restore_message_for_error = esc_html__(
+                        "L'ancienne planification n'a pas pu être restaurée. Une intervention manuelle est nécessaire.",
+                        'liens-morts-detector-jlg'
+                    );
+                } else {
+                    error_log('BLC: Previous automatic link check schedule restored after failure.');
+                    $restore_notice = esc_html__(
+                        'La planification précédente a été restaurée automatiquement. Vérifiez que les prochaines analyses se lanceront correctement.',
+                        'liens-morts-detector-jlg'
+                    );
+                    $notices['warning'][] = $restore_notice;
+                }
+            } else {
+                $restore_message_for_error = esc_html__(
+                    "Aucune ancienne planification n'a été trouvée. Veuillez configurer manuellement la vérification automatique.",
+                    'liens-morts-detector-jlg'
+                );
+            }
+
+            $error_message = esc_html__(
+                "La nouvelle planification n'a pas pu être programmée. Vérifiez la configuration de WP-Cron.",
+                'liens-morts-detector-jlg'
+            );
+
+            if ($restore_message_for_error !== '') {
+                $error_message = sprintf('%s %s', $error_message, $restore_message_for_error);
+            }
+
+            $notices['error'][] = $error_message;
+        } else {
+            $notices['success'][] = esc_html__('Réglages enregistrés !', 'liens-morts-detector-jlg');
+        }
+
+        foreach ($notices as $type => $messages) {
+            foreach ($messages as $message) {
+                printf(
+                    '<div class="notice notice-%1$s is-dismissible"><p>%2$s</p></div>',
+                    esc_attr($type),
+                    $message
+                );
+            }
+        }
     }
 
     $frequency = get_option('blc_frequency', 'daily');
