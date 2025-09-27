@@ -1909,6 +1909,43 @@ class BlcScannerTest extends TestCase
         $this->assertSame('link', $insert['data']['type']);
     }
 
+    public function test_blc_perform_check_truncates_long_url_host_before_inserting(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $long_host_segments = [
+            str_repeat('a', 63),
+            str_repeat('b', 63),
+            str_repeat('c', 63),
+            'com',
+        ];
+        $long_host = implode('.', $long_host_segments);
+        $url = 'https://' . $long_host . '/resource';
+
+        $post = (object) [
+            'ID' => 417,
+            'post_title' => 'Very Long Host',
+            'post_content' => '<a href="' . $url . '">Broken Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', $url, ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(1, $wpdb->inserted, 'A failing external link with a long host must be recorded.');
+        $insert = $wpdb->inserted[0];
+
+        $expected_host = substr($long_host, 0, 191);
+        $this->assertSame($expected_host, $insert['data']['url_host'], 'URL host should be truncated to the storage column length.');
+        $this->assertSame(191, strlen($insert['data']['url_host']), 'URL host should not exceed the varchar(191) column.');
+    }
+
     public function test_blc_ajax_edit_link_callback_updates_scheme_relative_url(): void
     {
         global $wpdb;
@@ -2457,6 +2494,79 @@ class BlcScannerTest extends TestCase
         $this->assertArrayHasKey('token', $lock_state);
         $this->assertArrayHasKey('locked_at', $lock_state);
         $this->assertSame($lock_state['token'], $this->updatedOptions['blc_image_scan_lock_token']);
+    }
+
+    public function test_blc_perform_image_check_truncates_long_url_host_before_inserting(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $long_host_segments = [
+            str_repeat('a', 63),
+            str_repeat('b', 63),
+            str_repeat('c', 63),
+            'com',
+        ];
+        $long_host = implode('.', $long_host_segments);
+        $long_base = 'https://' . $long_host;
+        $long_base_with_slash = rtrim($long_base, '/') . '/';
+
+        Functions\when('home_url')->alias(function ($path = '', $scheme = null) use ($long_base) {
+            $base = $long_base;
+            if ($path !== '') {
+                return rtrim($base, '/') . '/' . ltrim($path, '/');
+            }
+
+            return $base;
+        });
+        Functions\when('site_url')->alias(function ($path = '', $scheme = null) use ($long_base) {
+            $base = $long_base;
+            if ($path !== '') {
+                return rtrim($base, '/') . '/' . ltrim($path, '/');
+            }
+
+            return $base;
+        });
+        Functions\when('get_permalink')->alias(function ($post = null) use ($long_base_with_slash) {
+            if (is_object($post) && isset($post->ID)) {
+                return $long_base_with_slash . 'post-' . $post->ID . '/';
+            }
+
+            if (is_numeric($post)) {
+                return $long_base_with_slash . 'post-' . ((int) $post) . '/';
+            }
+
+            return $long_base_with_slash . 'post/';
+        });
+
+        $uploads_dir = sys_get_temp_dir() . '/uploads-long-host-' . uniqid('', true);
+        Functions\when('wp_upload_dir')->alias(function () use ($uploads_dir, $long_host) {
+            return [
+                'baseurl' => 'https://' . $long_host . '/wp-content/uploads',
+                'basedir' => $uploads_dir,
+            ];
+        });
+
+        $image_url = 'https://' . $long_host . '/wp-content/uploads/2024/05/missing.png';
+        $post = (object) [
+            'ID' => 718,
+            'post_title' => 'Very Long Image Host',
+            'post_content' => '<img src="' . $image_url . '" />',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_image_check(0, true);
+
+        $this->assertCount(1, $wpdb->inserted, 'Missing images hosted on long domains should be recorded.');
+        $insert = $wpdb->inserted[0];
+
+        $expected_host = substr($long_host, 0, 191);
+        $this->assertSame($expected_host, $insert['data']['url_host'], 'Image host should be truncated to the storage column length.');
+        $this->assertSame(191, strlen($insert['data']['url_host']), 'Image host should not exceed the varchar(191) column.');
     }
 
     public function test_blc_perform_image_check_records_missing_cdn_upload_image(): void
