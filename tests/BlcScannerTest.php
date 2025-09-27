@@ -105,6 +105,18 @@ class BlcScannerTest extends TestCase
     /** @var array<int, array{timestamp: int, hook: string, args: array, unique: bool}> */
     private array $scheduledEvents = [];
 
+    /** @var array<int, array{timestamp: int, hook: string, args: array, unique: bool}> */
+    private array $failedScheduleAttempts = [];
+
+    /** @var array<int, bool> */
+    private array $scheduleSingleEventResults = [];
+
+    /** @var array<int, array{hook: string, args: array}> */
+    private array $triggeredActions = [];
+
+    /** @var array<int, string> */
+    private array $errorLogs = [];
+
     /** @var array<string, mixed> */
     private array $updatedOptions = [];
 
@@ -159,6 +171,10 @@ class BlcScannerTest extends TestCase
         $this->httpRequests = [];
         $this->httpResponses = [];
         $this->scheduledEvents = [];
+        $this->failedScheduleAttempts = [];
+        $this->scheduleSingleEventResults = [];
+        $this->triggeredActions = [];
+        $this->errorLogs = [];
         $this->updatedOptions = [];
         $this->transients = [];
         $this->serverLoad = [0.5, 0.4, 0.3];
@@ -402,12 +418,37 @@ class BlcScannerTest extends TestCase
             return true;
         });
         Functions\when('wp_schedule_single_event')->alias(function (int $timestamp, string $hook, array $args = [], bool $unique = true) {
-            $this->scheduledEvents[] = [
+            $result = true;
+            if (!empty($this->scheduleSingleEventResults)) {
+                $result = array_shift($this->scheduleSingleEventResults);
+            }
+
+            $target = [
                 'timestamp' => $timestamp,
                 'hook'      => $hook,
                 'args'      => $args,
                 'unique'    => $unique,
             ];
+
+            if ($result) {
+                $this->scheduledEvents[] = $target;
+            } else {
+                $this->failedScheduleAttempts[] = $target;
+            }
+
+            return $result;
+        });
+        Functions\when('do_action')->alias(function (string $hook, ...$args) {
+            $this->triggeredActions[] = [
+                'hook' => $hook,
+                'args' => $args,
+            ];
+
+            return null;
+        });
+        Functions\when('error_log')->alias(function ($message, $message_type = null, $destination = null, $extra_headers = null) {
+            $this->errorLogs[] = (string) $message;
+
             return true;
         });
         Functions\when('sys_getloadavg')->alias(fn() => $this->serverLoad);
@@ -436,6 +477,11 @@ class BlcScannerTest extends TestCase
         unset($_POST);
         $this->ajaxResponse = null;
         $this->transients = [];
+        $this->scheduledEvents = [];
+        $this->failedScheduleAttempts = [];
+        $this->scheduleSingleEventResults = [];
+        $this->triggeredActions = [];
+        $this->errorLogs = [];
         global $wpdb;
         $wpdb = null;
     }
@@ -2073,6 +2119,36 @@ class BlcScannerTest extends TestCase
         $cacheKeyOptions = $this->updatedOptions;
         unset($cacheKeyOptions['blc_active_link_scan_key']);
         $this->assertSame([], $cacheKeyOptions, 'Last check time should not be updated before the final batch.');
+    }
+
+    public function test_blc_perform_check_logs_failure_when_next_batch_schedule_fails(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->scheduleSingleEventResults = [false];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [],
+            'max_num_pages' => 2,
+        ];
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(0, $this->scheduledEvents, 'No successful scheduling should be recorded when cron fails.');
+        $this->assertCount(1, $this->failedScheduleAttempts, 'The failed scheduling attempt should be tracked.');
+
+        $attempt = $this->failedScheduleAttempts[0];
+        $this->assertSame('blc_check_batch', $attempt['hook']);
+        $this->assertSame([1, false, false], $attempt['args']);
+
+        $this->assertNotEmpty($this->errorLogs, 'An error log entry should be recorded for scheduling failures.');
+        $this->assertStringContainsString('Failed to schedule next link batch #1', $this->errorLogs[0]);
+
+        $this->assertNotEmpty($this->triggeredActions, 'A failure hook should be triggered when scheduling fails.');
+        $action = $this->triggeredActions[0];
+        $this->assertSame('blc_check_batch_schedule_failed', $action['hook']);
+        $this->assertSame([1, false, false, 'next_batch'], $action['args']);
     }
 
     public function test_blc_perform_check_normalizes_negative_delays(): void
