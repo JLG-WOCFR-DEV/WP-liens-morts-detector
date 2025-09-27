@@ -2572,6 +2572,43 @@ class BlcScannerTest extends TestCase
         $this->assertSame($lock_state['token'], $this->updatedOptions['blc_image_scan_lock_token']);
     }
 
+    public function test_blc_perform_image_check_releases_lock_and_returns_error_when_scheduling_fails(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->scheduleSingleEventResults = [false];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [],
+            'max_num_pages' => 2,
+        ];
+
+        $result = blc_perform_image_check(0, true);
+
+        $this->assertInstanceOf(\WP_Error::class, $result, 'A scheduling failure should surface as a WP_Error.');
+        $this->assertSame('blc_image_schedule_failed', $result->get_error_code());
+        $this->assertStringContainsString('Failed to schedule next image batch #1', $result->get_error_message());
+
+        $this->assertCount(0, $this->scheduledEvents, 'No successful scheduling should be recorded when cron fails.');
+        $this->assertCount(1, $this->failedScheduleAttempts, 'The failed scheduling attempt should be tracked.');
+
+        $attempt = $this->failedScheduleAttempts[0];
+        $this->assertSame('blc_check_image_batch', $attempt['hook']);
+        $this->assertSame([1, true], $attempt['args']);
+
+        $this->assertArrayNotHasKey('blc_image_scan_lock', $this->options, 'The image scan lock should be released when scheduling fails.');
+        $this->assertArrayNotHasKey('blc_image_scan_lock_token', $this->options, 'The helper lock token option should be cleared when scheduling fails.');
+
+        $this->assertNotEmpty($this->errorLogs, 'An error should be logged when scheduling fails.');
+        $this->assertStringContainsString('Failed to schedule next image batch #1', $this->errorLogs[0]);
+
+        $this->assertNotEmpty($this->triggeredActions, 'A failure hook should be triggered when scheduling fails.');
+        $action = $this->triggeredActions[0];
+        $this->assertSame('blc_check_image_batch_schedule_failed', $action['hook']);
+        $this->assertSame([1, true, 'next_batch'], $action['args']);
+    }
+
     public function test_blc_perform_image_check_truncates_long_url_host_before_inserting(): void
     {
         global $wpdb;
