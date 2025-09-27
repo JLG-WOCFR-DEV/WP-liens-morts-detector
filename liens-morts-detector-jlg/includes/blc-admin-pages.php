@@ -370,6 +370,7 @@ function blc_settings_page() {
         }
 
         $previous_event_timestamp = wp_next_scheduled('blc_check_links');
+        $previous_event_schedule  = wp_get_schedule('blc_check_links');
         wp_clear_scheduled_hook('blc_check_links');
         $scheduled = wp_schedule_event(time(), $frequency, 'blc_check_links');
 
@@ -382,23 +383,27 @@ function blc_settings_page() {
             );
             do_action('blc_check_links_schedule_failed', $frequency);
 
-            $restore_message_for_error = '';
+            $restore_warning = '';
             if (false !== $previous_event_timestamp && null !== $previous_event_timestamp) {
                 $restore_timestamp = (int) $previous_event_timestamp;
                 if ($restore_timestamp <= time()) {
                     $restore_timestamp = time() + HOUR_IN_SECONDS;
                 }
 
-                $restored = wp_schedule_event($restore_timestamp, $previous_frequency_sanitized, 'blc_check_links');
+                $restore_recurrence = $previous_event_schedule
+                    ? $previous_event_schedule
+                    : $previous_frequency_sanitized;
+                $restored = wp_schedule_event($restore_timestamp, $restore_recurrence, 'blc_check_links');
 
                 if (false === $restored) {
                     error_log(
                         sprintf(
-                            'BLC: Failed to restore previous automatic link check schedule (frequency: %s).',
-                            $previous_frequency_sanitized
+                            'BLC: Failed to restore previous automatic link check schedule (recurrence: %s, timestamp: %d).',
+                            $restore_recurrence,
+                            $restore_timestamp
                         )
                     );
-                    $restore_message_for_error = esc_html__(
+                    $restore_warning = esc_html__(
                         "L'ancienne planification n'a pas pu être restaurée. Une intervention manuelle est nécessaire.",
                         'liens-morts-detector-jlg'
                     );
@@ -411,7 +416,7 @@ function blc_settings_page() {
                     $notices['warning'][] = $restore_notice;
                 }
             } else {
-                $restore_message_for_error = esc_html__(
+                $restore_warning = esc_html__(
                     "Aucune ancienne planification n'a été trouvée. Veuillez configurer manuellement la vérification automatique.",
                     'liens-morts-detector-jlg'
                 );
@@ -422,11 +427,10 @@ function blc_settings_page() {
                 'liens-morts-detector-jlg'
             );
 
-            if ($restore_message_for_error !== '') {
-                $error_message = sprintf('%s %s', $error_message, $restore_message_for_error);
-            }
-
             $notices['error'][] = $error_message;
+            if ($restore_warning !== '') {
+                $notices['warning'][] = $restore_warning;
+            }
         } else {
             $notices['success'][] = esc_html__('Réglages enregistrés !', 'liens-morts-detector-jlg');
         }
