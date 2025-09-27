@@ -45,6 +45,7 @@ class BlcSettingsPageTest extends TestCase
         $test_case = $this;
 
         Functions\when('check_admin_referer')->justReturn(true);
+        Functions\when('current_user_can')->justReturn(true);
         Functions\when('wp_unslash')->alias(static fn($value) => $value);
         Functions\when('sanitize_text_field')->alias(static function ($value) {
             if (is_scalar($value)) {
@@ -143,6 +144,38 @@ class BlcSettingsPageTest extends TestCase
 
         $this->assertSame($expected_frequency, $this->getStoredOption('blc_frequency'));
         $this->assertStringContainsString('La fréquence choisie est invalide', (string) $output);
+    }
+
+    public function test_settings_not_saved_when_user_lacks_capability(): void
+    {
+        $_POST = [
+            'blc_save_settings'    => '1',
+            'blc_frequency'        => 'daily',
+            'blc_rest_start_hour'  => '06',
+            'blc_rest_end_hour'    => '22',
+            'blc_link_delay'       => '150',
+            'blc_batch_delay'      => '70',
+            'blc_scan_method'      => 'fast',
+            'blc_excluded_domains' => 'example.org',
+        ];
+
+        Functions\when('current_user_can')->alias(static fn($capability) => 'manage_options' === $capability ? false : true);
+        Functions\expect('wp_die')
+            ->once()
+            ->withArgs(static function ($message) {
+                return is_string($message)
+                    && str_contains($message, "n'avez pas l'autorisation");
+            })
+            ->andReturnNull();
+        Functions\expect('wp_schedule_event')->never();
+
+        blc_settings_page();
+
+        $this->assertSame('weekly', $this->getStoredOption('blc_frequency'));
+        $this->assertSame('08', $this->getStoredOption('blc_rest_start_hour'));
+        $this->assertSame('20', $this->getStoredOption('blc_rest_end_hour'));
+        $this->assertSame(200, $this->getStoredOption('blc_link_delay'));
+        $this->assertSame(60, $this->getStoredOption('blc_batch_delay'));
     }
 
     /**
