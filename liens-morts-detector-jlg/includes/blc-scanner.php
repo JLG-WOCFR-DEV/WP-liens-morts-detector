@@ -962,7 +962,11 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             $next_timestamp = $current_gmt_timestamp + 60;
         }
 
-        wp_schedule_single_event($next_timestamp, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
+        $scheduled = wp_schedule_single_event($next_timestamp, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
+        if (false === $scheduled) {
+            error_log(sprintf('BLC: Failed to schedule link batch #%d during rest window.', $batch));
+            do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'rest_window');
+        }
         return;
     }
 
@@ -981,7 +985,11 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                     if ($retry_delay < 0) { $retry_delay = 0; }
 
                     if ($debug_mode) { error_log("Scan reporté : charge serveur trop élevée (" . $current_load . ")."); }
-                    wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
+                    $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
+                    if (false === $scheduled) {
+                        error_log(sprintf('BLC: Failed to schedule link batch #%d after high load.', $batch));
+                        do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'server_load');
+                    }
                     return;
                 }
             } elseif ($debug_mode) {
@@ -1487,12 +1495,17 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                         $retry_delay = 0;
                     }
 
-                    wp_schedule_single_event(
+                    $scheduled = wp_schedule_single_event(
                         time() + $retry_delay,
                         'blc_check_batch',
                         array($batch, $is_full_scan, $bypass_rest_window)
                     );
-                    $temporary_retry_scheduled = true;
+                    if (false === $scheduled) {
+                        error_log(sprintf('BLC: Failed to schedule temporary retry for link batch #%d.', $batch));
+                        do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'temporary_retry');
+                    } else {
+                        $temporary_retry_scheduled = true;
+                    }
                 }
             } elseif ($should_insert_broken_link) {
                 $inserted = $wpdb->insert(
@@ -1602,7 +1615,11 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     }
 
     if ($wp_query->max_num_pages > ($batch + 1)) {
-        wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan, $bypass_rest_window));
+        $scheduled = wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan, $bypass_rest_window));
+        if (false === $scheduled) {
+            error_log(sprintf('BLC: Failed to schedule next link batch #%d.', $batch + 1));
+            do_action('blc_check_batch_schedule_failed', $batch + 1, $is_full_scan, $bypass_rest_window, 'next_batch');
+        }
     } else {
         update_option('blc_last_check_time', current_time('timestamp', true));
         blc_clear_scan_cache($scan_cache_context);
@@ -1638,7 +1655,11 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
         if ($lock_token === '') {
             if ($debug_mode) { error_log('Analyse d\'images déjà en cours, reprogrammation du lot initial.'); }
             $retry_delay = max(60, $batch_delay_s);
-            wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array(0, true));
+            $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array(0, true));
+            if (false === $scheduled) {
+                error_log('BLC: Failed to schedule image batch #0 while waiting for lock.');
+                do_action('blc_check_image_batch_schedule_failed', 0, true, 'initial_lock_retry');
+            }
             return;
         }
     } else {
@@ -1655,7 +1676,11 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
             if ($lock_token === '') {
                 if ($debug_mode) { error_log('Impossible de reprendre le scan d\'images (verrou indisponible).'); }
                 $retry_delay = max(60, $batch_delay_s);
-                wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
+                $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
+                if (false === $scheduled) {
+                    error_log(sprintf('BLC: Failed to reschedule image batch #%d due to missing lock token.', $batch));
+                    do_action('blc_check_image_batch_schedule_failed', $batch, $is_full_scan, 'missing_lock_token');
+                }
                 return;
             }
         } elseif ($active_token !== $stored_token) {
@@ -1668,7 +1693,11 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
             if ($lock_token === '') {
                 if ($debug_mode) { error_log('Impossible de rafraîchir le verrou du scan d\'images.'); }
                 $retry_delay = max(60, $batch_delay_s);
-                wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
+                $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
+                if (false === $scheduled) {
+                    error_log(sprintf('BLC: Failed to reschedule image batch #%d after failing to refresh lock.', $batch));
+                    do_action('blc_check_image_batch_schedule_failed', $batch, $is_full_scan, 'lock_refresh');
+                }
                 return;
             }
         } else {
@@ -1982,7 +2011,11 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     if ($query->max_num_pages > ($batch + 1)) {
         // On utilise un hook de batch différent pour ne pas interférer
         blc_refresh_image_scan_lock($lock_token, $lock_timeout);
-        wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_image_batch', array($batch + 1, true));
+        $scheduled = wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_image_batch', array($batch + 1, true));
+        if (false === $scheduled) {
+            error_log(sprintf('BLC: Failed to schedule next image batch #%d.', $batch + 1));
+            do_action('blc_check_image_batch_schedule_failed', $batch + 1, true, 'next_batch');
+        }
     } else {
         if ($debug_mode) { error_log("--- Scan IMAGES terminé ---"); }
         update_option('blc_last_image_check_time', current_time('timestamp', true));
