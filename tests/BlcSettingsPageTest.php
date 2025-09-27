@@ -17,6 +17,11 @@ class BlcSettingsPageTest extends TestCase
      */
     private array $options = [];
 
+    /**
+     * @var bool
+     */
+    private bool $canManageOptions = true;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -59,6 +64,13 @@ class BlcSettingsPageTest extends TestCase
             }
 
             return '';
+        });
+        Functions\when('current_user_can')->alias(function ($capability) {
+            if ('manage_options' === $capability) {
+                return $this->canManageOptions;
+            }
+
+            return false;
         });
         Functions\when('get_option')->alias(static function ($name, $default = false) use ($test_case) {
             return $test_case->getStoredOption((string) $name, $default);
@@ -145,6 +157,53 @@ class BlcSettingsPageTest extends TestCase
         $this->assertStringContainsString('La fréquence choisie est invalide', (string) $output);
     }
 
+    public function test_settings_save_requires_manage_options_capability(): void
+    {
+        $_POST = [
+            'blc_save_settings'    => '1',
+            'blc_frequency'        => 'daily',
+            'blc_rest_start_hour'  => '07',
+            'blc_rest_end_hour'    => '19',
+            'blc_link_delay'       => '50',
+            'blc_batch_delay'      => '25',
+            'blc_scan_method'      => 'fast',
+            'blc_excluded_domains' => 'example.org',
+        ];
+
+        $initialOptions = $this->options;
+
+        $this->setCanManageOptions(false);
+
+        Functions\expect('wp_die')
+            ->once()
+            ->withArgs(static function ($message = '') {
+                return is_string($message)
+                    && str_contains($message, "Vous n'avez pas l'autorisation de modifier ces paramètres.");
+            })
+            ->andReturnUsing(static function () {
+                throw new \RuntimeException('wp_die called');
+            });
+
+        $didDie = false;
+
+        try {
+            blc_settings_page();
+        } catch (\RuntimeException $exception) {
+            $didDie = true;
+            $this->assertSame('wp_die called', $exception->getMessage());
+        }
+
+        $this->assertTrue($didDie, 'Expected wp_die to be called when capability is missing.');
+
+        foreach ($initialOptions as $name => $value) {
+            $this->assertSame(
+                $value,
+                $this->getStoredOption($name),
+                sprintf('Option "%s" should remain unchanged.', (string) $name)
+            );
+        }
+    }
+
     /**
      * @param string $name
      * @param mixed  $default
@@ -163,6 +222,11 @@ class BlcSettingsPageTest extends TestCase
     private function setStoredOption(string $name, $value): void
     {
         $this->options[$name] = $value;
+    }
+
+    private function setCanManageOptions(bool $value): void
+    {
+        $this->canManageOptions = $value;
     }
 }
 
