@@ -348,18 +348,70 @@ function blc_settings_page() {
         $debug_mode = isset($_POST['blc_debug_mode']);
         update_option('blc_debug_mode', $debug_mode);
 
+        $previous_schedule_timestamp = wp_next_scheduled('blc_check_links');
+        if (false !== $previous_schedule_timestamp) {
+            $previous_schedule_timestamp = (int) $previous_schedule_timestamp;
+            if ($previous_schedule_timestamp < time()) {
+                $previous_schedule_timestamp = time();
+            }
+        }
+
         wp_clear_scheduled_hook('blc_check_links');
-        wp_schedule_event(time(), $frequency, 'blc_check_links');
+
+        $schedule_success = true;
+        $schedule_restore_notice = '';
+
+        $scheduled = wp_schedule_event(time(), $frequency, 'blc_check_links');
+
+        if (false === $scheduled) {
+            $schedule_success = false;
+
+            error_log(sprintf('BLC: Failed to schedule recurring link checks from settings page (frequency: %s).', $frequency));
+            do_action('blc_check_links_schedule_failed', $frequency, 'settings_page');
+
+            if (false !== $previous_schedule_timestamp) {
+                $restored = wp_schedule_event($previous_schedule_timestamp, $fallback_frequency, 'blc_check_links');
+
+                if (false === $restored) {
+                    error_log(sprintf('BLC: Failed to restore previous recurring link check schedule (frequency: %s).', $fallback_frequency));
+                    do_action('blc_check_links_schedule_restore_failed', $fallback_frequency, $previous_schedule_timestamp, 'settings_page');
+
+                    $schedule_restore_notice = esc_html__('La planification précédente n\'a pas pu être restaurée. Veuillez reprogrammer les vérifications automatiques manuellement.', 'liens-morts-detector-jlg');
+                } else {
+                    do_action('blc_check_links_schedule_restored', $fallback_frequency, $previous_schedule_timestamp, 'settings_page');
+
+                    $schedule_restore_notice = esc_html__('La nouvelle planification a échoué, mais l\'ancienne fréquence a été restaurée.', 'liens-morts-detector-jlg');
+                }
+            } else {
+                $schedule_restore_notice = esc_html__('Aucune planification précédente n\'a pu être restaurée. Veuillez reprogrammer les vérifications automatiques manuellement.', 'liens-morts-detector-jlg');
+            }
+        }
+
         if ($frequency_warning !== '') {
             printf(
                 '<div class="notice notice-warning is-dismissible"><p>%s</p></div>',
                 $frequency_warning
             );
         }
-        printf(
-            '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
-            esc_html__('Réglages enregistrés !', 'liens-morts-detector-jlg')
-        );
+
+        if ($schedule_success) {
+            printf(
+                '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
+                esc_html__('Réglages enregistrés !', 'liens-morts-detector-jlg')
+            );
+        } else {
+            echo '<div class="notice notice-error is-dismissible">';
+            printf(
+                '<p>%s</p>',
+                esc_html__('La vérification automatique des liens n\'a pas pu être programmée. Veuillez réessayer.', 'liens-morts-detector-jlg')
+            );
+
+            if ('' !== $schedule_restore_notice) {
+                printf('<p>%s</p>', $schedule_restore_notice);
+            }
+
+            echo '</div>';
+        }
     }
 
     $frequency = get_option('blc_frequency', 'daily');
