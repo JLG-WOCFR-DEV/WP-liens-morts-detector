@@ -2015,6 +2015,20 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
         if (false === $scheduled) {
             error_log(sprintf('BLC: Failed to schedule next image batch #%d.', $batch + 1));
             do_action('blc_check_image_batch_schedule_failed', $batch + 1, true, 'next_batch');
+
+            if ($lock_token !== '') {
+                blc_release_image_scan_lock($lock_token);
+            } else {
+                delete_option('blc_image_scan_lock_token');
+            }
+
+            return new \WP_Error(
+                'blc_image_batch_schedule_failed',
+                sprintf(
+                    __('Unable to schedule next image batch #%d.', 'liens-morts-detector-jlg'),
+                    $batch + 1
+                )
+            );
         }
     } else {
         if ($debug_mode) { error_log("--- Scan IMAGES terminé ---"); }

@@ -2572,6 +2572,48 @@ class BlcScannerTest extends TestCase
         $this->assertSame($lock_state['token'], $this->updatedOptions['blc_image_scan_lock_token']);
     }
 
+    public function test_blc_perform_image_check_releases_lock_when_next_batch_cannot_be_scheduled(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->scheduleSingleEventResults = [false];
+
+        $post = (object) [
+            'ID' => 91,
+            'post_title' => 'Images Batch Failure',
+            'post_content' => '<img src="https://example.com/wp-content/uploads/2024/05/missing.jpg" />',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 2,
+        ];
+
+        $result = blc_perform_image_check(0, true);
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('blc_image_batch_schedule_failed', $result->get_error_code());
+        $this->assertSame('Unable to schedule next image batch #1.', $result->get_error_message());
+
+        $this->assertCount(1, $this->failedScheduleAttempts, 'Failed schedule attempt should be recorded.');
+        $attempt = $this->failedScheduleAttempts[0];
+        $this->assertSame('blc_check_image_batch', $attempt['hook']);
+        $this->assertSame([1, true], $attempt['args']);
+        $this->assertCount(0, $this->scheduledEvents, 'No successful events should be scheduled.');
+
+        $this->assertArrayNotHasKey('blc_image_scan_lock', $this->options, 'Lock state option should be removed when scheduling fails.');
+        $this->assertArrayNotHasKey('blc_image_scan_lock_token', $this->options, 'Lock token option should be removed when scheduling fails.');
+        $this->assertArrayNotHasKey('blc_image_scan_lock', $this->updatedOptions, 'Lock state should not remain cached after release.');
+        $this->assertArrayNotHasKey('blc_image_scan_lock_token', $this->updatedOptions, 'Lock token should be cleared after release.');
+
+        $scheduleFailureHooks = array_filter(
+            $this->triggeredActions,
+            static fn(array $entry) => ($entry['hook'] ?? '') === 'blc_check_image_batch_schedule_failed'
+        );
+        $this->assertNotEmpty($scheduleFailureHooks, 'Schedule failure hook should be triggered.');
+    }
+
     public function test_blc_perform_image_check_truncates_long_url_host_before_inserting(): void
     {
         global $wpdb;
