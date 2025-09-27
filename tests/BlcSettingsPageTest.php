@@ -68,7 +68,10 @@ class BlcSettingsPageTest extends TestCase
 
             return true;
         });
+        Functions\when('wp_get_scheduled_event')->justReturn(null);
         Functions\when('wp_clear_scheduled_hook')->justReturn(true);
+        Functions\when('error_log')->justReturn(true);
+        Functions\when('do_action')->justReturn(null);
         Functions\when('wp_nonce_field')->alias(static function ($action = -1, $name = '_wpnonce', $referer = true, $echo = true) {
             echo '';
 
@@ -143,6 +146,48 @@ class BlcSettingsPageTest extends TestCase
 
         $this->assertSame($expected_frequency, $this->getStoredOption('blc_frequency'));
         $this->assertStringContainsString('La fréquence choisie est invalide', (string) $output);
+    }
+
+    public function test_schedule_failure_displays_error_and_restores_previous_schedule(): void
+    {
+        $_POST = [
+            'blc_save_settings'    => '1',
+            'blc_frequency'        => 'daily',
+            'blc_rest_start_hour'  => '09',
+            'blc_rest_end_hour'    => '18',
+            'blc_link_delay'       => '100',
+            'blc_batch_delay'      => '50',
+            'blc_scan_method'      => 'fast',
+            'blc_excluded_domains' => 'example.com',
+        ];
+
+        $previous_event = (object) [
+            'timestamp' => time() + 3600,
+            'schedule'  => 'weekly',
+            'args'      => [],
+        ];
+
+        Functions\when('wp_get_scheduled_event')->justReturn($previous_event);
+
+        $schedule_calls = [];
+        Functions\when('wp_schedule_event')->alias(static function (...$args) use (&$schedule_calls) {
+            $schedule_calls[] = $args;
+
+            return count($schedule_calls) === 1 ? false : true;
+        });
+
+        ob_start();
+        blc_settings_page();
+        $output = (string) ob_get_clean();
+
+        $this->assertCount(2, $schedule_calls);
+        $this->assertSame('daily', $schedule_calls[0][1]);
+        $this->assertSame('blc_check_links', $schedule_calls[0][2]);
+        $this->assertSame('weekly', $schedule_calls[1][1]);
+        $this->assertSame('blc_check_links', $schedule_calls[1][2]);
+        $this->assertStringContainsString("La vérification automatique n'a pas pu être programmée", $output);
+        $this->assertStringContainsString('La planification précédente a été restaurée', $output);
+        $this->assertStringNotContainsString('Réglages enregistrés !', $output);
     }
 
     /**

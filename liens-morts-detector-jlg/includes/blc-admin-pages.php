@@ -348,18 +348,77 @@ function blc_settings_page() {
         $debug_mode = isset($_POST['blc_debug_mode']);
         update_option('blc_debug_mode', $debug_mode);
 
+        $previous_schedule = wp_get_scheduled_event('blc_check_links');
         wp_clear_scheduled_hook('blc_check_links');
-        wp_schedule_event(time(), $frequency, 'blc_check_links');
+        $scheduled = wp_schedule_event(time(), $frequency, 'blc_check_links');
+
         if ($frequency_warning !== '') {
             printf(
                 '<div class="notice notice-warning is-dismissible"><p>%s</p></div>',
                 $frequency_warning
             );
         }
-        printf(
-            '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
-            esc_html__('Réglages enregistrés !', 'liens-morts-detector-jlg')
-        );
+
+        if (false === $scheduled) {
+            error_log(
+                sprintf(
+                    'BLC: Failed to reschedule automatic link check with frequency "%s".',
+                    $frequency
+                )
+            );
+            do_action('blc_check_links_schedule_failed', $frequency);
+
+            $restoration_attempted = false;
+            $restoration_successful = false;
+
+            if (is_object($previous_schedule) && isset($previous_schedule->schedule) && is_string($previous_schedule->schedule) && $previous_schedule->schedule !== '') {
+                $restoration_attempted = true;
+
+                $restored_timestamp = (isset($previous_schedule->timestamp) && is_numeric($previous_schedule->timestamp))
+                    ? max(time(), (int) $previous_schedule->timestamp)
+                    : time();
+                $restored_args = array();
+
+                if (isset($previous_schedule->args) && is_array($previous_schedule->args)) {
+                    $restored_args = $previous_schedule->args;
+                }
+
+                $restoration_successful = false !== wp_schedule_event(
+                    $restored_timestamp,
+                    $previous_schedule->schedule,
+                    'blc_check_links',
+                    $restored_args
+                );
+
+                if (!$restoration_successful) {
+                    error_log('BLC: Failed to restore previous automatic link check schedule.');
+                }
+            }
+
+            $restoration_message = '';
+            if ($restoration_attempted && $restoration_successful) {
+                $restoration_message = esc_html__('La planification précédente a été restaurée, mais veuillez vérifier vos réglages.', 'liens-morts-detector-jlg');
+            } elseif ($restoration_attempted) {
+                $restoration_message = esc_html__('La planification précédente n\'a pas pu être restaurée. Une intervention manuelle est nécessaire.', 'liens-morts-detector-jlg');
+            } else {
+                $restoration_message = esc_html__('Aucune planification précédente n\'a été trouvée. Veuillez reprogrammer manuellement.', 'liens-morts-detector-jlg');
+            }
+
+            $notice_content = sprintf(
+                '<div class="notice notice-error is-dismissible"><p>%s</p>%s</div>',
+                esc_html__("La vérification automatique n'a pas pu être programmée. Veuillez réessayer.", 'liens-morts-detector-jlg'),
+                $restoration_message !== ''
+                    ? sprintf('<p>%s</p>', $restoration_message)
+                    : ''
+            );
+
+            echo wp_kses_post($notice_content);
+        } else {
+            printf(
+                '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
+                esc_html__('Réglages enregistrés !', 'liens-morts-detector-jlg')
+            );
+        }
     }
 
     $frequency = get_option('blc_frequency', 'daily');
