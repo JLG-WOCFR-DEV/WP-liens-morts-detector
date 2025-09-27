@@ -145,6 +145,8 @@ class BlcScannerTest extends TestCase
     /** @var array<int, array{args: array, output: string, operator: string}> */
     private array $getPostTypesCalls = [];
 
+    private int $wpResetPostdataCalls = 0;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -188,6 +190,7 @@ class BlcScannerTest extends TestCase
         $GLOBALS['wp_query_last_args'] = [];
         $this->publicPostTypes = ['post', 'page'];
         $this->getPostTypesCalls = [];
+        $this->wpResetPostdataCalls = 0;
 
         Functions\when('get_option')->alias(fn(string $name, $default = false) => $this->options[$name] ?? $default);
         Functions\when('get_transient')->alias(fn(string $key) => $this->transients[$key] ?? false);
@@ -257,7 +260,11 @@ class BlcScannerTest extends TestCase
             return $records;
         });
         Functions\when('gethostbynamel')->alias(fn(string $hostname) => ['93.184.216.34']);
-        Functions\when('wp_reset_postdata')->justReturn(null);
+        Functions\when('wp_reset_postdata')->alias(function () {
+            $this->wpResetPostdataCalls++;
+
+            return null;
+        });
         Functions\when('wp_kses_bad_protocol')->alias(function ($string, $allowed_protocols = []) {
             $string = (string) $string;
             $allowed_protocols = array_map('strtolower', (array) $allowed_protocols);
@@ -2327,12 +2334,15 @@ class BlcScannerTest extends TestCase
             throw new \RuntimeException('link interruption');
         });
 
+        $this->wpResetPostdataCalls = 0;
         try {
             blc_perform_check(0, false);
             $this->fail('Expected interruption to bubble up.');
         } catch (\RuntimeException $exception) {
             $this->assertSame('link interruption', $exception->getMessage());
         }
+
+        $this->assertSame(1, $this->wpResetPostdataCalls, 'Postdata should be reset after an interrupted link scan.');
 
         $restoreQueryFound = false;
         $deleteQueryFound = false;
@@ -2381,10 +2391,12 @@ class BlcScannerTest extends TestCase
 
         $this->setHttpResponse('HEAD', 'http://failure.example.com/broken', ['response' => ['code' => 404]]);
 
+        $this->wpResetPostdataCalls = 0;
         $result = blc_perform_check(0, false);
 
         $this->assertInstanceOf(\WP_Error::class, $result, 'Commit failures should surface as WP_Error.');
         $this->assertSame('Simulated failure', $result->get_error_message(), 'Database error should be propagated.');
+        $this->assertSame(1, $this->wpResetPostdataCalls, 'Postdata should be reset after a failed link scan.');
 
         $restoreQueryFound = false;
         foreach ($wpdb->queries as $query) {
@@ -2485,12 +2497,15 @@ class BlcScannerTest extends TestCase
             throw new \RuntimeException('image interruption');
         });
 
+        $this->wpResetPostdataCalls = 0;
         try {
             blc_perform_image_check(0, true);
             $this->fail('Expected interruption during image scan.');
         } catch (\RuntimeException $exception) {
             $this->assertSame('image interruption', $exception->getMessage());
         }
+
+        $this->assertSame(1, $this->wpResetPostdataCalls, 'Postdata should be reset after an interrupted image scan.');
 
         $restoreQueryFound = false;
         $deleteQueryFound = false;
@@ -2584,11 +2599,13 @@ class BlcScannerTest extends TestCase
             'max_num_pages' => 2,
         ];
 
+        $this->wpResetPostdataCalls = 0;
         $result = blc_perform_image_check(0, true);
 
         $this->assertInstanceOf(\WP_Error::class, $result, 'A scheduling failure should surface as a WP_Error.');
         $this->assertSame('blc_image_schedule_failed', $result->get_error_code());
         $this->assertStringContainsString('Failed to schedule next image batch #1', $result->get_error_message());
+        $this->assertSame(1, $this->wpResetPostdataCalls, 'Postdata should be reset after a failed image scan.');
 
         $this->assertCount(0, $this->scheduledEvents, 'No successful scheduling should be recorded when cron fails.');
         $this->assertCount(1, $this->failedScheduleAttempts, 'The failed scheduling attempt should be tracked.');
