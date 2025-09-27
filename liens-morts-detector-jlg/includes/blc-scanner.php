@@ -1176,10 +1176,11 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
             $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
             if (!$dom instanceof DOMDocument) {
+                error_log(sprintf('BLC: Failed to load DOM for post %d during link scan; previous results restored.', $post->ID));
                 if ($scan_run_token !== '') {
-                    $commit_result = blc_commit_dataset_refresh($table_name, 'link', $scan_run_token, 'link', [$post->ID]);
-                    if (is_wp_error($commit_result)) {
-                        $batch_wp_error = $commit_result;
+                    $restore_result = blc_restore_dataset_refresh($table_name, 'link', $scan_run_token, [$post->ID]);
+                    if (is_wp_error($restore_result)) {
+                        $batch_wp_error = $restore_result;
                         break;
                     }
                 }
@@ -1812,10 +1813,11 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
 
                 $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
                 if (!$dom instanceof DOMDocument) {
+                    error_log(sprintf('BLC: Failed to load DOM for post %d during image scan; previous results restored.', $post->ID));
                     if ($scan_run_token !== '') {
-                        $commit_result = blc_commit_dataset_refresh($table_name, 'image', $scan_run_token, 'image', [$post->ID]);
-                        if (is_wp_error($commit_result)) {
-                            $batch_wp_error = $commit_result;
+                        $restore_result = blc_restore_dataset_refresh($table_name, 'image', $scan_run_token, [$post->ID]);
+                        if (is_wp_error($restore_result)) {
+                            $batch_wp_error = $restore_result;
                             break;
                         }
                     }
