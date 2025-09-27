@@ -68,6 +68,14 @@ class BlcSettingsPageTest extends TestCase
 
             return true;
         });
+        Functions\when('current_user_can')->alias(static function ($capability) {
+            return 'manage_options' === $capability;
+        });
+        Functions\when('wp_die')->alias(static function ($message = '', $title = '', $args = []) {
+            $text = is_string($message) ? $message : '';
+
+            throw new \RuntimeException($text !== '' ? $text : 'wp_die called');
+        });
         Functions\when('wp_clear_scheduled_hook')->justReturn(true);
         Functions\when('wp_nonce_field')->alias(static function ($action = -1, $name = '_wpnonce', $referer = true, $echo = true) {
             echo '';
@@ -143,6 +151,44 @@ class BlcSettingsPageTest extends TestCase
 
         $this->assertSame($expected_frequency, $this->getStoredOption('blc_frequency'));
         $this->assertStringContainsString('La fréquence choisie est invalide', (string) $output);
+    }
+
+    public function test_settings_are_not_saved_without_manage_options_capability(): void
+    {
+        $_POST = [
+            'blc_save_settings'    => '1',
+            'blc_frequency'        => 'daily',
+            'blc_rest_start_hour'  => '09',
+            'blc_rest_end_hour'    => '18',
+            'blc_link_delay'       => '100',
+            'blc_batch_delay'      => '50',
+            'blc_scan_method'      => 'fast',
+            'blc_excluded_domains' => 'example.com',
+        ];
+
+        Functions\when('current_user_can')->alias(static function ($capability) {
+            return false;
+        });
+
+        $initial_ob_level = ob_get_level();
+        ob_start();
+
+        try {
+            blc_settings_page();
+            $this->fail('Expected wp_die to be called.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('autorisation', $exception->getMessage());
+        } finally {
+            while (ob_get_level() > $initial_ob_level) {
+                ob_end_clean();
+            }
+        }
+
+        $this->assertSame('weekly', $this->getStoredOption('blc_frequency'));
+        $this->assertSame('08', $this->getStoredOption('blc_rest_start_hour'));
+        $this->assertSame('20', $this->getStoredOption('blc_rest_end_hour'));
+        $this->assertSame(200, $this->getStoredOption('blc_link_delay'));
+        $this->assertSame(60, $this->getStoredOption('blc_batch_delay'));
     }
 
     /**

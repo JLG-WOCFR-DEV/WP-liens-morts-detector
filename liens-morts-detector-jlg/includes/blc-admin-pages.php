@@ -251,6 +251,15 @@ function blc_settings_page() {
     $get_timeout_limits  = $timeout_constraints['get'];
 
     if (isset($_POST['blc_save_settings'])) {
+        if (!current_user_can('manage_options')) {
+            wp_die(
+                esc_html__(
+                    'Vous n\'avez pas l\'autorisation nécessaire pour modifier ces réglages.',
+                    'liens-morts-detector-jlg'
+                )
+            );
+        }
+
         check_admin_referer('blc_settings_nonce');
 
         $allowed_frequencies = array('daily', 'weekly', 'monthly');
