@@ -235,6 +235,91 @@ class BlcAjaxCallbacksTest extends TestCase
         };
     }
 
+    public function test_resolve_link_row_returns_expected_metadata(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->prefix = 'wp_';
+        $wpdb->get_row_result = [
+            'id' => 7,
+            'post_id' => 7,
+            'url' => 'http://example.com/item',
+            'anchor' => 'Example',
+            'post_title' => 'Sample post',
+            'occurrence_index' => 2,
+        ];
+
+        $result = \blc_resolve_link_row(7, 7, '2');
+
+        $this->assertSame('wp_blc_broken_links', $result['table']);
+        $this->assertSame(2, $result['occurrence_index']);
+        $this->assertSame($wpdb->get_row_result, $result['row']);
+        $this->assertSame([
+            'url' => 'http://example.com/item',
+            'anchor' => 'Example',
+            'post_title' => 'Sample post',
+        ], $result['cache_row']);
+        $this->assertGreaterThan(0, $result['cache_footprint']);
+    }
+
+    public function test_resolve_link_row_throws_when_occurrence_mismatch(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->get_row_result = [
+            'id' => 8,
+            'post_id' => 8,
+            'url' => 'http://example.com/item',
+            'anchor' => 'Example',
+            'post_title' => 'Sample post',
+            'occurrence_index' => 4,
+        ];
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => "L'occurrence du lien ne correspond plus. Veuillez relancer une analyse.",
+        ], 409)->andReturnUsing(static function () {
+            throw new \RuntimeException('occurrence-error');
+        });
+
+        $this->expectExceptionMessage('occurrence-error');
+        \blc_resolve_link_row(8, 8, '2');
+    }
+
+    public function test_resolve_link_row_rejects_invalid_row_identifier(): void
+    {
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => 'Le lien sélectionné est introuvable. Veuillez relancer une analyse.',
+        ], 400)->andReturnUsing(static function () {
+            throw new \RuntimeException('row-id-error');
+        });
+
+        $this->expectExceptionMessage('row-id-error');
+        \blc_resolve_link_row(9, 0, null);
+    }
+
+    public function test_resolve_link_row_rejects_invalid_occurrence_value(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->get_row_result = [
+            'id' => 10,
+            'post_id' => 10,
+            'url' => 'http://example.com/item',
+            'anchor' => 'Example',
+            'post_title' => 'Sample post',
+            'occurrence_index' => null,
+        ];
+
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => "Indice d'occurrence invalide.",
+        ], 400)->andReturnUsing(static function () {
+            throw new \RuntimeException('occ-invalid');
+        });
+
+        $this->expectExceptionMessage('occ-invalid');
+        \blc_resolve_link_row(10, 10, 'abc');
+    }
+
     public function editLinkMissingParamProvider(): array
     {
         return [
