@@ -319,7 +319,7 @@ function blc_maybe_add_index($table_name, $index_name, $column_name, $prefix_len
  * S'exécute à l'activation de l'extension.
  * Met en place la tâche planifiée (cron) pour les liens si elle n'existe pas déjà.
  */
-function blc_activation() {
+function blc_activate_site() {
     global $wpdb;
 
     // Création de la table dédiée aux liens et images cassés
@@ -371,7 +371,37 @@ function blc_activation() {
  * S'exécute à la désactivation de l'extension.
  * Nettoie toutes les tâches planifiées pour ne pas laisser de résidus dans le système.
  */
-function blc_deactivation() {
+function blc_activation($network_wide = false) {
+    blc_activate_site();
+
+    $is_network_admin = function_exists('is_network_admin') ? is_network_admin() : false;
+    $is_network_activation = is_multisite() && ($is_network_admin || $network_wide);
+
+    if (!$is_network_activation) {
+        return;
+    }
+
+    $current_blog_id = get_current_blog_id();
+    $sites           = get_sites();
+
+    foreach ($sites as $site) {
+        $blog_id = (int) $site->blog_id;
+
+        if ($blog_id === $current_blog_id) {
+            continue;
+        }
+
+        switch_to_blog($blog_id);
+
+        try {
+            blc_activate_site();
+        } finally {
+            restore_current_blog();
+        }
+    }
+}
+
+function blc_deactivate_site() {
     // Supprime la tâche planifiée principale pour les liens
     wp_clear_scheduled_hook('blc_check_links');
 
@@ -379,4 +409,34 @@ function blc_deactivation() {
     wp_clear_scheduled_hook('blc_check_batch');
     wp_clear_scheduled_hook('blc_manual_check_batch');
     wp_clear_scheduled_hook('blc_check_image_batch');
+}
+
+function blc_deactivation($network_wide = false) {
+    blc_deactivate_site();
+
+    $is_network_admin = function_exists('is_network_admin') ? is_network_admin() : false;
+    $is_network_deactivation = is_multisite() && ($is_network_admin || $network_wide);
+
+    if (!$is_network_deactivation) {
+        return;
+    }
+
+    $current_blog_id = get_current_blog_id();
+    $sites           = get_sites();
+
+    foreach ($sites as $site) {
+        $blog_id = (int) $site->blog_id;
+
+        if ($blog_id === $current_blog_id) {
+            continue;
+        }
+
+        switch_to_blog($blog_id);
+
+        try {
+            blc_deactivate_site();
+        } finally {
+            restore_current_blog();
+        }
+    }
 }
