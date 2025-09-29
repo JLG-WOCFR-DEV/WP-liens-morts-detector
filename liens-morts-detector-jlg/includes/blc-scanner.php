@@ -1090,9 +1090,27 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
     // --- 4. Boucle d'analyse des LIENS <a> ---
     $upload_dir_info = wp_upload_dir();
-    $upload_baseurl  = isset($upload_dir_info['baseurl']) ? trailingslashit($upload_dir_info['baseurl']) : '';
-    $upload_basedir  = isset($upload_dir_info['basedir']) ? trailingslashit($upload_dir_info['basedir']) : '';
-    $normalized_upload_basedir = $upload_basedir !== '' ? wp_normalize_path($upload_basedir) : '';
+    $missing_upload_pieces = [];
+    if (empty($upload_dir_info['baseurl'])) { $missing_upload_pieces[] = 'baseurl'; }
+    if (empty($upload_dir_info['basedir'])) { $missing_upload_pieces[] = 'basedir'; }
+    $upload_dir_has_error = !empty($upload_dir_info['error']) || !empty($missing_upload_pieces);
+
+    if ($upload_dir_has_error) {
+        if ($debug_mode) {
+            $upload_dir_error_message = !empty($upload_dir_info['error'])
+                ? (string) $upload_dir_info['error']
+                : ('Missing ' . implode(' & ', $missing_upload_pieces) . ' from wp_upload_dir().');
+            error_log('wp_upload_dir() unavailable during link scan: ' . $upload_dir_error_message);
+        }
+
+        $upload_baseurl  = '';
+        $upload_basedir  = '';
+        $normalized_upload_basedir = '';
+    } else {
+        $upload_baseurl  = trailingslashit((string) $upload_dir_info['baseurl']);
+        $upload_basedir  = trailingslashit((string) $upload_dir_info['basedir']);
+        $normalized_upload_basedir = $upload_basedir !== '' ? wp_normalize_path($upload_basedir) : '';
+    }
     if ($raw_home_url === '' && function_exists('home_url')) {
         $raw_home_url = home_url();
     }
@@ -1747,9 +1765,27 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     }
 
     $upload_dir_info = wp_upload_dir();
-    $upload_baseurl = isset($upload_dir_info['baseurl']) ? trailingslashit($upload_dir_info['baseurl']) : '';
-    $upload_basedir = isset($upload_dir_info['basedir']) ? trailingslashit($upload_dir_info['basedir']) : '';
-    $normalized_basedir = $upload_basedir !== '' ? wp_normalize_path($upload_basedir) : '';
+    $missing_upload_pieces = [];
+    if (empty($upload_dir_info['baseurl'])) { $missing_upload_pieces[] = 'baseurl'; }
+    if (empty($upload_dir_info['basedir'])) { $missing_upload_pieces[] = 'basedir'; }
+    $upload_dir_has_error = !empty($upload_dir_info['error']) || !empty($missing_upload_pieces);
+
+    if ($upload_dir_has_error) {
+        if ($debug_mode) {
+            $upload_dir_error_message = !empty($upload_dir_info['error'])
+                ? (string) $upload_dir_info['error']
+                : ('Missing ' . implode(' & ', $missing_upload_pieces) . ' from wp_upload_dir().');
+            error_log('wp_upload_dir() unavailable during image scan: ' . $upload_dir_error_message);
+        }
+
+        $upload_baseurl = '';
+        $upload_basedir = '';
+        $normalized_basedir = '';
+    } else {
+        $upload_baseurl = trailingslashit((string) $upload_dir_info['baseurl']);
+        $upload_basedir = trailingslashit((string) $upload_dir_info['basedir']);
+        $normalized_basedir = $upload_basedir !== '' ? wp_normalize_path($upload_basedir) : '';
+    }
     $upload_baseurl_host = '';
     if ($upload_baseurl !== '') {
         $raw_upload_host = function_exists('wp_parse_url')
