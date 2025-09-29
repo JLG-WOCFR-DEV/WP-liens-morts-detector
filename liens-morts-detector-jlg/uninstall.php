@@ -16,11 +16,16 @@ $options_to_delete = [
     'blc_link_delay',
     'blc_batch_delay',
     'blc_scan_method',
+    'blc_active_link_scan_key',
+    'blc_active_image_scan_key',
     'blc_excluded_domains',
     'blc_debug_mode',
+    'blc_image_scan_lock',
+    'blc_image_scan_lock_token',
     'blc_plugin_db_version',
     'blc_dataset_size_link',
     'blc_dataset_size_image',
+    'blc_activation_schedule_failure',
 ];
 
 $cleanup_site = static function () use ($options_to_delete) {
