@@ -363,7 +363,65 @@ function blc_activate_site() {
     // On vérifie si une tâche est déjà planifiée pour éviter les doublons
     if (!wp_next_scheduled('blc_check_links')) {
         // Planifie l'événement : quand commencer (maintenant), à quelle fréquence, et quelle action exécuter
-        wp_schedule_event(time(), $frequency, 'blc_check_links');
+        $scheduled = wp_schedule_event(time(), $frequency, 'blc_check_links');
+
+        if (false === $scheduled) {
+            $log_message = sprintf(
+                'BLC: Failed to schedule automatic link check during activation (frequency: %s).',
+                $frequency
+            );
+            error_log($log_message);
+
+            do_action('blc_check_links_schedule_failed', 'activation');
+
+            $admin_message = esc_html__(
+                "La planification automatique des liens n'a pas pu être créée lors de l'activation. Vérifiez la configuration de WP-Cron.",
+                'liens-morts-detector-jlg'
+            );
+
+            if (function_exists('set_transient')) {
+                set_transient(
+                    'blc_activation_schedule_failure',
+                    array(
+                        'type'      => 'error',
+                        'message'   => $admin_message,
+                        'context'   => 'activation',
+                        'frequency' => $frequency,
+                        'logged'    => $log_message,
+                    ),
+                    defined('DAY_IN_SECONDS') ? (int) DAY_IN_SECONDS : 86400
+                );
+            } else {
+                update_option(
+                    'blc_activation_schedule_failure',
+                    array(
+                        'type'      => 'error',
+                        'message'   => $admin_message,
+                        'context'   => 'activation',
+                        'frequency' => $frequency,
+                        'logged'    => $log_message,
+                    )
+                );
+            }
+
+            $fallback_frequency = 'daily';
+            if ($frequency !== $fallback_frequency && isset($schedules[$fallback_frequency])) {
+                $fallback_timestamp = time() + (defined('HOUR_IN_SECONDS') ? (int) HOUR_IN_SECONDS : 3600);
+                $fallback = wp_schedule_event($fallback_timestamp, $fallback_frequency, 'blc_check_links');
+
+                if (false === $fallback) {
+                    error_log(
+                        sprintf(
+                            'BLC: Failed to schedule fallback automatic link check during activation (frequency: %s, timestamp: %d).',
+                            $fallback_frequency,
+                            $fallback_timestamp
+                        )
+                    );
+                } else {
+                    error_log('BLC: Fallback automatic link check schedule created after activation failure.');
+                }
+            }
+        }
     }
 }
 
