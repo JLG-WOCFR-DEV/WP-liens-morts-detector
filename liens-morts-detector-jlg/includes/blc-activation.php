@@ -498,3 +498,50 @@ function blc_deactivation($network_wide = false) {
         }
     }
 }
+
+/**
+ * Affiche une éventuelle notification d'échec de planification enregistrée lors de l'activation.
+ *
+ * Cette fonction récupère la notification stockée dans un transient ou une option et la supprime
+ * après l'affichage pour éviter les doublons.
+ */
+function blc_maybe_show_activation_schedule_notice() {
+    $notice = false;
+
+    if (function_exists('get_transient')) {
+        $notice = get_transient('blc_activation_schedule_failure');
+
+        if (false !== $notice) {
+            delete_transient('blc_activation_schedule_failure');
+        }
+    }
+
+    if (false === $notice || empty($notice)) {
+        $notice = get_option('blc_activation_schedule_failure');
+
+        if (!empty($notice)) {
+            delete_option('blc_activation_schedule_failure');
+        }
+    }
+
+    if (empty($notice) || !is_array($notice)) {
+        return;
+    }
+
+    $message = isset($notice['message']) ? (string) $notice['message'] : '';
+    if ($message === '') {
+        return;
+    }
+
+    $type = isset($notice['type']) ? strtolower((string) $notice['type']) : 'warning';
+    $allowed_types = array('error', 'warning', 'success', 'info');
+    if (!in_array($type, $allowed_types, true)) {
+        $type = 'warning';
+    }
+
+    printf(
+        '<div class="notice notice-%1$s is-dismissible"><p>%2$s</p></div>',
+        esc_attr($type),
+        wp_kses_post($message)
+    );
+}
