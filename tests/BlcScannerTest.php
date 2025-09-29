@@ -1044,6 +1044,55 @@ class BlcScannerTest extends TestCase
         $this->assertCount(0, $wpdb->inserted, 'Existing uploads with encoded URLs should not be marked as missing.');
     }
 
+    public function test_blc_perform_check_skips_upload_checks_when_wp_upload_dir_unavailable(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_debug_mode'] = true;
+
+        Functions\when('wp_upload_dir')->alias(function () {
+            return [
+                'baseurl' => false,
+                'basedir' => false,
+            ];
+        });
+
+        $post = (object) [
+            'ID' => 512,
+            'post_title' => 'Unavailable Uploads',
+            'post_content' => '<a href="https://example.com/wp-content/uploads/2024/05/missing.pdf">Download</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        try {
+            blc_perform_check(0, false);
+        } finally {
+            Functions\when('wp_upload_dir')->alias(function () {
+                return [
+                    'baseurl' => 'https://example.com/wp-content/uploads',
+                    'basedir' => sys_get_temp_dir() . '/uploads-test',
+                ];
+            });
+        }
+
+        $this->assertCount(
+            0,
+            $wpdb->inserted,
+            'Links should not be marked broken when uploads directory information is unavailable.'
+        );
+
+        $upload_logs = array_filter(
+            $this->errorLogs,
+            static fn(string $message) => strpos($message, 'wp_upload_dir() unavailable during link scan') !== false
+        );
+        $this->assertNotEmpty($upload_logs, 'A debug log should mention the unavailable uploads directory.');
+    }
+
     public function test_blc_perform_check_records_domain_without_ip_without_http_requests(): void
     {
         global $wpdb;
