@@ -72,6 +72,10 @@ add_action('plugins_loaded', 'blc_maybe_upgrade_database');
 // Ajoute le menu et les pages dans l'administration
 add_action('admin_menu', 'blc_add_admin_menu');
 
+// Affiche la notification d'échec de planification lors de l'activation si nécessaire.
+add_action('admin_notices', 'blc_maybe_show_activation_schedule_notice');
+add_action('network_admin_notices', 'blc_maybe_show_activation_schedule_notice');
+
 // Ajoute nos planifications personnalisées (hebdomadaire, mensuelle) à WP-Cron
 add_filter('cron_schedules', 'blc_add_cron_schedules');
 
