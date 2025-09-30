@@ -75,6 +75,31 @@ class UninstallTest extends TestCase
         global $wpdb;
 
         $wpdb = new class {
+            public string $prefix = 'wp_';
+
+            public array $queries = [];
+
+            public function query(string $sql): void
+            {
+                $this->queries[] = $sql;
+            }
+        };
+
+        require __DIR__ . '/../liens-morts-detector-jlg/uninstall.php';
+
+        self::assertSame(['DROP TABLE IF EXISTS `wp_blc_broken_links`'], $wpdb->queries);
+    }
+
+    public function test_uninstall_drops_table_with_backticks_when_prefix_contains_dash(): void
+    {
+        Functions\when('delete_option')->justReturn();
+        Functions\when('delete_site_option')->justReturn();
+        Functions\when('is_multisite')->justReturn(false);
+        Functions\when('wp_clear_scheduled_hook')->justReturn();
+
+        global $wpdb;
+
+        $wpdb = new class {
             public string $prefix = 'wp-test_';
 
             public array $queries = [];
