@@ -2667,6 +2667,24 @@ class BlcScannerTest extends TestCase
         $this->assertSame($lock_state['token'], $this->updatedOptions['blc_image_scan_lock_token']);
     }
 
+    public function test_blc_is_image_scan_lock_active_treats_non_positive_timeout_as_expired(): void
+    {
+        $state = [
+            'token'     => 'token-zero-timeout',
+            'locked_at' => $this->utcNow,
+        ];
+
+        $this->assertFalse(
+            blc_is_image_scan_lock_active($state, 0),
+            'Zero timeout must be treated as an expired lock.'
+        );
+
+        $this->assertFalse(
+            blc_is_image_scan_lock_active($state, -15),
+            'Negative timeouts should also expire the lock.'
+        );
+    }
+
     public function test_blc_perform_image_check_reacquires_lock_when_timeout_is_zero(): void
     {
         global $wpdb;
