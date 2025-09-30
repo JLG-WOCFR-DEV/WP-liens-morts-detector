@@ -15,6 +15,10 @@ msgstr ""
 msgid "Liens Morts"
 msgstr ""
 
+#: includes/blc-scanner.php:1360
+msgid "Lien sans texte"
+msgstr ""
+
 #: includes/blc-admin-pages.php:22 includes/blc-admin-pages.php:23
 msgid "Liens Cassés"
 msgstr ""
