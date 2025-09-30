@@ -36,7 +36,8 @@ $cleanup_site = static function () use ($options_to_delete) {
     }
 
     $table_name = $wpdb->prefix . 'blc_broken_links';
-    $wpdb->query("DROP TABLE IF EXISTS $table_name");
+    $escaped_table_name = '`' . str_replace('`', '``', $table_name) . '`';
+    $wpdb->query("DROP TABLE IF EXISTS $escaped_table_name");
 
     wp_clear_scheduled_hook('blc_check_links');
     wp_clear_scheduled_hook('blc_check_batch');
