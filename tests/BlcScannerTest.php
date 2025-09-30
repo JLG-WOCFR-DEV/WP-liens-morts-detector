@@ -2636,6 +2636,54 @@ class BlcScannerTest extends TestCase
         $this->assertSame($lock_state['token'], $this->updatedOptions['blc_image_scan_lock_token']);
     }
 
+    public function test_blc_perform_image_check_reacquires_lock_when_timeout_is_zero(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 42,
+            'post_title' => 'Batch Continuation',
+            'post_content' => '<img src="https://example.com/wp-content/uploads/2024/05/photo.jpg" />',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 3,
+        ];
+
+        $stale_token = 'expired-lock';
+        $this->options['blc_image_scan_lock'] = [
+            'token'     => $stale_token,
+            'locked_at' => $this->utcNow - 500,
+        ];
+        $this->options['blc_image_scan_lock_token'] = $stale_token;
+
+        Functions\when('apply_filters')->alias(function (string $hook, $value, ...$args) {
+            if ($hook === 'blc_image_scan_lock_timeout') {
+                return 0;
+            }
+
+            return $value;
+        });
+
+        blc_perform_image_check(1, true);
+
+        $this->assertArrayHasKey('blc_image_scan_lock', $this->updatedOptions, 'Reacquiring the image lock should persist the new state.');
+        $this->assertArrayHasKey('blc_image_scan_lock_token', $this->options, 'A helper lock token should remain available after reacquiring.');
+        $this->assertNotSame($stale_token, $this->options['blc_image_scan_lock_token'], 'Expired lock token should be replaced when timeout is zero.');
+        $this->assertGreaterThan(0, strlen((string) $this->options['blc_image_scan_lock_token']), 'A non-empty lock token should be stored after reacquiring.');
+
+        $lock_state = $this->updatedOptions['blc_image_scan_lock'];
+        $this->assertSame($this->utcNow, $lock_state['locked_at'], 'The refreshed lock timestamp should use the current time.');
+
+        $this->assertCount(1, $this->scheduledEvents, 'Follow-up batch should still be scheduled after reacquiring the lock.');
+        $event = $this->scheduledEvents[0];
+        $this->assertSame($this->utcNow + 60, $event['timestamp']);
+        $this->assertSame('blc_check_image_batch', $event['hook']);
+        $this->assertSame([2, true], $event['args']);
+    }
+
     public function test_blc_perform_image_check_releases_lock_and_returns_error_when_scheduling_fails(): void
     {
         global $wpdb;
