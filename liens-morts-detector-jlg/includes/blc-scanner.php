@@ -1491,8 +1491,15 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     }
     $site_host = '';
     $site_parts = function_exists('wp_parse_url') ? wp_parse_url($site_url) : parse_url($site_url);
-    if (is_array($site_parts) && !empty($site_parts['host'])) {
-        $site_host = strtolower((string) $site_parts['host']);
+    $site_path = '';
+    if (is_array($site_parts)) {
+        if (!empty($site_parts['host'])) {
+            $site_host = strtolower((string) $site_parts['host']);
+        }
+
+        if (isset($site_parts['path']) && is_string($site_parts['path']) && $site_parts['path'] !== '') {
+            $site_path = rtrim($site_parts['path'], '/');
+        }
     }
     $normalized_upload_baseurl = '';
     $upload_base_host = '';
@@ -1508,8 +1515,193 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         }
     }
 
+    $normalized_abspath = '';
+    if (defined('ABSPATH')) {
+        $abspath = (string) ABSPATH;
+        if ($abspath !== '') {
+            if (function_exists('wp_normalize_path')) {
+                $normalized_abspath = wp_normalize_path($abspath);
+            } else {
+                $normalized_abspath = str_replace('\\', '/', $abspath);
+            }
+            $normalized_abspath = rtrim($normalized_abspath, "/\\");
+        }
+    }
+
     $blog_charset = get_bloginfo('charset');
     if (empty($blog_charset)) { $blog_charset = 'UTF-8'; }
+
+    $resolve_internal_target = static function ($url) use (
+        $normalized_abspath,
+        $site_path,
+        $upload_base_host,
+        $upload_base_path,
+        $normalized_upload_basedir
+    ) {
+        $unknown_result = [
+            'status'        => 'unknown',
+            'response_code' => null,
+        ];
+
+        if (!is_string($url) || $url === '') {
+            return $unknown_result;
+        }
+
+        if (function_exists('url_to_postid')) {
+            $maybe_post_id = url_to_postid($url);
+            if (is_numeric($maybe_post_id)) {
+                $post_id = (int) $maybe_post_id;
+                if ($post_id > 0) {
+                    $post_status = function_exists('get_post_status') ? get_post_status($post_id) : null;
+                    if (is_string($post_status) && $post_status !== '') {
+                        return [
+                            'status'        => 'ok',
+                            'response_code' => 200,
+                        ];
+                    }
+
+                    return [
+                        'status'        => 'missing',
+                        'response_code' => 404,
+                    ];
+                }
+            }
+        }
+
+        if (function_exists('attachment_url_to_postid')) {
+            $maybe_attachment_id = attachment_url_to_postid($url);
+            if (is_numeric($maybe_attachment_id)) {
+                $attachment_id = (int) $maybe_attachment_id;
+                if ($attachment_id > 0) {
+                    $attachment_status = function_exists('get_post_status') ? get_post_status($attachment_id) : null;
+                    if (is_string($attachment_status) && $attachment_status !== '') {
+                        return [
+                            'status'        => 'ok',
+                            'response_code' => 200,
+                        ];
+                    }
+
+                    return [
+                        'status'        => 'missing',
+                        'response_code' => 404,
+                    ];
+                }
+            }
+        }
+
+        $parser = function_exists('wp_parse_url') ? 'wp_parse_url' : 'parse_url';
+        $parts = $parser($url);
+        if (!is_array($parts)) {
+            return $unknown_result;
+        }
+
+        $path = isset($parts['path']) ? (string) $parts['path'] : '';
+        if ($path === '') {
+            return $unknown_result;
+        }
+
+        $path = rawurldecode($path);
+        $candidate_paths = [];
+
+        if ($normalized_abspath !== '') {
+            $adjusted_path = $path;
+            if ($site_path !== '') {
+                if ($adjusted_path === $site_path) {
+                    $adjusted_path = '';
+                } elseif (strpos($adjusted_path, $site_path . '/') === 0) {
+                    $adjusted_path = substr($adjusted_path, strlen($site_path));
+                }
+            }
+
+            $adjusted_path = ltrim($adjusted_path, '/');
+            if ($adjusted_path !== '') {
+                $relative_with_slash = '/' . $adjusted_path;
+                $abspath_prefixes = ['/wp-content/', '/wp-includes/', '/wp-admin/'];
+                $should_attempt_abspath = false;
+
+                foreach ($abspath_prefixes as $prefix) {
+                    if (strpos($relative_with_slash, $prefix) === 0) {
+                        $should_attempt_abspath = true;
+                        break;
+                    }
+                }
+
+                if (!$should_attempt_abspath) {
+                    $special_files = ['/robots.txt', '/favicon.ico', '/humans.txt'];
+                    if (in_array($relative_with_slash, $special_files, true)) {
+                        $should_attempt_abspath = true;
+                    }
+                }
+
+                if ($should_attempt_abspath && $normalized_upload_basedir === '' && strpos($relative_with_slash, '/wp-content/uploads/') === 0) {
+                    $should_attempt_abspath = false;
+                }
+
+                if ($should_attempt_abspath) {
+                    $candidate_paths[] = $normalized_abspath . '/' . $adjusted_path;
+                }
+            }
+        }
+
+        if ($normalized_upload_basedir !== '') {
+            $host_matches_upload = true;
+            if (!empty($parts['host'])) {
+                $candidate_host = strtolower((string) $parts['host']);
+                if ($upload_base_host !== '' && $candidate_host !== $upload_base_host) {
+                    $host_matches_upload = false;
+                }
+            }
+
+            if ($host_matches_upload) {
+                $path_for_upload = $path;
+                if ($upload_base_path !== '') {
+                    if ($path_for_upload === $upload_base_path) {
+                        $path_for_upload = '';
+                    } elseif (strpos($path_for_upload, $upload_base_path . '/') === 0) {
+                        $path_for_upload = substr($path_for_upload, strlen($upload_base_path));
+                    } else {
+                        $host_matches_upload = false;
+                    }
+                }
+
+                if ($host_matches_upload) {
+                    $relative_upload_path = ltrim($path_for_upload, '/');
+                    if ($relative_upload_path !== '') {
+                        $candidate_paths[] = rtrim($normalized_upload_basedir, '/\\') . '/' . $relative_upload_path;
+                    }
+                }
+            }
+        }
+
+        if ($candidate_paths === []) {
+            return $unknown_result;
+        }
+
+        foreach ($candidate_paths as $candidate_path) {
+            if (!is_string($candidate_path) || $candidate_path === '') {
+                continue;
+            }
+
+            $normalized_candidate = $candidate_path;
+            if (function_exists('wp_normalize_path')) {
+                $normalized_candidate = wp_normalize_path($candidate_path);
+            } else {
+                $normalized_candidate = str_replace('\\', '/', $candidate_path);
+            }
+
+            if ($normalized_candidate !== '' && file_exists($normalized_candidate)) {
+                return [
+                    'status'        => 'ok',
+                    'response_code' => 200,
+                ];
+            }
+        }
+
+        return [
+            'status'        => 'missing',
+            'response_code' => 404,
+        ];
+    };
 
     $temporary_http_statuses = apply_filters(
         'blc_temporary_http_statuses',
@@ -1728,6 +1920,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                 $cache_entry_key = '';
                 $cache_entry = null;
                 $should_use_cache = false;
+                $skip_remote_check = false;
 
                 if ($scan_cache_identifier !== '') {
                     $cache_entry_key = md5($normalized_url);
@@ -1761,9 +1954,32 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                     }
                 }
 
+                if ($is_internal_safe_host) {
+                    $internal_resolution = $resolve_internal_target($normalized_url);
+                    if (is_array($internal_resolution)) {
+                        if (isset($internal_resolution['response_code'])) {
+                            $response_code = (int) $internal_resolution['response_code'];
+                        }
+
+                        $resolution_status = isset($internal_resolution['status'])
+                            ? (string) $internal_resolution['status']
+                            : 'unknown';
+
+                        if ($resolution_status === 'ok') {
+                            $should_insert_broken_link = false;
+                            $should_retry_later = false;
+                            $skip_remote_check = true;
+                        } elseif ($resolution_status === 'missing') {
+                            $should_insert_broken_link = true;
+                            $should_retry_later = false;
+                            $skip_remote_check = true;
+                        }
+                    }
+                }
+
                 $fallback_due_to_temporary_status = false;
                 $head_request_disallowed = false;
-                if (!$should_use_cache) {
+                if (!$should_use_cache && !$skip_remote_check) {
                     $head_request_args = [
                         'user-agent'          => blc_get_http_user_agent(),
                         'timeout'             => $head_request_timeout,
