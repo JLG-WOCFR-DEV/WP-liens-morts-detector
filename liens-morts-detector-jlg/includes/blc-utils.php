@@ -6,6 +6,107 @@ if (!defined('ABSPATH')) {
 }
 
 /**
+ * Build a descriptive HTTP user agent string for outbound requests.
+ *
+ * The default value is composed of the plugin name, its current version and
+ * the site URL. A filter is provided to allow advanced customization when
+ * needed.
+ *
+ * @return string
+ */
+function blc_get_http_user_agent() {
+    static $plugin_metadata = null;
+
+    if ($plugin_metadata === null) {
+        $default_name = 'Liens Morts Detector';
+        $default_version = 'dev';
+
+        $plugin_name = $default_name;
+        $plugin_version = $default_version;
+
+        $plugin_file = dirname(__DIR__) . '/liens-morts-detector-jlg.php';
+
+        if (is_readable($plugin_file)) {
+            if (function_exists('get_file_data')) {
+                $data = get_file_data($plugin_file, [
+                    'Name'    => 'Plugin Name',
+                    'Version' => 'Version',
+                ]);
+
+                if (is_array($data)) {
+                    if (!empty($data['Name'])) {
+                        $plugin_name = trim((string) $data['Name']);
+                    }
+                    if (!empty($data['Version'])) {
+                        $plugin_version = trim((string) $data['Version']);
+                    }
+                }
+            } else {
+                $contents = file_get_contents($plugin_file);
+                if (is_string($contents)) {
+                    if (preg_match('/^\s*Plugin Name:\s*(.+)$/mi', $contents, $matches) === 1) {
+                        $plugin_name = trim((string) $matches[1]);
+                    }
+                    if (preg_match('/^\s*Version:\s*(.+)$/mi', $contents, $matches) === 1) {
+                        $plugin_version = trim((string) $matches[1]);
+                    }
+                }
+            }
+        }
+
+        if ($plugin_name === '') {
+            $plugin_name = $default_name;
+        }
+
+        if ($plugin_version === '') {
+            $plugin_version = $default_version;
+        }
+
+        $plugin_metadata = [
+            'name'    => $plugin_name,
+            'version' => $plugin_version,
+        ];
+    }
+
+    $plugin_name = $plugin_metadata['name'];
+    $plugin_version = $plugin_metadata['version'];
+
+    $site_url = '';
+    if (function_exists('home_url')) {
+        $site_url = home_url('/');
+    } elseif (function_exists('site_url')) {
+        $site_url = site_url('/');
+    } elseif (function_exists('get_bloginfo')) {
+        $site_url = get_bloginfo('url');
+    }
+
+    if (!is_string($site_url)) {
+        $site_url = '';
+    }
+
+    $site_url = trim($site_url);
+
+    if ($site_url !== '' && function_exists('esc_url_raw')) {
+        $site_url = esc_url_raw($site_url);
+    }
+
+    $user_agent = $plugin_name !== '' ? $plugin_name : 'Liens Morts Detector';
+    if ($plugin_version !== '') {
+        $user_agent .= '/' . $plugin_version;
+    }
+
+    if ($site_url !== '') {
+        $user_agent .= '; ' . $site_url;
+    }
+
+    if (function_exists('apply_filters')) {
+        return (string) apply_filters('blc_http_user_agent', $user_agent, $plugin_name, $plugin_version, $site_url);
+    }
+
+    return $user_agent;
+}
+
+/**
  * Charge le contenu HTML d'un article dans un DOMDocument et retourne également un DOMXPath.
  *
  * Cette fonction centralise la gestion des erreurs libxml et garantit la restauration de la
