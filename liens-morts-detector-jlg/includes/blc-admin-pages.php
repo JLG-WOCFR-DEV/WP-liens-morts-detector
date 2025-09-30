@@ -361,6 +361,12 @@ function blc_settings_page() {
         $debug_mode = isset($_POST['blc_debug_mode']);
         update_option('blc_debug_mode', $debug_mode);
 
+        $notification_recipients_raw = isset($_POST['blc_notification_recipients'])
+            ? wp_unslash($_POST['blc_notification_recipients'])
+            : '';
+        $notification_recipients = sanitize_textarea_field($notification_recipients_raw);
+        update_option('blc_notification_recipients', $notification_recipients);
+
         $notices = array(
             'success' => array(),
             'warning' => array(),
@@ -496,6 +502,7 @@ function blc_settings_page() {
     $scan_method = get_option('blc_scan_method', 'precise');
     $excluded_domains = get_option('blc_excluded_domains', "x.com\ntwitter.com\nlinkedin.com");
     $debug_mode = get_option('blc_debug_mode', false);
+    $notification_recipients = (string) get_option('blc_notification_recipients', '');
     ?>
     <div class="wrap">
         <h1><?php esc_html_e('Réglages des liens morts', 'liens-morts-detector-jlg'); ?></h1>
@@ -614,6 +621,18 @@ function blc_settings_page() {
                         <td>
                            <textarea name="blc_excluded_domains" id="blc_excluded_domains" rows="5" class="large-text"><?php echo esc_textarea($excluded_domains); ?></textarea>
                            <p class="description"><?php esc_html_e('Domaines à ignorer pendant l\'analyse. Un domaine par ligne (ex: amazon.fr).', 'liens-morts-detector-jlg'); ?></p>
+                        </td>
+                    </tr>
+                 </tbody>
+            </table>
+            <h2><?php esc_html_e('Notifications', 'liens-morts-detector-jlg'); ?></h2>
+            <table class="form-table" role="presentation">
+                 <tbody>
+                    <tr>
+                        <th scope="row"><label for="blc_notification_recipients"><?php esc_html_e('Destinataires du résumé', 'liens-morts-detector-jlg'); ?></label></th>
+                        <td>
+                           <textarea name="blc_notification_recipients" id="blc_notification_recipients" rows="3" class="large-text"><?php echo esc_textarea($notification_recipients); ?></textarea>
+                           <p class="description"><?php esc_html_e('Indiquez une adresse e-mail par ligne ou séparez-les par des virgules pour recevoir un résumé après chaque analyse.', 'liens-morts-detector-jlg'); ?></p>
                         </td>
                     </tr>
                  </tbody>

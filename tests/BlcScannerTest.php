@@ -58,6 +58,20 @@ namespace {
         }
     }
 
+    if (!function_exists('sanitize_email')) {
+        function sanitize_email($email)
+        {
+            return filter_var((string) $email, FILTER_SANITIZE_EMAIL);
+        }
+    }
+
+    if (!function_exists('is_email')) {
+        function is_email($email)
+        {
+            return filter_var((string) $email, FILTER_VALIDATE_EMAIL) !== false;
+        }
+    }
+
     if (!class_exists('WP_Query')) {
         class WP_Query
         {
@@ -120,6 +134,9 @@ class BlcScannerTest extends TestCase
     /** @var array<string, mixed> */
     private array $updatedOptions = [];
 
+    /** @var array<int, array{to: array, subject: string, message: string, headers: mixed, attachments: mixed}> */
+    private array $sentEmails = [];
+
     /** @var array<string, mixed> */
     private array $transients = [];
 
@@ -168,6 +185,7 @@ class BlcScannerTest extends TestCase
             'blc_scan_method'      => 'precise',
             'blc_excluded_domains' => '',
             'blc_last_check_time'  => 0,
+            'blc_notification_recipients' => '',
         ];
 
         $this->httpRequests = [];
@@ -179,6 +197,7 @@ class BlcScannerTest extends TestCase
         $this->errorLogs = [];
         $this->updatedOptions = [];
         $this->transients = [];
+        $this->sentEmails = [];
         $this->serverLoad = [0.5, 0.4, 0.3];
         $GLOBALS['__translation_calls'] = [];
         $this->translationCalls = &$GLOBALS['__translation_calls'];
@@ -210,6 +229,14 @@ class BlcScannerTest extends TestCase
             }
 
             return $base;
+        });
+        Functions\when('admin_url')->alias(function ($path = '', $scheme = 'admin') {
+            $base = 'https://example.com/wp-admin/';
+            if ($path === '') {
+                return $base;
+            }
+
+            return $base . ltrim($path, '/');
         });
         Functions\when('esc_url_raw')->alias(static function ($url) {
             return (string) $url;
@@ -389,6 +416,10 @@ class BlcScannerTest extends TestCase
                 return 'UTF-8';
             }
 
+            if ($show === 'name') {
+                return 'Example Blog';
+            }
+
             return '';
         });
         Functions\when('check_ajax_referer')->justReturn(true);
@@ -409,6 +440,18 @@ class BlcScannerTest extends TestCase
             }
 
             return false;
+        });
+        Functions\when('wp_mail')->alias(function ($to, $subject, $message, $headers = '', $attachments = []) use ($testCase) {
+            $recipients = is_array($to) ? array_values($to) : [(string) $to];
+            $testCase->sentEmails[] = [
+                'to'          => $recipients,
+                'subject'     => (string) $subject,
+                'message'     => (string) $message,
+                'headers'     => $headers,
+                'attachments' => $attachments,
+            ];
+
+            return true;
         });
         Functions\when('update_option')->alias(function (string $option, $value) {
             $this->updatedOptions[$option] = $value;
@@ -532,6 +575,8 @@ class BlcScannerTest extends TestCase
             public array $queryResults = [];
             /** @var array<int, mixed> */
             public array $getVarResults = [];
+            /** @var array<string, int> */
+            public array $summaryCounts = [];
             public int $insert_id = 0;
             public string $last_error = '';
             private int $autoIncrement = 1;
@@ -581,6 +626,16 @@ class BlcScannerTest extends TestCase
                 $this->queries[] = ['sql' => $query, 'type' => 'get_var'];
                 if (!empty($this->getVarResults)) {
                     return array_shift($this->getVarResults);
+                }
+
+                if (!empty($this->summaryCounts) && strpos($query, 'COUNT(*)') !== false) {
+                    if (strpos($query, "'link'") !== false && isset($this->summaryCounts['link'])) {
+                        return $this->summaryCounts['link'];
+                    }
+
+                    if (strpos($query, "'image'") !== false && isset($this->summaryCounts['image'])) {
+                        return $this->summaryCounts['image'];
+                    }
                 }
 
                 return 0;
@@ -923,6 +978,32 @@ class BlcScannerTest extends TestCase
         blc_perform_check(0, false);
 
         $this->assertNotSame([], $GLOBALS['wp_query_last_args'], 'A scan should start normally outside the rest window.');
+    }
+
+    public function test_blc_perform_check_sends_summary_email_when_recipients_configured(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_notification_recipients'] = 'admin@example.com, second@example.com';
+        $this->currentHour = '07';
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts'        => [],
+            'max_num_pages' => 0,
+        ];
+
+        $wpdb->getVarResults = [0];
+        $wpdb->summaryCounts = ['link' => 5];
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(1, $this->sentEmails, 'A summary email should be sent when recipients are configured.');
+        $email = $this->sentEmails[0];
+        $this->assertSame(['admin@example.com', 'second@example.com'], $email['to']);
+        $this->assertStringContainsString('[Example Blog]', $email['subject']);
+        $this->assertStringContainsString('Liens cassés détectés : 5', $email['message']);
+        $this->assertStringContainsString('admin.php?page=blc-dashboard', $email['message']);
     }
 
     public function test_blc_perform_check_skips_excluded_domains_and_records_failed_links(): void
@@ -1659,6 +1740,31 @@ class BlcScannerTest extends TestCase
             $args['post_type'] ?? null,
             'Image scans should default to the "post" type when the public list is empty.'
         );
+    }
+
+    public function test_blc_perform_image_check_sends_summary_email_when_recipients_configured(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_notification_recipients'] = 'media@example.com';
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts'        => [],
+            'max_num_pages' => 0,
+        ];
+
+        $wpdb->getVarResults = [];
+        $wpdb->summaryCounts = ['image' => 3];
+
+        blc_perform_image_check(0, true);
+
+        $this->assertCount(1, $this->sentEmails, 'Image scans should send a summary when recipients are configured.');
+        $email = $this->sentEmails[0];
+        $this->assertSame(['media@example.com'], $email['to']);
+        $this->assertStringContainsString('analyse des images', strtolower($email['subject']));
+        $this->assertStringContainsString('Images cassées détectées : 3', $email['message']);
+        $this->assertStringContainsString('admin.php?page=blc-images-dashboard', $email['message']);
     }
 
     public function test_blc_perform_check_skips_excluded_domains_case_insensitively(): void
@@ -2719,7 +2825,7 @@ class BlcScannerTest extends TestCase
         $this->assertSame($lock_state['token'], $this->updatedOptions['blc_image_scan_lock_token']);
     }
 
-    public function test_blc_is_image_scan_lock_active_treats_non_positive_timeout_as_expired(): void
+    public function test_blc_is_image_scan_lock_active_expires_zero_or_negative_timeout(): void
     {
         $state = [
             'token'     => 'token-zero-timeout',
