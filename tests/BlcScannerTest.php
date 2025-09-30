@@ -562,6 +562,20 @@ class BlcScannerTest extends TestCase
      */
     private function mockHttpRequest(string $method, string $url, array $args = [])
     {
+        if ($method === 'HEAD' || $method === 'GET') {
+            $expected_user_agent = \blc_get_http_user_agent();
+
+            if (!array_key_exists('user-agent', $args)) {
+                $this->fail('HTTP requests must include the plugin user agent.');
+            }
+
+            $this->assertSame(
+                $expected_user_agent,
+                (string) $args['user-agent'],
+                'HTTP requests should use the plugin user agent.'
+            );
+        }
+
         $this->httpRequests[] = ['method' => $method, 'url' => $url, 'args' => $args];
         $key = $method . ' ' . $url;
 
@@ -1399,12 +1413,16 @@ class BlcScannerTest extends TestCase
         $this->assertSame('http://example.com/no-head', $headRequest['url']);
         $this->assertArrayHasKey('limit_response_size', $headRequest['args']);
         $this->assertSame(1024, $headRequest['args']['limit_response_size']);
+        $this->assertArrayHasKey('user-agent', $headRequest['args']);
+        $this->assertSame(\blc_get_http_user_agent(), $headRequest['args']['user-agent']);
 
         $getRequest = $this->httpRequests[1];
         $this->assertSame('GET', $getRequest['method']);
         $this->assertSame('http://example.com/no-head', $getRequest['url']);
         $this->assertArrayHasKey('limit_response_size', $getRequest['args']);
         $this->assertSame(131072, $getRequest['args']['limit_response_size']);
+        $this->assertArrayHasKey('user-agent', $getRequest['args']);
+        $this->assertSame(\blc_get_http_user_agent(), $getRequest['args']['user-agent']);
 
         $this->assertCount(0, $wpdb->inserted, 'Successful GET fallback should prevent false positives.');
     }

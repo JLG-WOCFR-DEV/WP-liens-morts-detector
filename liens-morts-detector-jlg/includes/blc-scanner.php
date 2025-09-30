@@ -1595,6 +1595,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                 $head_request_disallowed = false;
                 if (!$should_use_cache) {
                     $head_request_args = [
+                        'user-agent'          => blc_get_http_user_agent(),
                         'timeout'             => $head_request_timeout,
                         'limit_response_size' => 1024,
                         'redirection'         => 5,
@@ -1602,7 +1603,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
                     $get_request_args = [
                         'timeout'             => $get_request_timeout,
-                        'user-agent'          => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+                        'user-agent'          => blc_get_http_user_agent(),
                         'method'              => 'GET',
                         'limit_response_size' => 131072,
                     ];
