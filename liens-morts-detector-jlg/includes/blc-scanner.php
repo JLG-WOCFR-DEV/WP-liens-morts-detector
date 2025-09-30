@@ -475,7 +475,17 @@ function blc_is_image_scan_lock_active(array $state, $timeout) {
         return false;
     }
 
-    return ($locked_at + $timeout) > time();
+    if ($locked_at <= 0) {
+        return false;
+    }
+
+    $expires_at = $locked_at + $timeout;
+
+    if ($expires_at <= 0) {
+        return false;
+    }
+
+    return $expires_at > time();
 }
 
 /**
