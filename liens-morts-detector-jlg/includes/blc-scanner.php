@@ -7,6 +7,141 @@ if (!function_exists('blc_normalize_hour_option')) {
 }
 
 /**
+ * Retrieve the configured notification recipients as a normalized list of emails.
+ *
+ * @return string[]
+ */
+function blc_get_notification_recipients_list() {
+    $raw_recipients = (string) get_option('blc_notification_recipients', '');
+    if ($raw_recipients === '') {
+        return [];
+    }
+
+    $candidates = preg_split('/[\r\n,]+/', $raw_recipients);
+    if (!is_array($candidates)) {
+        return [];
+    }
+
+    $recipients = [];
+    foreach ($candidates as $candidate) {
+        $email = sanitize_email(trim((string) $candidate));
+        if ($email === '') {
+            continue;
+        }
+
+        if (is_email($email)) {
+            $recipients[$email] = $email;
+        }
+    }
+
+    return array_values($recipients);
+}
+
+/**
+ * Send a summary email after a scan when recipients are configured.
+ *
+ * @param string $dataset_type Dataset type ('link' or 'image').
+ *
+ * @return void
+ */
+function blc_maybe_send_scan_summary($dataset_type) {
+    $recipients = blc_get_notification_recipients_list();
+    if ($recipients === []) {
+        return;
+    }
+
+    global $wpdb;
+    if (!isset($wpdb) || !is_object($wpdb) || !isset($wpdb->prefix)) {
+        return;
+    }
+
+    $dataset_type = (string) $dataset_type;
+    if ($dataset_type !== 'link' && $dataset_type !== 'image') {
+        return;
+    }
+
+    $table_name = $wpdb->prefix . 'blc_broken_links';
+    $broken_count = 0;
+    if (method_exists($wpdb, 'prepare') && method_exists($wpdb, 'get_var')) {
+        $query = $wpdb->prepare(
+            "SELECT COUNT(*) FROM $table_name WHERE type = %s",
+            $dataset_type
+        );
+        if (is_string($query)) {
+            $broken_count = (int) $wpdb->get_var($query);
+        }
+    }
+
+    $site_name = get_bloginfo('name');
+    if (!is_string($site_name) || $site_name === '') {
+        $home_url = function_exists('home_url') ? home_url() : '';
+        $parsed_host = '';
+        if ($home_url !== '') {
+            $parsed_host = function_exists('wp_parse_url')
+                ? wp_parse_url($home_url, PHP_URL_HOST)
+                : parse_url($home_url, PHP_URL_HOST);
+        }
+        $site_name = is_string($parsed_host) && $parsed_host !== '' ? $parsed_host : 'WordPress';
+    }
+
+    if ($dataset_type === 'link') {
+        $subject = sprintf(
+            __('[%s] Résumé de la dernière analyse des liens', 'liens-morts-detector-jlg'),
+            $site_name
+        );
+        $report_url = admin_url('admin.php?page=blc-dashboard');
+        $message_lines = [
+            __('Bonjour,', 'liens-morts-detector-jlg'),
+            '',
+            sprintf(
+                __('Voici le résumé de la dernière analyse des liens sur %s :', 'liens-morts-detector-jlg'),
+                $site_name
+            ),
+            sprintf(
+                __('- Liens cassés détectés : %d', 'liens-morts-detector-jlg'),
+                $broken_count
+            ),
+            '',
+            sprintf(
+                __('Consulter le rapport complet : %s', 'liens-morts-detector-jlg'),
+                $report_url
+            ),
+            '',
+            __('— Liens Morts Detector', 'liens-morts-detector-jlg'),
+        ];
+    } else {
+        $subject = sprintf(
+            __('[%s] Résumé de la dernière analyse des images', 'liens-morts-detector-jlg'),
+            $site_name
+        );
+        $report_url = admin_url('admin.php?page=blc-images-dashboard');
+        $message_lines = [
+            __('Bonjour,', 'liens-morts-detector-jlg'),
+            '',
+            sprintf(
+                __('Voici le résumé de la dernière analyse des images sur %s :', 'liens-morts-detector-jlg'),
+                $site_name
+            ),
+            sprintf(
+                __('- Images cassées détectées : %d', 'liens-morts-detector-jlg'),
+                $broken_count
+            ),
+            '',
+            sprintf(
+                __('Consulter le rapport complet : %s', 'liens-morts-detector-jlg'),
+                $report_url
+            ),
+            '',
+            __('— Liens Morts Detector', 'liens-morts-detector-jlg'),
+        ];
+    }
+
+    $message = implode(PHP_EOL, $message_lines);
+
+    wp_mail($recipients, $subject, $message);
+}
+
+/**
  * Normalize a link URL while preserving the original value for storage/display.
  *
  * @param string      $url          Original URL extracted from the content.
@@ -1664,6 +1799,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         } else {
             update_option('blc_last_check_time', current_time('timestamp', true));
             blc_clear_scan_cache($scan_cache_context);
+            blc_maybe_send_scan_summary('link');
         }
 
         if ($debug_mode) { error_log("--- Fin du scan LIENS (Lot #$batch) ---"); }
@@ -2100,6 +2236,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
         } else {
             if ($debug_mode) { error_log("--- Scan IMAGES terminé ---"); }
             update_option('blc_last_image_check_time', current_time('timestamp', true));
+            blc_maybe_send_scan_summary('image');
             blc_release_image_scan_lock($lock_token);
         }
     } finally {
