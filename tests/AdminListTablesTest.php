@@ -9,6 +9,7 @@ namespace Tests {
 use Brain\Monkey;
 use Brain\Monkey\Functions;
 use PHPUnit\Framework\TestCase;
+use Tests\Stubs\OptionsStore;
 
 class AdminListTablesTest extends TestCase
 {
@@ -30,6 +31,13 @@ class AdminListTablesTest extends TestCase
             require_once __DIR__ . '/stubs/WP_List_Table.php';
         }
 
+        require_once __DIR__ . '/wp-option-stubs.php';
+        OptionsStore::reset();
+        OptionsStore::$options['date_format'] = 'Y-m-d';
+        OptionsStore::$options['time_format'] = 'H:i';
+        OptionsStore::$options['timezone_string'] = 'UTC';
+        OptionsStore::$options['gmt_offset'] = 0;
+
         Functions\when('home_url')->justReturn('https://example.com');
         Functions\when('sanitize_text_field')->alias(function ($value) {
             return is_string($value) ? trim($value) : $value;
@@ -49,6 +57,8 @@ class AdminListTablesTest extends TestCase
             $param = is_array($key) ? $key : [$key => $value];
             return 'admin.php?' . http_build_query($param);
         });
+        Functions\when('wp_timezone')->alias(static fn() => new \DateTimeZone('UTC'));
+        Functions\when('wp_timezone_string')->alias(static fn() => 'UTC');
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-scanner.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/class-blc-links-list-table.php';
@@ -62,6 +72,7 @@ class AdminListTablesTest extends TestCase
         $_REQUEST = [];
         global $wpdb;
         $wpdb = null;
+        OptionsStore::reset();
         parent::tearDown();
     }
 
@@ -74,6 +85,8 @@ class AdminListTablesTest extends TestCase
                 'anchor'     => sprintf('%s-%d', $prefix, $i),
                 'post_id'    => $i + 1,
                 'post_title' => sprintf('Post %d', $i + 1),
+                'http_status' => ($i % 2 === 0) ? 404 : null,
+                'last_checked_at' => '1970-01-01 00:00:00',
             ];
         }
 
@@ -110,6 +123,57 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString('>images/photo.jpg<', $html);
     }
 
+    public function test_links_columns_display_status_and_timestamp(): void
+    {
+        $table = new class() extends \BLC_Links_List_Table {
+            public function renderHttpStatus(array $item)
+            {
+                return parent::column_http_status($item);
+            }
+
+            public function renderLastChecked(array $item)
+            {
+                return parent::column_last_checked_at($item);
+            }
+
+            protected function get_row_actions($item)
+            {
+                return [];
+            }
+
+            public function row_actions($actions, $always_visible = false)
+            {
+                return '';
+            }
+        };
+
+        $columns = $table->get_columns();
+        $this->assertArrayHasKey('http_status', $columns);
+        $this->assertArrayHasKey('last_checked_at', $columns);
+
+        $item = [
+            'http_status'     => 410,
+            'last_checked_at' => '1970-01-01 00:00:00',
+            'post_id'         => 1,
+            'post_title'      => 'Post 1',
+            'url'             => 'https://example.com',
+        ];
+
+        $this->assertSame('410', $table->renderHttpStatus($item));
+        $this->assertSame('1970-01-01 00:00', $table->renderLastChecked($item));
+
+        $empty = [
+            'http_status'     => null,
+            'last_checked_at' => '',
+            'post_id'         => 2,
+            'post_title'      => 'Post 2',
+            'url'             => 'https://example.com/empty',
+        ];
+
+        $this->assertSame('—', $table->renderHttpStatus($empty));
+        $this->assertSame('—', $table->renderLastChecked($empty));
+    }
+
     public function test_links_prepare_items_supports_injected_data_with_pagination(): void
     {
         $_REQUEST['paged'] = 2;
@@ -139,6 +203,49 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString('COUNT(*)', $wpdb->last_get_var_query);
         $this->assertStringContainsString('LIMIT 20', $wpdb->last_get_results_query);
         $this->assertStringContainsString('OFFSET 0', $wpdb->last_get_results_query);
+    }
+
+    public function test_images_columns_display_status_and_timestamp(): void
+    {
+        $table = new class() extends \BLC_Images_List_Table {
+            public function renderHttpStatus(array $item)
+            {
+                return parent::column_http_status($item);
+            }
+
+            public function renderLastChecked(array $item)
+            {
+                return parent::column_last_checked_at($item);
+            }
+        };
+
+        $columns = $table->get_columns();
+        $this->assertArrayHasKey('http_status', $columns);
+        $this->assertArrayHasKey('last_checked_at', $columns);
+
+        $item = [
+            'http_status'     => null,
+            'last_checked_at' => '1970-01-01 00:00:00',
+            'url'             => 'https://example.com/image.jpg',
+            'anchor'          => 'image.jpg',
+            'post_id'         => 7,
+            'post_title'      => 'Gallery',
+        ];
+
+        $this->assertSame('—', $table->renderHttpStatus($item));
+        $this->assertSame('1970-01-01 00:00', $table->renderLastChecked($item));
+
+        $missing = [
+            'http_status'     => null,
+            'last_checked_at' => '',
+            'url'             => '',
+            'anchor'          => '',
+            'post_id'         => 8,
+            'post_title'      => 'Empty',
+        ];
+
+        $this->assertSame('—', $table->renderHttpStatus($missing));
+        $this->assertSame('—', $table->renderLastChecked($missing));
     }
 
     public function test_links_prepare_items_adds_search_term_conditions(): void
@@ -224,6 +331,8 @@ class AdminListTablesTest extends TestCase
                 'anchor'     => 'Evil link',
                 'post_id'    => 42,
                 'post_title' => 'Traps',
+                'http_status' => null,
+                'last_checked_at' => '1970-01-01 00:00:00',
             ],
         ];
 

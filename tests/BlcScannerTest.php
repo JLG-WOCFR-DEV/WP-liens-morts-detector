@@ -2256,6 +2256,8 @@ class BlcScannerTest extends TestCase
         $expected_host = substr($long_host, 0, 191);
         $this->assertSame($expected_host, $insert['data']['url_host'], 'URL host should be truncated to the storage column length.');
         $this->assertSame(191, strlen($insert['data']['url_host']), 'URL host should not exceed the varchar(191) column.');
+        $this->assertSame(404, $insert['data']['http_status']);
+        $this->assertSame('1970-01-01 00:00:00', $insert['data']['last_checked_at']);
     }
 
     public function test_blc_ajax_edit_link_callback_updates_scheme_relative_url(): void
@@ -2855,6 +2857,9 @@ class BlcScannerTest extends TestCase
         $this->assertSame('image', $insert['data']['type']);
         $this->assertSame('missing.jpg', $insert['data']['anchor']);
         $this->assertSame(88, $insert['data']['post_id']);
+        $this->assertArrayHasKey('http_status', $insert['data']);
+        $this->assertNull($insert['data']['http_status']);
+        $this->assertSame('1970-01-01 00:00:00', $insert['data']['last_checked_at']);
         $this->assertCount(1, $this->scheduledEvents, 'Image batches should schedule follow-ups.');
         $event = $this->scheduledEvents[0];
         $this->assertSame($this->utcNow + 60, $event['timestamp']);

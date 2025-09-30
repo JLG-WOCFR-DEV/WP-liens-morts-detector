@@ -129,6 +129,8 @@ class BLC_Links_List_Table extends WP_List_Table {
         return [
             'url'          => __('URL Cassée', 'liens-morts-detector-jlg'),
             'anchor_text'  => __('Texte du lien', 'liens-morts-detector-jlg'),
+            'http_status'  => __('Statut HTTP', 'liens-morts-detector-jlg'),
+            'last_checked_at' => __('Dernier contrôle', 'liens-morts-detector-jlg'),
             'post_title'   => __('Trouvé dans l\'article/page', 'liens-morts-detector-jlg'),
             'actions'      => __('Actions', 'liens-morts-detector-jlg')
         ];
@@ -212,6 +214,26 @@ class BLC_Links_List_Table extends WP_List_Table {
         }
 
         return sprintf('<a href="%s">%s</a>', esc_url($edit_link), esc_html($item['post_title']));
+    }
+
+    protected function column_http_status($item) {
+        $raw_status = $item['http_status'] ?? null;
+
+        if ($raw_status === null || $raw_status === '') {
+            return esc_html__('—', 'liens-morts-detector-jlg');
+        }
+
+        if (is_numeric($raw_status)) {
+            $raw_status = (int) $raw_status;
+        }
+
+        return esc_html((string) $raw_status);
+    }
+
+    protected function column_last_checked_at($item) {
+        $raw_value = $item['last_checked_at'] ?? '';
+
+        return $this->format_last_checked_at_for_display($raw_value);
     }
 
     /**
@@ -325,7 +347,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         $offset = ($current_page - 1) * $per_page;
 
         $data_query = $wpdb->prepare(
-            "SELECT id, occurrence_index, url, anchor, post_id, post_title
+            "SELECT id, occurrence_index, url, anchor, post_id, post_title, http_status, last_checked_at
              FROM $table_name
              WHERE $where_clause
              ORDER BY id DESC
@@ -336,6 +358,93 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         $this->set_pagination_args(['total_items' => $total_items, 'per_page' => $per_page]);
         $this->items = $items ? $items : [];
+    }
+
+    private function format_last_checked_at_for_display($value) {
+        $value = is_string($value) ? trim($value) : '';
+
+        if ($value === '' || $value === '0000-00-00 00:00:00') {
+            return esc_html__('—', 'liens-morts-detector-jlg');
+        }
+
+        try {
+            $date = new \DateTimeImmutable($value, new \DateTimeZone('UTC'));
+        } catch (\Exception $e) {
+            return esc_html__('—', 'liens-morts-detector-jlg');
+        }
+
+        $timezone = $this->get_site_timezone();
+        if ($timezone instanceof \DateTimeZone) {
+            $date = $date->setTimezone($timezone);
+        }
+
+        $format = $this->get_date_time_format();
+
+        return esc_html($date->format($format));
+    }
+
+    private function get_site_timezone() {
+        if (function_exists('wp_timezone')) {
+            $timezone = wp_timezone();
+            if ($timezone instanceof \DateTimeZone) {
+                return $timezone;
+            }
+        }
+
+        $timezone_string = function_exists('wp_timezone_string') ? wp_timezone_string() : '';
+        if (is_string($timezone_string) && $timezone_string !== '') {
+            try {
+                return new \DateTimeZone($timezone_string);
+            } catch (\Exception $e) {
+                // Ignore and fallback below.
+            }
+        }
+
+        $offset = 0.0;
+        if (function_exists('get_option')) {
+            $raw_offset = get_option('gmt_offset', 0);
+            if (is_numeric($raw_offset)) {
+                $offset = (float) $raw_offset;
+            }
+        }
+
+        $seconds_per_hour = defined('HOUR_IN_SECONDS') ? (int) HOUR_IN_SECONDS : 3600;
+        $seconds = (int) round($offset * $seconds_per_hour);
+
+        if ($seconds === 0) {
+            return new \DateTimeZone('UTC');
+        }
+
+        $sign = $seconds >= 0 ? '+' : '-';
+        $seconds = abs($seconds);
+        $hours = (int) floor($seconds / 3600);
+        $minutes = (int) floor(($seconds % 3600) / 60);
+        $timezone_name = sprintf('%s%02d:%02d', $sign, $hours, $minutes);
+
+        try {
+            return new \DateTimeZone($timezone_name);
+        } catch (\Exception $e) {
+            return new \DateTimeZone('UTC');
+        }
+    }
+
+    private function get_date_time_format() {
+        $date_format = 'Y-m-d';
+        $time_format = 'H:i';
+
+        if (function_exists('get_option')) {
+            $stored_date = get_option('date_format');
+            if (is_string($stored_date) && $stored_date !== '') {
+                $date_format = $stored_date;
+            }
+
+            $stored_time = get_option('time_format');
+            if (is_string($stored_time) && $stored_time !== '') {
+                $time_format = $stored_time;
+            }
+        }
+
+        return trim($date_format . ' ' . $time_format);
     }
 
     private function get_search_term() {
