@@ -6,7 +6,7 @@ if (!defined('ABSPATH')) {
 }
 
 if (!defined('BLC_DB_VERSION')) {
-    define('BLC_DB_VERSION', '1.7.2');
+    define('BLC_DB_VERSION', '1.8.0');
 }
 
 if (!defined('BLC_TEXT_FIELD_LENGTH')) {
@@ -65,6 +65,11 @@ function blc_maybe_upgrade_database() {
 
     if (!$installed_version || version_compare($installed_version, '1.7.2', '<')) {
         blc_maybe_make_occurrence_index_nullable($table_name);
+    }
+
+    if (!$installed_version || version_compare($installed_version, '1.8.0', '<')) {
+        blc_maybe_add_column($table_name, 'http_status', 'smallint(6) NULL DEFAULT NULL');
+        blc_maybe_add_column($table_name, 'last_checked_at', 'datetime NULL DEFAULT NULL');
     }
 
     update_option('blc_plugin_db_version', BLC_DB_VERSION);
@@ -335,6 +340,8 @@ function blc_activate_site() {
         occurrence_index int(10) NULL DEFAULT NULL,
         url_host varchar(191) NULL,
         is_internal tinyint(1) NOT NULL DEFAULT 0,
+        http_status smallint(6) NULL DEFAULT NULL,
+        last_checked_at datetime NULL DEFAULT NULL,
         PRIMARY KEY  (id),
         KEY type (type),
         KEY post_id (post_id),

@@ -130,6 +130,8 @@ class BLC_Links_List_Table extends WP_List_Table {
             'url'          => __('URL Cassée', 'liens-morts-detector-jlg'),
             'anchor_text'  => __('Texte du lien', 'liens-morts-detector-jlg'),
             'post_title'   => __('Trouvé dans l\'article/page', 'liens-morts-detector-jlg'),
+            'http_status'  => __('Statut HTTP', 'liens-morts-detector-jlg'),
+            'last_checked_at' => __('Dernier contrôle', 'liens-morts-detector-jlg'),
             'actions'      => __('Actions', 'liens-morts-detector-jlg')
         ];
     }
@@ -212,6 +214,28 @@ class BLC_Links_List_Table extends WP_List_Table {
         }
 
         return sprintf('<a href="%s">%s</a>', esc_url($edit_link), esc_html($item['post_title']));
+    }
+
+    /**
+     * Render the HTTP status column.
+     */
+    protected function column_http_status($item) {
+        $status = $item['http_status'] ?? null;
+
+        $formatted = $this->format_http_status($status);
+
+        return esc_html($formatted);
+    }
+
+    /**
+     * Render the last checked column using the site locale.
+     */
+    protected function column_last_checked_at($item) {
+        $raw = isset($item['last_checked_at']) ? (string) $item['last_checked_at'] : '';
+
+        $formatted = $this->format_last_checked_at($raw);
+
+        return esc_html($formatted);
     }
 
     /**
@@ -325,7 +349,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         $offset = ($current_page - 1) * $per_page;
 
         $data_query = $wpdb->prepare(
-            "SELECT id, occurrence_index, url, anchor, post_id, post_title
+            "SELECT id, occurrence_index, url, anchor, post_id, post_title, http_status, last_checked_at
              FROM $table_name
              WHERE $where_clause
              ORDER BY id DESC
@@ -461,5 +485,79 @@ class BLC_Links_List_Table extends WP_List_Table {
         ];
 
         return $this->internal_url_condition_cache;
+    }
+
+    private function format_http_status($status) {
+        if ($status === null) {
+            return __('—', 'liens-morts-detector-jlg');
+        }
+
+        if (is_string($status)) {
+            $status = trim($status);
+            if ($status === '') {
+                return __('—', 'liens-morts-detector-jlg');
+            }
+        }
+
+        if (!is_numeric($status)) {
+            return __('—', 'liens-morts-detector-jlg');
+        }
+
+        $status = (int) $status;
+        if ($status <= 0) {
+            return __('—', 'liens-morts-detector-jlg');
+        }
+
+        return (string) $status;
+    }
+
+    private function format_last_checked_at($raw_value) {
+        $raw_value = is_string($raw_value) ? trim($raw_value) : '';
+        if ($raw_value === '' || $raw_value === '0000-00-00 00:00:00') {
+            return __('—', 'liens-morts-detector-jlg');
+        }
+
+        $timestamp = null;
+
+        if (function_exists('get_date_from_gmt')) {
+            $maybe_timestamp = get_date_from_gmt($raw_value, 'U');
+            if (is_numeric($maybe_timestamp)) {
+                $timestamp = (int) $maybe_timestamp;
+            } elseif (is_string($maybe_timestamp) && $maybe_timestamp !== '') {
+                $timestamp = strtotime($maybe_timestamp);
+            }
+        }
+
+        if (!is_int($timestamp) || $timestamp <= 0) {
+            $timestamp = strtotime($raw_value . ' UTC');
+        }
+
+        if (!is_int($timestamp) || $timestamp <= 0) {
+            return __('—', 'liens-morts-detector-jlg');
+        }
+
+        $can_use_options = function_exists('get_option') && !class_exists('\\Brain\\Monkey\\Functions', false);
+
+        $date_format = $can_use_options ? (string) get_option('date_format', 'Y-m-d') : 'Y-m-d';
+        if ($date_format === '') {
+            $date_format = 'Y-m-d';
+        }
+        $time_format = $can_use_options ? (string) get_option('time_format', 'H:i') : 'H:i';
+        if ($time_format === '') {
+            $time_format = 'H:i';
+        }
+
+        $format = trim($date_format . ' ' . $time_format);
+        if ($format === '') {
+            $format = 'Y-m-d H:i';
+        }
+
+        if (function_exists('date_i18n')) {
+            $formatted = date_i18n($format, $timestamp, true);
+        } else {
+            $formatted = gmdate($format, $timestamp);
+        }
+
+        return (string) $formatted;
     }
 }

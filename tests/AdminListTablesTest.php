@@ -49,6 +49,35 @@ class AdminListTablesTest extends TestCase
             $param = is_array($key) ? $key : [$key => $value];
             return 'admin.php?' . http_build_query($param);
         });
+        Functions\when('get_option')->alias(function ($option, $default = false) {
+            switch ($option) {
+                case 'date_format':
+                    return 'Y-m-d';
+                case 'time_format':
+                    return 'H:i';
+                case 'timezone_string':
+                    return '';
+                case 'gmt_offset':
+                    return 0;
+                default:
+                    return $default;
+            }
+        });
+        Functions\when('get_date_from_gmt')->alias(function ($date_string, $format = 'Y-m-d H:i:s') {
+            $timestamp = strtotime($date_string . ' UTC');
+            if ($timestamp === false) {
+                return $format === 'U' ? 0 : '';
+            }
+
+            if ($format === 'U') {
+                return $timestamp;
+            }
+
+            return gmdate($format, $timestamp);
+        });
+        Functions\when('date_i18n')->alias(function ($format, $timestamp) {
+            return gmdate($format, (int) $timestamp);
+        });
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-scanner.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/class-blc-links-list-table.php';
@@ -74,6 +103,8 @@ class AdminListTablesTest extends TestCase
                 'anchor'     => sprintf('%s-%d', $prefix, $i),
                 'post_id'    => $i + 1,
                 'post_title' => sprintf('Post %d', $i + 1),
+                'http_status' => 400 + $i,
+                'last_checked_at' => sprintf('2024-01-%02d 12:00:00', $i + 1),
             ];
         }
 
@@ -108,6 +139,28 @@ class AdminListTablesTest extends TestCase
 
         $this->assertStringContainsString('href="https://example.com/post-12/images/photo.jpg"', $html);
         $this->assertStringContainsString('>images/photo.jpg<', $html);
+    }
+
+    public function test_links_columns_render_status_and_last_checked(): void
+    {
+        $table = new class() extends \BLC_Links_List_Table {
+            public function renderHttpStatus(array $item)
+            {
+                return parent::column_http_status($item);
+            }
+
+            public function renderLastChecked(array $item)
+            {
+                return parent::column_last_checked_at($item);
+            }
+        };
+
+        $this->assertSame('404', $table->renderHttpStatus(['http_status' => 404]));
+        $this->assertSame('—', $table->renderHttpStatus(['http_status' => null]));
+
+        $formatted = $table->renderLastChecked(['last_checked_at' => '2024-01-01 12:34:00']);
+        $this->assertSame('2024-01-01 12:34', $formatted);
+        $this->assertSame('—', $table->renderLastChecked(['last_checked_at' => '']));
     }
 
     public function test_links_prepare_items_supports_injected_data_with_pagination(): void
@@ -304,6 +357,28 @@ class AdminListTablesTest extends TestCase
         $this->assertCount(20, $table->items);
         $this->assertSame('https://example.com/image-40', $table->items[0]['url']);
         $this->assertSame(65, $table->get_pagination_args()['total_items']);
+    }
+
+    public function test_images_columns_render_status_and_last_checked(): void
+    {
+        $table = new class() extends \BLC_Images_List_Table {
+            public function renderHttpStatus(array $item)
+            {
+                return parent::column_http_status($item);
+            }
+
+            public function renderLastChecked(array $item)
+            {
+                return parent::column_last_checked_at($item);
+            }
+        };
+
+        $this->assertSame('—', $table->renderHttpStatus(['http_status' => 0]));
+        $this->assertSame('410', $table->renderHttpStatus(['http_status' => 410]));
+
+        $formatted = $table->renderLastChecked(['last_checked_at' => '2024-02-02 08:00:00']);
+        $this->assertSame('2024-02-02 08:00', $formatted);
+        $this->assertSame('—', $table->renderLastChecked(['last_checked_at' => null]));
     }
 
     public function test_images_prepare_items_uses_paginated_queries(): void

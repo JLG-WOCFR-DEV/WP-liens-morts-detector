@@ -150,6 +150,8 @@ class BlcScannerTest extends TestCase
 
     private int $utcNow = 1000;
 
+    private string $currentMysqlTime = '1970-01-01 00:00:00';
+
     /** @var array<int, array<string, mixed>> */
     private array $updatedPosts = [];
 
@@ -209,6 +211,7 @@ class BlcScannerTest extends TestCase
         $this->updatedPosts = [];
         $this->ajaxResponse = null;
         $this->utcNow = 1000;
+        $this->currentMysqlTime = '1970-01-01 00:00:00';
         $GLOBALS['wp_query_queue'] = [];
         $GLOBALS['wp_query_last_args'] = [];
         $this->publicPostTypes = ['post', 'page'];
@@ -334,7 +337,7 @@ class BlcScannerTest extends TestCase
             }
 
             if ($type === 'mysql') {
-                return '1970-01-01 00:00:00';
+                return $testCase->currentMysqlTime;
             }
 
             return $testCase->currentHour;
@@ -1048,6 +1051,8 @@ class BlcScannerTest extends TestCase
 
         $this->setHttpResponse('HEAD', 'http://allowed.com/bad', ['response' => ['code' => 404]]);
 
+        $this->currentMysqlTime = '2024-01-02 03:04:05';
+
         blc_perform_check(0, false);
 
         $this->assertCount(1, $this->httpRequests, 'Only the non-excluded URL should be requested.');
@@ -1059,6 +1064,8 @@ class BlcScannerTest extends TestCase
         $this->assertSame('wp_blc_broken_links', $insert['table']);
         $this->assertSame('http://allowed.com/bad', $insert['data']['url']);
         $this->assertSame('link', $insert['data']['type']);
+        $this->assertSame(404, $insert['data']['http_status']);
+        $this->assertSame('2024-01-02 03:04:05', $insert['data']['last_checked_at']);
         $this->assertSame([], $this->scheduledEvents, 'No follow-up batch should be scheduled.');
         $this->assertSame($this->utcNow, $this->updatedOptions['blc_last_check_time'] ?? null, 'Last check time should be updated.');
     }
@@ -3071,6 +3078,8 @@ class BlcScannerTest extends TestCase
             'max_num_pages' => 1,
         ];
 
+        $this->currentMysqlTime = '2024-02-03 04:05:06';
+
         blc_perform_image_check(0, true);
 
         $this->assertCount(1, $wpdb->inserted, 'Missing CDN upload image should be recorded.');
@@ -3078,6 +3087,9 @@ class BlcScannerTest extends TestCase
         $this->assertSame('image', $insert['data']['type']);
         $this->assertSame('missing-cdn.jpg', $insert['data']['anchor']);
         $this->assertSame(104, $insert['data']['post_id']);
+        $this->assertArrayHasKey('http_status', $insert['data']);
+        $this->assertNull($insert['data']['http_status']);
+        $this->assertSame('2024-02-03 04:05:06', $insert['data']['last_checked_at']);
 
         Functions\when('wp_upload_dir')->alias(function () {
             return [

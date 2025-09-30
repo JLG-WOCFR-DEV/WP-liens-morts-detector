@@ -829,8 +829,9 @@ function blc_stage_dataset_refresh($table_name, $type, $scan_run_id, ?array $pos
 
     global $wpdb;
 
+    $current_gmt_datetime = current_time('mysql', true);
     $clauses = ['type = %s'];
-    $args    = [$scan_run_id, $type];
+    $args    = [$scan_run_id, $current_gmt_datetime, $type];
 
     if (is_array($post_ids)) {
         $post_ids = array_values(array_unique(array_map('intval', $post_ids)));
@@ -844,7 +845,7 @@ function blc_stage_dataset_refresh($table_name, $type, $scan_run_id, ?array $pos
     }
 
     $where_sql = implode(' AND ', $clauses);
-    $mark_sql  = $wpdb->prepare("UPDATE $table_name SET scan_run_id = %s WHERE $where_sql", $args);
+    $mark_sql  = $wpdb->prepare("UPDATE $table_name SET scan_run_id = %s, last_checked_at = %s, http_status = NULL WHERE $where_sql", $args);
 
     if (!is_string($mark_sql)) {
         return new \WP_Error('blc_stage_prepare_failed', __('Unable to prepare statement for staging dataset rows.', 'liens-morts-detector-jlg'));
@@ -1465,19 +1466,23 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
                         if (!file_exists($file_path)) {
                             if ($debug_mode) { error_log("  -> Ressource locale introuvable : " . $normalized_url); }
+                            $insert_data = [
+                                'url'         => $url_for_storage,
+                                'anchor'      => $anchor_for_storage,
+                                'post_id'     => $post->ID,
+                                'post_title'  => $post_title_for_storage,
+                                'type'        => 'link',
+                                'occurrence_index' => $occurrence_index,
+                                'url_host'    => $metadata['host'],
+                                'is_internal' => $metadata['is_internal'],
+                                'http_status' => null,
+                                'last_checked_at' => current_time('mysql', true),
+                            ];
+
                             $inserted = $wpdb->insert(
                                 $table_name,
-                                [
-                                    'url'         => $url_for_storage,
-                                    'anchor'      => $anchor_for_storage,
-                                    'post_id'     => $post->ID,
-                                    'post_title'  => $post_title_for_storage,
-                                    'type'        => 'link',
-                                    'occurrence_index' => $occurrence_index,
-                                    'url_host'    => $metadata['host'],
-                                    'is_internal' => $metadata['is_internal'],
-                                ],
-                                ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d']
+                                $insert_data,
+                                ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d', '%d', '%s']
                             );
                             if ($inserted) {
                                 $register_pending_link_insert($post->ID, $row_bytes);
@@ -1537,8 +1542,10 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                                 'occurrence_index' => $occurrence_index,
                                 'url_host'    => $metadata['host'],
                                 'is_internal' => $metadata['is_internal'],
+                                'http_status' => null,
+                                'last_checked_at' => current_time('mysql', true),
                             ],
-                            ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d']
+                            ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d', '%d', '%s']
                         );
                         if ($inserted) {
                             $register_pending_link_insert($post->ID, $row_bytes);
@@ -1743,19 +1750,23 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                         }
                     }
                 } elseif ($should_insert_broken_link) {
+                    $insert_data = [
+                        'url'         => $url_for_storage,
+                        'anchor'      => $anchor_for_storage,
+                        'post_id'     => $post->ID,
+                        'post_title'  => $post_title_for_storage,
+                        'type'        => 'link',
+                        'occurrence_index' => $occurrence_index,
+                        'url_host'    => $metadata['host'],
+                        'is_internal' => $metadata['is_internal'],
+                        'http_status' => $response_code,
+                        'last_checked_at' => current_time('mysql', true),
+                    ];
+
                     $inserted = $wpdb->insert(
                         $table_name,
-                        [
-                            'url'         => $url_for_storage,
-                            'anchor'      => $anchor_for_storage,
-                            'post_id'     => $post->ID,
-                            'post_title'  => $post_title_for_storage,
-                            'type'        => 'link',
-                            'occurrence_index' => $occurrence_index,
-                            'url_host'    => $metadata['host'],
-                            'is_internal' => $metadata['is_internal'],
-                        ],
-                        ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d']
+                        $insert_data,
+                        ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d', '%d', '%s']
                     );
                     if ($inserted) {
                         $register_pending_link_insert($post->ID, $row_bytes);
@@ -2207,8 +2218,10 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                         'type'        => 'image',
                         'url_host'    => $metadata['host'],
                         'is_internal' => $metadata['is_internal'],
+                        'http_status' => null,
+                        'last_checked_at' => current_time('mysql', true),
                     ],
-                    ['%s', '%s', '%d', '%s', '%s', '%s', '%d']
+                    ['%s', '%s', '%d', '%s', '%s', '%s', '%d', '%d', '%s']
                 );
                 if ($inserted) {
                     $register_pending_image_insert($post->ID, $row_bytes);
