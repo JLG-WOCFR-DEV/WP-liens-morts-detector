@@ -2479,138 +2479,210 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
             $permalink = get_permalink($post);
 
             foreach ($dom->getElementsByTagName('img') as $image_node) {
-                $image_url = trim(wp_kses_decode_entities($image_node->getAttribute('src')));
-                if ($image_url === '') { continue; }
-
-                $original_image_url = $image_url;
-
-                $normalized_image_url = blc_normalize_link_url(
-                    $image_url,
+                $process_image_candidate = static function ($candidate_url) use (
+                    &$checked_local_paths,
                     $home_url_with_trailing_slash,
                     $site_scheme,
-                    $permalink
-                );
+                    $permalink,
+                    $normalized_site_host,
+                    $upload_baseurl_host,
+                    $upload_baseurl,
+                    $upload_basedir,
+                    $normalized_basedir,
+                    $debug_mode,
+                    $post,
+                    $table_name,
+                    $wpdb,
+                    $post_title_for_storage,
+                    $register_pending_image_insert,
+                    $site_host_for_metadata
+                ) {
+                    $candidate_url = trim((string) $candidate_url);
+                    if ($candidate_url === '') {
+                        return;
+                    }
 
-                if (!is_string($normalized_image_url) || $normalized_image_url === '') {
-                    continue;
+                    $normalized_image_url = blc_normalize_link_url(
+                        $candidate_url,
+                        $home_url_with_trailing_slash,
+                        $site_scheme,
+                        $permalink
+                    );
+
+                    if (!is_string($normalized_image_url) || $normalized_image_url === '') {
+                        return;
+                    }
+
+                    $image_host_raw = parse_url($normalized_image_url, PHP_URL_HOST);
+                    $image_host = is_string($image_host_raw) ? blc_normalize_remote_host($image_host_raw) : '';
+                    if ($image_host === '') {
+                        return;
+                    }
+
+                    $hosts_match_site = ($image_host !== '' && $normalized_site_host !== '' && $image_host === $normalized_site_host);
+                    $hosts_match_upload = ($image_host !== '' && $upload_baseurl_host !== '' && $image_host === $upload_baseurl_host);
+                    if (!$hosts_match_site && !$hosts_match_upload) {
+                        return;
+                    }
+                    if (!$hosts_match_site && $hosts_match_upload) {
+                        $is_safe_remote_host = blc_is_safe_remote_host($image_host);
+                        if (!$is_safe_remote_host) {
+                            if ($debug_mode) {
+                                error_log("  -> Image ignorée (IP non autorisée) : " . $normalized_image_url);
+                            }
+                            return;
+                        }
+                    }
+                    if (empty($upload_baseurl) || empty($upload_basedir) || empty($normalized_basedir)) {
+                        return;
+                    }
+
+                    $image_scheme = parse_url($normalized_image_url, PHP_URL_SCHEME);
+                    $normalized_upload_baseurl = $upload_baseurl;
+                    if ($image_scheme && $upload_baseurl !== '') {
+                        $normalized_upload_baseurl = set_url_scheme($upload_baseurl, $image_scheme);
+                    }
+
+                    $normalized_upload_baseurl_length = strlen($normalized_upload_baseurl);
+                    if (
+                        $normalized_upload_baseurl_length === 0 ||
+                        strncasecmp($normalized_image_url, $normalized_upload_baseurl, $normalized_upload_baseurl_length) !== 0
+                    ) {
+                        return;
+                    }
+
+                    $image_path_from_url = function_exists('wp_parse_url')
+                        ? wp_parse_url($normalized_image_url, PHP_URL_PATH)
+                        : parse_url($normalized_image_url, PHP_URL_PATH);
+                    if (!is_string($image_path_from_url) || $image_path_from_url === '') {
+                        return;
+                    }
+
+                    $image_path = wp_normalize_path($image_path_from_url);
+
+                    $parsed_upload_baseurl = function_exists('wp_parse_url') ? wp_parse_url($normalized_upload_baseurl) : parse_url($normalized_upload_baseurl);
+                    $upload_base_path = '';
+                    if (is_array($parsed_upload_baseurl) && !empty($parsed_upload_baseurl['path'])) {
+                        $upload_base_path = wp_normalize_path($parsed_upload_baseurl['path']);
+                    }
+
+                    $upload_base_path_trimmed = ltrim(trailingslashit($upload_base_path), '/');
+                    $upload_base_path_trimmed_length = strlen($upload_base_path_trimmed);
+                    $image_path_trimmed = ltrim($image_path, '/');
+
+                    if (
+                        $upload_base_path_trimmed_length === 0 ||
+                        strncasecmp($image_path_trimmed, $upload_base_path_trimmed, $upload_base_path_trimmed_length) !== 0
+                    ) {
+                        return;
+                    }
+
+                    $relative_path = ltrim(substr($image_path_trimmed, $upload_base_path_trimmed_length), '/');
+                    if ($relative_path === '') {
+                        return;
+                    }
+
+                    $decoded_relative_path = rawurldecode($relative_path);
+                    $decoded_relative_path = ltrim($decoded_relative_path, '/\\');
+                    if ($decoded_relative_path === '') {
+                        return;
+                    }
+
+                    if (preg_match('#(^|[\\/])\.\.([\\/]|$)#', $decoded_relative_path)) {
+                        return;
+                    }
+
+                    $file_path = wp_normalize_path(trailingslashit($upload_basedir) . $decoded_relative_path);
+                    if (strpos($file_path, $normalized_basedir) !== 0) {
+                        return;
+                    }
+
+                    if (!isset($checked_local_paths[$file_path]) || !is_array($checked_local_paths[$file_path])) {
+                        $checked_local_paths[$file_path] = [
+                            'exists' => file_exists($file_path),
+                            'reported_posts' => [],
+                        ];
+                    }
+
+                    if (!isset($checked_local_paths[$file_path]['reported_posts']) || !is_array($checked_local_paths[$file_path]['reported_posts'])) {
+                        $checked_local_paths[$file_path]['reported_posts'] = [];
+                    }
+
+                    if (!empty($checked_local_paths[$file_path]['exists'])) {
+                        return;
+                    }
+
+                    if (isset($checked_local_paths[$file_path]['reported_posts'][$post->ID])) {
+                        return;
+                    }
+
+                    if ($debug_mode) {
+                        error_log("  -> Image Cassée Trouvée : " . $candidate_url);
+                    }
+                    $url_for_storage    = blc_prepare_url_for_storage($candidate_url);
+                    $image_filename = wp_basename($decoded_relative_path);
+                    $anchor_for_storage = blc_prepare_text_field_for_storage($image_filename);
+                    $metadata  = blc_get_url_metadata_for_storage($candidate_url, $normalized_image_url, $site_host_for_metadata);
+                    $row_bytes = blc_calculate_row_storage_footprint_bytes($url_for_storage, $anchor_for_storage, $post_title_for_storage);
+                    $checked_at_gmt = current_time('mysql', true);
+                    $inserted = $wpdb->insert(
+                        $table_name,
+                        [
+                            'url'             => $url_for_storage,
+                            'anchor'          => $anchor_for_storage,
+                            'post_id'         => $post->ID,
+                            'post_title'      => $post_title_for_storage,
+                            'type'            => 'image',
+                            'url_host'        => $metadata['host'],
+                            'is_internal'     => $metadata['is_internal'],
+                            'http_status'     => null,
+                            'last_checked_at' => $checked_at_gmt,
+                        ],
+                        ['%s', '%s', '%d', '%s', '%s', '%s', '%d', '%d', '%s']
+                    );
+                    if ($inserted) {
+                        $checked_local_paths[$file_path]['reported_posts'][$post->ID] = true;
+                        $register_pending_image_insert($post->ID, $row_bytes);
+                        blc_adjust_dataset_storage_footprint('image', $row_bytes);
+                    }
+                };
+
+                $candidate_lookup = [];
+                $src_value = trim(wp_kses_decode_entities($image_node->getAttribute('src')));
+                if ($src_value !== '') {
+                    $candidate_lookup[$src_value] = true;
+                    $process_image_candidate($src_value);
                 }
 
-                $image_host_raw = parse_url($normalized_image_url, PHP_URL_HOST);
-                $image_host = is_string($image_host_raw) ? blc_normalize_remote_host($image_host_raw) : '';
-                if ($image_host === '') { continue; }
+                $srcset_value_raw = wp_kses_decode_entities($image_node->getAttribute('srcset'));
+                $srcset_value = trim((string) $srcset_value_raw);
+                if ($srcset_value !== '') {
+                    $srcset_entries = explode(',', $srcset_value);
+                    foreach ($srcset_entries as $entry) {
+                        $entry = trim($entry);
+                        if ($entry === '') {
+                            continue;
+                        }
 
-                $hosts_match_site = ($image_host !== '' && $normalized_site_host !== '' && $image_host === $normalized_site_host);
-                $hosts_match_upload = ($image_host !== '' && $upload_baseurl_host !== '' && $image_host === $upload_baseurl_host);
-                if (!$hosts_match_site && !$hosts_match_upload) {
-                    continue;
-                }
-                if (!$hosts_match_site && $hosts_match_upload) {
-                    $is_safe_remote_host = blc_is_safe_remote_host($image_host);
-                    if (!$is_safe_remote_host) {
-                        if ($debug_mode) { error_log("  -> Image ignorée (IP non autorisée) : " . $normalized_image_url); }
-                        continue;
+                        $parts = preg_split('/\s+/', $entry, 2);
+                        if (!is_array($parts) || $parts === []) {
+                            continue;
+                        }
+
+                        $candidate = trim((string) $parts[0]);
+                        if ($candidate === '') {
+                            continue;
+                        }
+
+                        if (isset($candidate_lookup[$candidate])) {
+                            continue;
+                        }
+
+                        $candidate_lookup[$candidate] = true;
+                        $process_image_candidate($candidate);
                     }
                 }
-                if (empty($upload_baseurl) || empty($upload_basedir) || empty($normalized_basedir)) {
-                    continue;
-                }
-
-                $image_scheme = parse_url($normalized_image_url, PHP_URL_SCHEME);
-                $normalized_upload_baseurl = $upload_baseurl;
-                if ($image_scheme && $upload_baseurl !== '') {
-                    $normalized_upload_baseurl = set_url_scheme($upload_baseurl, $image_scheme);
-                }
-
-                $normalized_upload_baseurl_length = strlen($normalized_upload_baseurl);
-                if (
-                    $normalized_upload_baseurl_length === 0 ||
-                    strncasecmp($normalized_image_url, $normalized_upload_baseurl, $normalized_upload_baseurl_length) !== 0
-                ) {
-                    continue;
-                }
-
-                $image_path_from_url = function_exists('wp_parse_url')
-                    ? wp_parse_url($normalized_image_url, PHP_URL_PATH)
-                    : parse_url($normalized_image_url, PHP_URL_PATH);
-                if (!is_string($image_path_from_url) || $image_path_from_url === '') {
-                    continue;
-                }
-
-                $image_path = wp_normalize_path($image_path_from_url);
-
-                $parsed_upload_baseurl = function_exists('wp_parse_url') ? wp_parse_url($normalized_upload_baseurl) : parse_url($normalized_upload_baseurl);
-                $upload_base_path = '';
-                if (is_array($parsed_upload_baseurl) && !empty($parsed_upload_baseurl['path'])) {
-                    $upload_base_path = wp_normalize_path($parsed_upload_baseurl['path']);
-                }
-
-                $upload_base_path_trimmed = ltrim(trailingslashit($upload_base_path), '/');
-                $upload_base_path_trimmed_length = strlen($upload_base_path_trimmed);
-                $image_path_trimmed = ltrim($image_path, '/');
-
-                if (
-                    $upload_base_path_trimmed_length === 0 ||
-                    strncasecmp($image_path_trimmed, $upload_base_path_trimmed, $upload_base_path_trimmed_length) !== 0
-                ) {
-                    continue;
-                }
-
-                $relative_path = ltrim(substr($image_path_trimmed, $upload_base_path_trimmed_length), '/');
-                if ($relative_path === '') {
-                    continue;
-                }
-
-                $decoded_relative_path = rawurldecode($relative_path);
-                $decoded_relative_path = ltrim($decoded_relative_path, '/\\');
-                if ($decoded_relative_path === '') {
-                    continue;
-                }
-
-                if (preg_match('#(^|[\\/])\.\.([\\/]|$)#', $decoded_relative_path)) {
-                    continue;
-                }
-
-                $file_path = wp_normalize_path(trailingslashit($upload_basedir) . $decoded_relative_path);
-                if (strpos($file_path, $normalized_basedir) !== 0) {
-                    continue;
-                }
-
-                if (!isset($checked_local_paths[$file_path])) {
-                    $checked_local_paths[$file_path] = file_exists($file_path);
-                }
-
-                if ($checked_local_paths[$file_path]) {
-                    continue;
-                }
-
-                if ($debug_mode) { error_log("  -> Image Cassée Trouvée : " . $image_url); }
-                $url_for_storage    = blc_prepare_url_for_storage($original_image_url);
-                $image_filename = wp_basename($decoded_relative_path);
-                $anchor_for_storage = blc_prepare_text_field_for_storage($image_filename);
-                $metadata  = blc_get_url_metadata_for_storage($original_image_url, $normalized_image_url, $site_host_for_metadata);
-                $row_bytes = blc_calculate_row_storage_footprint_bytes($url_for_storage, $anchor_for_storage, $post_title_for_storage);
-                $checked_at_gmt = current_time('mysql', true);
-                $inserted = $wpdb->insert(
-                    $table_name,
-                    [
-                        'url'             => $url_for_storage,
-                        'anchor'          => $anchor_for_storage,
-                        'post_id'         => $post->ID,
-                        'post_title'      => $post_title_for_storage,
-                        'type'            => 'image',
-                        'url_host'        => $metadata['host'],
-                        'is_internal'     => $metadata['is_internal'],
-                        'http_status'     => null,
-                        'last_checked_at' => $checked_at_gmt,
-                    ],
-                    ['%s', '%s', '%d', '%s', '%s', '%s', '%d', '%d', '%s']
-                );
-                if ($inserted) {
-                    $register_pending_image_insert($post->ID, $row_bytes);
-                    blc_adjust_dataset_storage_footprint('image', $row_bytes);
-                }
             }
-
             } catch (\Throwable $caught_exception) {
                 $batch_exception = $caught_exception;
                 break;

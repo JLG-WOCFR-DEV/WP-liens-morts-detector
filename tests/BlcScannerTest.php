@@ -3270,6 +3270,57 @@ class BlcScannerTest extends TestCase
         });
     }
 
+    public function test_blc_perform_image_check_detects_missing_srcset_variant(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $uploads_dir = sys_get_temp_dir() . '/uploads-srcset-' . uniqid('', true);
+        $image_dir = $uploads_dir . '/2024/05';
+        if (!is_dir($image_dir) && !mkdir($image_dir, 0777, true) && !is_dir($image_dir)) {
+            $this->fail('Unable to create uploads directory for test.');
+        }
+
+        $existing_file = $image_dir . '/present.jpg';
+        if (file_put_contents($existing_file, 'img') === false) {
+            $this->fail('Unable to create uploads image file for test.');
+        }
+
+        Functions\when('wp_upload_dir')->alias(function () use ($uploads_dir) {
+            return [
+                'baseurl' => 'https://example.com/wp-content/uploads',
+                'basedir' => $uploads_dir,
+            ];
+        });
+
+        $post = (object) [
+            'ID' => 312,
+            'post_title' => 'Responsive Image Post',
+            'post_content' => '<img src="https://example.com/wp-content/uploads/2024/05/present.jpg" '
+                . 'srcset="https://example.com/wp-content/uploads/2024/05/present.jpg 1x, '
+                . 'https://example.com/wp-content/uploads/2024/05/missing-2x.jpg 2x" />',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        try {
+            blc_perform_image_check(0, true);
+        } finally {
+            @unlink($existing_file);
+            @rmdir($image_dir);
+            @rmdir(dirname($image_dir));
+        }
+
+        $this->assertCount(1, $wpdb->inserted, 'Only the missing srcset variant should be recorded.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('https://example.com/wp-content/uploads/2024/05/missing-2x.jpg', $insert['data']['url']);
+        $this->assertSame('missing-2x.jpg', $insert['data']['anchor']);
+        $this->assertSame(312, $insert['data']['post_id']);
+    }
+
     public function test_blc_perform_image_check_allows_existing_upload_with_query(): void
     {
         global $wpdb;
