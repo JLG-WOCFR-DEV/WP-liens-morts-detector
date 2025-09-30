@@ -2424,6 +2424,51 @@ class BlcScannerTest extends TestCase
         $this->assertSame([], $cacheKeyOptions, 'Last check time should not be updated before the final batch.');
     }
 
+    public function test_blc_perform_check_reschedules_initial_batch_when_lock_is_held(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_link_scan_lock'] = [
+            'token'     => 'existing-lock',
+            'locked_at' => $this->utcNow,
+        ];
+        $this->options['blc_link_scan_lock_token'] = 'existing-lock';
+
+        Functions\when('current_filter')->alias(fn() => 'blc_check_links');
+
+        $result = blc_perform_check(0, false);
+
+        $this->assertNull($result, 'Cron-triggered scans should abort silently when the lock is unavailable.');
+        $this->assertCount(1, $this->scheduledEvents, 'Cron-triggered scans should reschedule the batch when the lock is held.');
+        $event = $this->scheduledEvents[0];
+        $this->assertSame('blc_check_batch', $event['hook'], 'The rescheduled event should target the link batch runner.');
+        $this->assertSame([0, true, false], $event['args'], 'The rescheduled event should preserve the original batch context.');
+        $this->assertSame($this->utcNow + 60, $event['timestamp'], 'The retry should be scheduled after the default delay.');
+        $this->assertArrayNotHasKey('blc_link_scan_lock', $this->updatedOptions, 'Lock state should remain unchanged when acquisition fails.');
+        $this->assertArrayNotHasKey('blc_link_scan_lock_token', $this->updatedOptions, 'Lock token should not be updated when acquisition fails.');
+    }
+
+    public function test_blc_perform_check_returns_error_when_lock_blocks_manual_scan(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_link_scan_lock'] = [
+            'token'     => 'manual-lock',
+            'locked_at' => $this->utcNow,
+        ];
+        $this->options['blc_link_scan_lock_token'] = 'manual-lock';
+
+        $result = blc_perform_check(0, false);
+
+        $this->assertInstanceOf(\WP_Error::class, $result, 'Manual scans should surface a WP_Error when the lock is held.');
+        $this->assertSame('blc_link_scan_in_progress', $result->get_error_code(), 'Manual scans should expose a specific error code when the lock is held.');
+        $this->assertSame([], $this->scheduledEvents, 'Manual scans should not schedule retries when the lock is unavailable.');
+        $this->assertArrayNotHasKey('blc_link_scan_lock', $this->updatedOptions, 'Manual contention must not update the lock state.');
+        $this->assertArrayNotHasKey('blc_link_scan_lock_token', $this->updatedOptions, 'Manual contention must not update the lock token.');
+    }
+
     public function test_blc_perform_check_logs_failure_when_next_batch_schedule_fails(): void
     {
         global $wpdb;
@@ -2617,6 +2662,8 @@ class BlcScannerTest extends TestCase
 
         $this->assertTrue($restoreQueryFound, 'Marked link rows should be restored after an interruption.');
         $this->assertFalse($deleteQueryFound, 'Stale link rows must not be purged when the batch fails.');
+        $this->assertArrayNotHasKey('blc_link_scan_lock', $this->options, 'Link scan lock should be released after an interruption.');
+        $this->assertArrayNotHasKey('blc_link_scan_lock_token', $this->options, 'Lock token should be cleared after an interruption.');
 
         Functions\when('wp_remote_head')->alias(function (string $url, array $args = []) {
             return $this->mockHttpRequest('HEAD', $url, $args);
@@ -2656,6 +2703,8 @@ class BlcScannerTest extends TestCase
         $this->assertInstanceOf(\WP_Error::class, $result, 'Commit failures should surface as WP_Error.');
         $this->assertSame('Simulated failure', $result->get_error_message(), 'Database error should be propagated.');
         $this->assertSame(1, $this->wpResetPostdataCalls, 'Postdata should be reset after a failed link scan.');
+        $this->assertArrayNotHasKey('blc_link_scan_lock', $this->options, 'Link scan lock should be released after commit failures.');
+        $this->assertArrayNotHasKey('blc_link_scan_lock_token', $this->options, 'Lock token should be cleared after commit failures.');
 
         $restoreQueryFound = false;
         foreach ($wpdb->queries as $query) {
@@ -2699,6 +2748,8 @@ class BlcScannerTest extends TestCase
 
         $this->assertInstanceOf(\WP_Error::class, $result, 'Commit failures should surface as WP_Error.');
         $this->assertSame('Simulated failure', $result->get_error_message(), 'Database error should be propagated.');
+        $this->assertArrayNotHasKey('blc_link_scan_lock', $this->options, 'Link scan lock should be released after rollback failures.');
+        $this->assertArrayNotHasKey('blc_link_scan_lock_token', $this->options, 'Lock token should be cleared after rollback failures.');
 
         $table_name = $wpdb->prefix . 'blc_broken_links';
         $remaining_rows = array_filter(
