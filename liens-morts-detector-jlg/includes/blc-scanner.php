@@ -1383,6 +1383,47 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         ];
     };
 
+    $insert_broken_link_row = static function (
+        $post_id,
+        $url_for_storage,
+        $anchor_for_storage,
+        $post_title_for_storage,
+        $occurrence_index,
+        $metadata,
+        $row_bytes
+    ) use ($wpdb, $table_name, $register_pending_link_insert) {
+        $inserted = $wpdb->insert(
+            $table_name,
+            [
+                'url'         => $url_for_storage,
+                'anchor'      => $anchor_for_storage,
+                'post_id'     => $post_id,
+                'post_title'  => $post_title_for_storage,
+                'type'        => 'link',
+                'occurrence_index' => $occurrence_index,
+                'url_host'    => $metadata['host'],
+                'is_internal' => $metadata['is_internal'],
+            ],
+            ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d']
+        );
+        if ($inserted) {
+            $register_pending_link_insert($post_id, $row_bytes);
+            blc_adjust_dataset_storage_footprint('link', $row_bytes);
+        }
+
+        return (bool) $inserted;
+    };
+
+    $home_path_component = '';
+    if ($raw_home_url !== '') {
+        $maybe_home_path = function_exists('wp_parse_url')
+            ? wp_parse_url($raw_home_url, PHP_URL_PATH)
+            : parse_url($raw_home_url, PHP_URL_PATH);
+        if (is_string($maybe_home_path)) {
+            $home_path_component = rtrim($maybe_home_path, '/');
+        }
+    }
+
     try {
         foreach ($posts as $post) {
             try {
@@ -1465,26 +1506,19 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
                         if (!file_exists($file_path)) {
                             if ($debug_mode) { error_log("  -> Ressource locale introuvable : " . $normalized_url); }
-                            $inserted = $wpdb->insert(
-                                $table_name,
-                                [
-                                    'url'         => $url_for_storage,
-                                    'anchor'      => $anchor_for_storage,
-                                    'post_id'     => $post->ID,
-                                    'post_title'  => $post_title_for_storage,
-                                    'type'        => 'link',
-                                    'occurrence_index' => $occurrence_index,
-                                    'url_host'    => $metadata['host'],
-                                    'is_internal' => $metadata['is_internal'],
-                                ],
-                                ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d']
+                            $insert_broken_link_row(
+                                $post->ID,
+                                $url_for_storage,
+                                $anchor_for_storage,
+                                $post_title_for_storage,
+                                $occurrence_index,
+                                $metadata,
+                                $row_bytes
                             );
-                            if ($inserted) {
-                                $register_pending_link_insert($post->ID, $row_bytes);
-                                blc_adjust_dataset_storage_footprint('link', $row_bytes);
-                            }
                             continue;
                         }
+
+                        continue;
                     }
                 }
 
@@ -1520,30 +1554,168 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                 $is_safe_remote_host   = true;
                 $should_skip_remote_request = false;
 
+                if ($is_internal_safe_host) {
+                    $fragmentless_url = $normalized_url;
+                    $hash_position = strpos($fragmentless_url, '#');
+                    if ($hash_position !== false) {
+                        $fragmentless_url = substr($fragmentless_url, 0, $hash_position);
+                    }
+
+                    $internal_resolution = 'inconclusive';
+
+                    if (function_exists('url_to_postid')) {
+                        $resolved_post_id = (int) url_to_postid($fragmentless_url);
+                        if ($resolved_post_id > 0) {
+                            $post_object = function_exists('get_post') ? get_post($resolved_post_id) : null;
+                            if (!is_object($post_object)) {
+                                $internal_resolution = 'broken';
+                            } else {
+                                $status = '';
+                                if (isset($post_object->post_status)) {
+                                    $status = (string) $post_object->post_status;
+                                }
+                                if ($status === '' && function_exists('get_post_status')) {
+                                    $maybe_status = get_post_status($resolved_post_id);
+                                    if ($maybe_status === false) {
+                                        $status = 'missing';
+                                    } elseif (is_string($maybe_status)) {
+                                        $status = $maybe_status;
+                                    }
+                                }
+
+                                if ($status === 'missing' || $status === 'trash' || $status === 'auto-draft') {
+                                    $internal_resolution = 'broken';
+                                } else {
+                                    $internal_resolution = 'ok';
+                                }
+                            }
+                        }
+                    }
+
+                    if ($internal_resolution === 'inconclusive' && function_exists('attachment_url_to_postid')) {
+                        $attachment_id = (int) attachment_url_to_postid($fragmentless_url);
+                        if ($attachment_id > 0) {
+                            $attachment_object = function_exists('get_post') ? get_post($attachment_id) : null;
+                            if (!is_object($attachment_object)) {
+                                $internal_resolution = 'broken';
+                            } else {
+                                $attachment_status = '';
+                                if (isset($attachment_object->post_status)) {
+                                    $attachment_status = (string) $attachment_object->post_status;
+                                }
+                                if ($attachment_status === '' && function_exists('get_post_status')) {
+                                    $maybe_status = get_post_status($attachment_id);
+                                    if ($maybe_status === false) {
+                                        $attachment_status = 'missing';
+                                    } elseif (is_string($maybe_status)) {
+                                        $attachment_status = $maybe_status;
+                                    }
+                                }
+
+                                if ($attachment_status === 'missing' || $attachment_status === 'trash' || $attachment_status === 'auto-draft') {
+                                    $internal_resolution = 'broken';
+                                } else {
+                                    $internal_resolution = 'ok';
+                                }
+                            }
+                        }
+                    }
+
+                    if ($internal_resolution === 'inconclusive' && defined('ABSPATH')) {
+                        $path_component = parse_url($fragmentless_url, PHP_URL_PATH);
+                        if (!is_string($path_component)) {
+                            $path_component = '';
+                        }
+
+                        $query_component = parse_url($fragmentless_url, PHP_URL_QUERY);
+                        $has_query_string = is_string($query_component) && $query_component !== '';
+
+                        if ($path_component === '' || $path_component === '/') {
+                            if ($has_query_string) {
+                                $internal_resolution = 'inconclusive';
+                            } else {
+                                $internal_resolution = 'ok';
+                            }
+                        } else {
+                            $normalized_path_for_upload = strtolower($path_component);
+                            if ($upload_dir_has_error && strpos($normalized_path_for_upload, '/wp-content/uploads/') === 0) {
+                                $internal_resolution = 'inconclusive';
+                                continue;
+                            }
+
+                            $decoded_path = rawurldecode($path_component);
+                            $relative_path = $decoded_path;
+
+                            if ($home_path_component !== '' && $home_path_component !== '/') {
+                                if (strpos($relative_path, $home_path_component . '/') === 0) {
+                                    $relative_path = substr($relative_path, strlen($home_path_component));
+                                } elseif ($relative_path === $home_path_component) {
+                                    $relative_path = '';
+                                }
+                            }
+
+                            $relative_path = ltrim($relative_path, '/');
+
+                            if ($relative_path === '') {
+                                $internal_resolution = 'ok';
+                            } elseif (preg_match('#(^|[\\/])\.\.([\\/]|$)#', $relative_path)) {
+                                $internal_resolution = 'inconclusive';
+                            } else {
+                                $base_path = defined('ABSPATH') ? ABSPATH : '';
+                                $base_path = is_string($base_path) ? $base_path : '';
+                                if ($base_path !== '') {
+                                    $base_path = function_exists('trailingslashit') ? trailingslashit($base_path) : rtrim($base_path, '/\\') . '/';
+                                    $filesystem_path = $base_path . $relative_path;
+                                    if (function_exists('wp_normalize_path')) {
+                                        $filesystem_path = wp_normalize_path($filesystem_path);
+                                    }
+
+                                    if (file_exists($filesystem_path)) {
+                                        $internal_resolution = 'ok';
+                                    } else {
+                                        $extension = pathinfo($relative_path, PATHINFO_EXTENSION);
+                                        if (is_string($extension) && $extension !== '') {
+                                            $internal_resolution = 'broken';
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if ($internal_resolution === 'ok') {
+                        continue;
+                    }
+
+                    if ($internal_resolution === 'broken') {
+                        $insert_broken_link_row(
+                            $post->ID,
+                            $url_for_storage,
+                            $anchor_for_storage,
+                            $post_title_for_storage,
+                            $occurrence_index,
+                            $metadata,
+                            $row_bytes
+                        );
+                        continue;
+                    }
+                }
+
                 if (!$is_internal_safe_host) {
                     $host_to_check = $normalized_host !== '' ? $normalized_host : $host;
                     $is_safe_remote_host = blc_is_safe_remote_host($host_to_check);
 
                     if (!$is_safe_remote_host) {
                         if ($debug_mode) { error_log("  -> Lien ignoré (IP non autorisée) : " . $normalized_url); }
-                        $inserted = $wpdb->insert(
-                            $table_name,
-                            [
-                                'url'         => $url_for_storage,
-                                'anchor'      => $anchor_for_storage,
-                                'post_id'     => $post->ID,
-                                'post_title'  => $post_title_for_storage,
-                                'type'        => 'link',
-                                'occurrence_index' => $occurrence_index,
-                                'url_host'    => $metadata['host'],
-                                'is_internal' => $metadata['is_internal'],
-                            ],
-                            ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d']
+                        $insert_broken_link_row(
+                            $post->ID,
+                            $url_for_storage,
+                            $anchor_for_storage,
+                            $post_title_for_storage,
+                            $occurrence_index,
+                            $metadata,
+                            $row_bytes
                         );
-                        if ($inserted) {
-                            $register_pending_link_insert($post->ID, $row_bytes);
-                            blc_adjust_dataset_storage_footprint('link', $row_bytes);
-                        }
                         $should_skip_remote_request = true;
                     }
                 }

@@ -167,6 +167,15 @@ class BlcScannerTest extends TestCase
     /** @var array<string, array<string, string>> */
     private array $postStatuses = [];
 
+    /** @var array<string, int> */
+    private array $urlToPostMap = [];
+
+    /** @var array<string, int> */
+    private array $attachmentUrlMap = [];
+
+    /** @var array<int, object> */
+    private array $postsById = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -219,6 +228,9 @@ class BlcScannerTest extends TestCase
             'draft'   => ['label' => 'Brouillon'],
             'pending' => ['label' => 'En attente'],
         ];
+        $this->urlToPostMap = [];
+        $this->attachmentUrlMap = [];
+        $this->postsById = [];
 
         Functions\when('get_option')->alias(fn(string $name, $default = false) => $this->options[$name] ?? $default);
         Functions\when('get_transient')->alias(fn(string $key) => $this->transients[$key] ?? false);
@@ -316,6 +328,15 @@ class BlcScannerTest extends TestCase
             return $string;
         });
         $testCase = $this;
+        Functions\when('url_to_postid')->alias(function (string $url) use ($testCase) {
+            return $testCase->urlToPostMap[$url] ?? 0;
+        });
+        Functions\when('attachment_url_to_postid')->alias(function (string $url) use ($testCase) {
+            return $testCase->attachmentUrlMap[$url] ?? 0;
+        });
+        Functions\when('get_post')->alias(function (int $post_id) use ($testCase) {
+            return $testCase->postsById[$post_id] ?? null;
+        });
         Functions\when('current_time')->alias(function (string $type, $gmt = 0) use ($testCase) {
             if ($type === 'timestamp') {
                 $timestamp = $testCase->utcNow;
@@ -445,7 +466,6 @@ class BlcScannerTest extends TestCase
         });
         Functions\when('check_ajax_referer')->justReturn(true);
         Functions\when('current_user_can')->justReturn(true);
-        Functions\when('get_post')->alias(fn(int $post_id) => null);
         Functions\when('wp_http_validate_url')->alias(function ($url) {
             if (!is_string($url)) {
                 return false;
@@ -553,6 +573,9 @@ class BlcScannerTest extends TestCase
         $this->scheduleSingleEventResults = [];
         $this->triggeredActions = [];
         $this->errorLogs = [];
+        $this->urlToPostMap = [];
+        $this->attachmentUrlMap = [];
+        $this->postsById = [];
         global $wpdb;
         $wpdb = null;
     }
@@ -886,8 +909,12 @@ class BlcScannerTest extends TestCase
 
         blc_perform_check(0, false);
 
-        $this->assertNotEmpty($this->httpRequests, 'Relative links should trigger an HTTP request with the resolved URL.');
-        $this->assertSame('https://example.com/post-321/section/page.html', $this->httpRequests[0]['url']);
+        $this->assertCount(0, $this->httpRequests, 'Relative links should be resolved locally without triggering HTTP requests.');
+        $this->assertCount(1, $wpdb->inserted, 'Missing relative targets should be recorded as broken links.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('link', $insert['data']['type']);
+        $this->assertSame(321, $insert['data']['post_id']);
+        $this->assertStringContainsString('section/page.html', $insert['data']['url']);
     }
 
     public function test_blc_perform_check_delays_during_rest_period(): void
@@ -2258,6 +2285,123 @@ class BlcScannerTest extends TestCase
         $this->assertSame(191, strlen($insert['data']['url_host']), 'URL host should not exceed the varchar(191) column.');
     }
 
+    public function test_blc_perform_check_skips_remote_requests_for_existing_internal_post(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 601,
+            'post_title' => 'Internal Post Link',
+            'post_content' => '<a href="https://example.com/post-950/">Read more</a>',
+        ];
+
+        $this->mapUrlToPost('https://example.com/post-950/', 950);
+        $this->mapUrlToPost('https://example.com/post-950', 950);
+        $this->registerPostFixture(950, 'publish', ['post_title' => 'Published Post']);
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(0, $this->httpRequests, 'Internal posts should be resolved locally without HTTP requests.');
+        $this->assertCount(0, $wpdb->inserted, 'Existing internal posts should not be marked as broken.');
+    }
+
+    public function test_blc_perform_check_skips_remote_requests_for_existing_internal_file(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $directory = ABSPATH . 'static-test';
+        if (!is_dir($directory) && !mkdir($directory, 0777, true) && !is_dir($directory)) {
+            $this->fail('Unable to create static test directory.');
+        }
+        $file_path = $directory . '/present.pdf';
+        if (file_put_contents($file_path, 'pdf') === false) {
+            $this->fail('Unable to create static test file.');
+        }
+
+        $post = (object) [
+            'ID' => 602,
+            'post_title' => 'Internal File Link',
+            'post_content' => '<a href="https://example.com/static-test/present.pdf">Download</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        try {
+            blc_perform_check(0, false);
+
+            $this->assertCount(0, $this->httpRequests, 'Existing local files should not trigger HTTP requests.');
+            $this->assertCount(0, $wpdb->inserted, 'Existing local files should not be marked as broken.');
+        } finally {
+            @unlink($file_path);
+            @rmdir($directory);
+        }
+    }
+
+    public function test_blc_perform_check_marks_missing_internal_post_without_remote_request(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 603,
+            'post_title' => 'Missing Internal Post Link',
+            'post_content' => '<a href="https://example.com/post-951/">Broken</a>',
+        ];
+
+        $this->mapUrlToPost('https://example.com/post-951/', 951);
+        $this->mapUrlToPost('https://example.com/post-951', 951);
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(0, $this->httpRequests, 'Missing internal posts should be detected without HTTP calls.');
+        $this->assertCount(1, $wpdb->inserted, 'Missing internal posts must be recorded as broken links.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('link', $insert['data']['type']);
+        $this->assertSame(603, $insert['data']['post_id']);
+        $this->assertStringContainsString('post-951', $insert['data']['url']);
+    }
+
+    public function test_blc_perform_check_marks_missing_internal_file_without_remote_request(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 604,
+            'post_title' => 'Missing Internal File Link',
+            'post_content' => '<a href="https://example.com/static-missing/ghost.css">Stylesheet</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(0, $this->httpRequests, 'Missing internal files should be evaluated without remote HTTP requests.');
+        $this->assertCount(1, $wpdb->inserted, 'Missing internal files must be recorded as broken.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('link', $insert['data']['type']);
+        $this->assertSame(604, $insert['data']['post_id']);
+        $this->assertStringContainsString('ghost.css', $insert['data']['url']);
+    }
+
     public function test_blc_ajax_edit_link_callback_updates_scheme_relative_url(): void
     {
         global $wpdb;
@@ -3312,6 +3456,24 @@ class BlcScannerTest extends TestCase
             $insert['data']['url']
         );
         $this->assertSame(93, $insert['data']['post_id']);
+    }
+
+    private function registerPostFixture(int $postId, string $status = 'publish', array $extra = []): void
+    {
+        $this->postsById[$postId] = (object) array_merge(
+            ['ID' => $postId, 'post_status' => $status],
+            $extra
+        );
+    }
+
+    private function mapUrlToPost(string $url, int $postId): void
+    {
+        $this->urlToPostMap[$url] = $postId;
+    }
+
+    private function mapAttachmentUrl(string $url, int $postId): void
+    {
+        $this->attachmentUrlMap[$url] = $postId;
     }
 }
 }
