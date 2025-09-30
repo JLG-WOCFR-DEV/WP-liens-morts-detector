@@ -1436,6 +1436,15 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                         $wait_for_remote_slot();
                         $response = wp_safe_remote_head($normalized_url, $head_request_args);
                         $mark_remote_request_complete();
+
+                        if (!is_wp_error($response)) {
+                            $head_status = (int) wp_remote_retrieve_response_code($response);
+                            if (in_array($head_status, [403, 405, 501], true)) {
+                                $wait_for_remote_slot();
+                                $response = wp_safe_remote_get($normalized_url, $get_request_args);
+                                $mark_remote_request_complete();
+                            }
+                        }
                     }
 
                     if (is_wp_error($response)) {

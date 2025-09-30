@@ -1307,6 +1307,37 @@ class BlcScannerTest extends TestCase
         $this->assertCount(0, $wpdb->inserted, 'Successful GET fallback should prevent false positives.');
     }
 
+    public function test_blc_perform_check_fast_mode_handles_head_method_not_allowed(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_scan_method'] = 'fast';
+
+        $post = (object) [
+            'ID' => 44,
+            'post_title' => 'Fast Head Fallback Post',
+            'post_content' => '<a href="http://fast.example.com/no-head">Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'http://fast.example.com/no-head', ['response' => ['code' => 405]]);
+        $this->setHttpResponse('GET', 'http://fast.example.com/no-head', ['response' => ['code' => 200]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(2, $this->httpRequests, 'Fast mode should fall back to GET when HEAD is not allowed.');
+        $this->assertSame('HEAD', $this->httpRequests[0]['method']);
+        $this->assertSame('GET', $this->httpRequests[1]['method']);
+        $this->assertSame('http://fast.example.com/no-head', $this->httpRequests[1]['url']);
+
+        $this->assertCount(0, $wpdb->inserted, 'HEAD 405 responses must not be recorded as broken links in fast mode.');
+    }
+
     public function test_blc_perform_check_injects_configured_request_timeouts(): void
     {
         global $wpdb;
