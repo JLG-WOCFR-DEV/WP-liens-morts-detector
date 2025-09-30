@@ -467,11 +467,10 @@ function blc_is_image_scan_lock_active(array $state, $timeout) {
         return false;
     }
 
-    if (!is_int($timeout)) {
-        $timeout = (int) $timeout;
-    }
+    $timeout = (int) $timeout;
 
     if ($timeout <= 0) {
+        // A non-positive timeout disables the lock and should be treated as expired.
         return false;
     }
 
