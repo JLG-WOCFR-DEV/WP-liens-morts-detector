@@ -142,6 +142,64 @@ function blc_maybe_send_scan_summary($dataset_type) {
 }
 
 /**
+ * Retrieve the list of post statuses that should be included in scans.
+ *
+ * @return string[]
+ */
+function blc_get_scannable_post_statuses() {
+    $stored_statuses = get_option('blc_post_statuses', ['publish']);
+    if (!is_array($stored_statuses)) {
+        $stored_statuses = [$stored_statuses];
+    }
+
+    $valid_statuses = get_post_stati([], 'names');
+    if (!is_array($valid_statuses)) {
+        $valid_statuses = [];
+    }
+    $valid_lookup = [];
+    foreach ($valid_statuses as $status_name) {
+        $normalized = sanitize_key((string) $status_name);
+        if ($normalized === '') {
+            continue;
+        }
+        $valid_lookup[$normalized] = true;
+    }
+
+    $selected = [];
+    foreach ($stored_statuses as $status_value) {
+        if (!is_scalar($status_value)) {
+            continue;
+        }
+
+        $status_key = sanitize_key((string) $status_value);
+        if ($status_key === '') {
+            continue;
+        }
+
+        if ($valid_lookup !== [] && !isset($valid_lookup[$status_key])) {
+            continue;
+        }
+
+        $selected[$status_key] = $status_key;
+    }
+
+    if ($selected === []) {
+        if (isset($valid_lookup['publish'])) {
+            $selected = ['publish'];
+        } elseif ($valid_lookup !== []) {
+            foreach ($valid_lookup as $status_key => $_unused) {
+                $selected = [$status_key];
+                break;
+            }
+        } else {
+            $selected = ['publish'];
+        }
+    }
+
+    return array_values($selected);
+}
+
+/**
  * Normalize a link URL while preserving the original value for storage/display.
  *
  * @param string      $url          Original URL extracted from the content.
@@ -1189,7 +1247,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     // Limiter la requête aux types de contenus publics (repli sur « post ») tout en conservant la pagination existante.
     $args = [
         'post_type'      => $public_post_types,
-        'post_status'    => 'publish',
+        'post_status'    => blc_get_scannable_post_statuses(),
         'posts_per_page' => $batch_size,
         'paged'          => $batch + 1,
     ];
@@ -1913,7 +1971,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     // Limiter la requête aux types de contenus publics (repli sur « post ») tout en conservant la pagination existante.
     $args = [
         'post_type'      => $public_post_types,
-        'post_status'    => 'publish',
+        'post_status'    => blc_get_scannable_post_statuses(),
         'posts_per_page' => $batch_size,
         'paged'          => $batch + 1,
     ];

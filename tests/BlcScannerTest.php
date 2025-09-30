@@ -164,6 +164,9 @@ class BlcScannerTest extends TestCase
 
     private int $wpResetPostdataCalls = 0;
 
+    /** @var array<string, array<string, string>> */
+    private array $postStatuses = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -186,6 +189,7 @@ class BlcScannerTest extends TestCase
             'blc_excluded_domains' => '',
             'blc_last_check_time'  => 0,
             'blc_notification_recipients' => '',
+            'blc_post_statuses'    => ['publish'],
         ];
 
         $this->httpRequests = [];
@@ -210,6 +214,11 @@ class BlcScannerTest extends TestCase
         $this->publicPostTypes = ['post', 'page'];
         $this->getPostTypesCalls = [];
         $this->wpResetPostdataCalls = 0;
+        $this->postStatuses = [
+            'publish' => ['label' => 'Publié'],
+            'draft'   => ['label' => 'Brouillon'],
+            'pending' => ['label' => 'En attente'],
+        ];
 
         Functions\when('get_option')->alias(fn(string $name, $default = false) => $this->options[$name] ?? $default);
         Functions\when('get_transient')->alias(fn(string $key) => $this->transients[$key] ?? false);
@@ -332,6 +341,18 @@ class BlcScannerTest extends TestCase
         });
         Functions\when('trailingslashit')->alias(function ($value) {
             return rtrim((string) $value, "\\/\t\n\r\f ") . '/';
+        });
+        Functions\when('get_post_stati')->alias(function ($args = [], $output = 'names', $operator = 'and') {
+            if ($output === 'objects') {
+                $objects = [];
+                foreach ($this->postStatuses as $slug => $data) {
+                    $objects[$slug] = (object) $data;
+                }
+
+                return $objects;
+            }
+
+            return array_keys($this->postStatuses);
         });
         Functions\when('get_post_types')->alias(function ($args = [], $output = 'names', $operator = 'and') {
             $this->getPostTypesCalls[] = [
@@ -1693,6 +1714,29 @@ class BlcScannerTest extends TestCase
             $this->publicPostTypes,
             $args['post_type'] ?? null,
             'Link scans must restrict queries to the list of public post types.'
+        );
+    }
+
+    public function test_blc_perform_check_uses_configured_post_statuses(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_post_statuses'] = ['publish', 'draft'];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_check(0, true);
+
+        $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should run when performing scans.');
+        $args = end($GLOBALS['wp_query_last_args']);
+        $this->assertSame(
+            ['publish', 'draft'],
+            $args['post_status'] ?? null,
+            'Configured post statuses must be forwarded to WP_Query.'
         );
     }
 
