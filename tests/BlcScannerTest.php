@@ -1338,6 +1338,35 @@ class BlcScannerTest extends TestCase
         $this->assertCount(0, $wpdb->inserted, 'HEAD 405 responses must not be recorded as broken links in fast mode.');
     }
 
+    public function test_blc_perform_check_fast_mode_does_not_mark_broken_when_head_fallback_fails(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_scan_method'] = 'fast';
+
+        $post = (object) [
+            'ID' => 45,
+            'post_title' => 'Fast Head Fallback Failure Post',
+            'post_content' => '<a href="http://fast.example.com/failing-head">Link</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'http://fast.example.com/failing-head', ['response' => ['code' => 405]]);
+        $this->setHttpResponse('GET', 'http://fast.example.com/failing-head', new \WP_Error('http_request_failed', 'GET fallback failed.'));
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(2, $this->httpRequests, 'Fast mode should still attempt a GET fallback when HEAD is not allowed.');
+        $this->assertSame('HEAD', $this->httpRequests[0]['method']);
+        $this->assertSame('GET', $this->httpRequests[1]['method']);
+        $this->assertCount(0, $wpdb->inserted, 'Failed GET fallback after HEAD 405 must not create broken link entries in fast mode.');
+    }
+
     public function test_blc_perform_check_injects_configured_request_timeouts(): void
     {
         global $wpdb;
