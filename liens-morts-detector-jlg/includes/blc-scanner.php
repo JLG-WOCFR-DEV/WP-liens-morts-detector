@@ -1357,7 +1357,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
                 $anchor_text = wp_strip_all_tags($link_node->textContent);
                 $anchor_text = trim(preg_replace('/\s+/u', ' ', $anchor_text));
-                if ($anchor_text === '') { $anchor_text = '[Lien sans texte]'; }
+                if ($anchor_text === '') { $anchor_text = sprintf('[%s]', __('Lien sans texte', 'liens-morts-detector-jlg')); }
 
                 $url_for_storage    = blc_prepare_url_for_storage($original_url);
                 $anchor_for_storage = blc_prepare_text_field_for_storage($anchor_text);
