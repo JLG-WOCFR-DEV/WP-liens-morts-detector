@@ -176,6 +176,18 @@ class BlcScannerTest extends TestCase
     /** @var array<string, array<string, string>> */
     private array $postStatuses = [];
 
+    /** @var array<int, string|null> */
+    private array $postTypeMap = [];
+
+    /** @var array<int, string> */
+    private array $attachedFileMap = [];
+
+    /** @var array<int, string> */
+    private array $originalImageMap = [];
+
+    /** @var array<string, bool> */
+    private array $filesystemEntries = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -206,6 +218,10 @@ class BlcScannerTest extends TestCase
         $this->urlToPostMap = [];
         $this->attachmentUrlMap = [];
         $this->postStatusMap = [];
+        $this->postTypeMap = [];
+        $this->attachedFileMap = [];
+        $this->originalImageMap = [];
+        $this->filesystemEntries = [];
         $this->scheduledEvents = [];
         $this->failedScheduleAttempts = [];
         $this->scheduleSingleEventResults = [];
@@ -400,6 +416,29 @@ class BlcScannerTest extends TestCase
             $post_id = (int) $post_id;
 
             return $testCase->postStatusMap[$post_id] ?? false;
+        });
+        Functions\when('get_post_type')->alias(function ($post_id) use ($testCase) {
+            $post_id = (int) $post_id;
+
+            return $testCase->postTypeMap[$post_id] ?? null;
+        });
+        Functions\when('get_attached_file')->alias(function ($attachment_id, $unfiltered = false) use ($testCase) {
+            $attachment_id = (int) $attachment_id;
+
+            return $testCase->attachedFileMap[$attachment_id] ?? '';
+        });
+        Functions\when('wp_get_original_image_path')->alias(function ($attachment_id) use ($testCase) {
+            $attachment_id = (int) $attachment_id;
+
+            return $testCase->originalImageMap[$attachment_id] ?? '';
+        });
+        Functions\when('file_exists')->alias(function ($path) use ($testCase) {
+            $path = (string) $path;
+            if (array_key_exists($path, $testCase->filesystemEntries)) {
+                return $testCase->filesystemEntries[$path];
+            }
+
+            return \file_exists($path);
         });
         Functions\when('wp_timezone')->alias(fn() => new \DateTimeZone('UTC'));
         Functions\when('wp_timezone_string')->alias(fn() => 'UTC');
@@ -1224,6 +1263,61 @@ class BlcScannerTest extends TestCase
         $insert = $wpdb->inserted[0];
         $this->assertSame($missing_file_url, $insert['data']['url']);
         $this->assertSame('link', $insert['data']['type']);
+    }
+
+    public function test_blc_perform_check_marks_missing_attachment_file(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $cacheKey = blc_get_dataset_size_cache_key('link');
+        if ($cacheKey !== '') {
+            $this->options[$cacheKey] = 0;
+        }
+
+        $attachment_url = 'https://example.com/wp-content/uploads/2024/05/missing-image.jpg';
+        $attachment_id = 1405;
+        $missing_path = sys_get_temp_dir() . '/uploads-test/2024/05/missing-image.jpg';
+
+        $this->attachmentUrlMap[$attachment_url] = $attachment_id;
+        $this->postStatusMap[$attachment_id] = 'inherit';
+        $this->postTypeMap[$attachment_id] = 'attachment';
+        $this->attachedFileMap[$attachment_id] = $missing_path;
+        $this->originalImageMap[$attachment_id] = $missing_path;
+        $this->filesystemEntries[$missing_path] = false;
+
+        $post = (object) [
+            'ID' => 123,
+            'post_title' => 'Attachment Missing File',
+            'post_content' => '<a href="' . $attachment_url . '">Attachment File</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(0, $this->httpRequests, 'Attachment URLs resolved internally should not trigger HTTP requests.');
+        $this->assertCount(1, $wpdb->inserted, 'Missing attachment files should be recorded as broken.');
+
+        $insert = $wpdb->inserted[0];
+        $this->assertSame($attachment_url, $insert['data']['url']);
+        $this->assertSame('link', $insert['data']['type']);
+
+        if ($cacheKey !== '') {
+            $stored_url = blc_prepare_url_for_storage($attachment_url);
+            $stored_anchor = blc_prepare_text_field_for_storage('Attachment File');
+            $stored_title = blc_prepare_text_field_for_storage($post->post_title);
+            $expected_bytes = blc_calculate_row_storage_footprint_bytes($stored_url, $stored_anchor, $stored_title);
+
+            $this->assertSame(
+                $expected_bytes,
+                $this->options[$cacheKey] ?? null,
+                'Dataset footprint should be updated when recording missing attachment files.'
+            );
+        }
     }
 
     public function test_blc_perform_check_allows_existing_upload_with_encoded_url(): void

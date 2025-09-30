@@ -4,6 +4,7 @@
         "time",
         "dns_get_record",
         "gethostbynamel",
-        "error_log"
+        "error_log",
+        "file_exists"
     ]
 }

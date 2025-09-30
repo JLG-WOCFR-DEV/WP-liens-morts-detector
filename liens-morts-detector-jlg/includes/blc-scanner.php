@@ -1547,23 +1547,72 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             return $unknown_result;
         }
 
-        if (function_exists('url_to_postid')) {
-            $maybe_post_id = url_to_postid($url);
-            if (is_numeric($maybe_post_id)) {
-                $post_id = (int) $maybe_post_id;
-                if ($post_id > 0) {
-                    $post_status = function_exists('get_post_status') ? get_post_status($post_id) : null;
-                    if (is_string($post_status) && $post_status !== '') {
+        $evaluate_internal_post = static function (int $post_id) {
+            if ($post_id <= 0) {
+                return null;
+            }
+
+            $post_status = function_exists('get_post_status') ? get_post_status($post_id) : null;
+            if (!is_string($post_status) || $post_status === '') {
+                return [
+                    'status'        => 'missing',
+                    'response_code' => 404,
+                ];
+            }
+
+            $post_type = function_exists('get_post_type') ? get_post_type($post_id) : null;
+            if ($post_type === 'attachment') {
+                $candidate_files = [];
+
+                if (function_exists('get_attached_file')) {
+                    $attached_file = get_attached_file($post_id);
+                    if (is_string($attached_file) && $attached_file !== '') {
+                        $candidate_files[] = $attached_file;
+                    }
+                }
+
+                if (function_exists('wp_get_original_image_path')) {
+                    $original_path = wp_get_original_image_path($post_id);
+                    if (is_string($original_path) && $original_path !== '') {
+                        $candidate_files[] = $original_path;
+                    }
+                }
+
+                $has_candidate = false;
+                foreach (array_unique($candidate_files) as $candidate_file) {
+                    if (!is_string($candidate_file) || $candidate_file === '') {
+                        continue;
+                    }
+
+                    $has_candidate = true;
+                    if (file_exists($candidate_file)) {
                         return [
                             'status'        => 'ok',
                             'response_code' => 200,
                         ];
                     }
+                }
 
+                if ($has_candidate) {
                     return [
                         'status'        => 'missing',
                         'response_code' => 404,
                     ];
+                }
+            }
+
+            return [
+                'status'        => 'ok',
+                'response_code' => 200,
+            ];
+        };
+
+        if (function_exists('url_to_postid')) {
+            $maybe_post_id = url_to_postid($url);
+            if (is_numeric($maybe_post_id)) {
+                $result = $evaluate_internal_post((int) $maybe_post_id);
+                if (is_array($result)) {
+                    return $result;
                 }
             }
         }
@@ -1571,20 +1620,9 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         if (function_exists('attachment_url_to_postid')) {
             $maybe_attachment_id = attachment_url_to_postid($url);
             if (is_numeric($maybe_attachment_id)) {
-                $attachment_id = (int) $maybe_attachment_id;
-                if ($attachment_id > 0) {
-                    $attachment_status = function_exists('get_post_status') ? get_post_status($attachment_id) : null;
-                    if (is_string($attachment_status) && $attachment_status !== '') {
-                        return [
-                            'status'        => 'ok',
-                            'response_code' => 200,
-                        ];
-                    }
-
-                    return [
-                        'status'        => 'missing',
-                        'response_code' => 404,
-                    ];
+                $result = $evaluate_internal_post((int) $maybe_attachment_id);
+                if (is_array($result)) {
+                    return $result;
                 }
             }
         }
