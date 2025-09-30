@@ -141,6 +141,24 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString('OFFSET 0', $wpdb->last_get_results_query);
     }
 
+    public function test_links_prepare_items_adds_search_term_conditions(): void
+    {
+        global $wpdb;
+        $wpdb = new DummyWpdb();
+        $wpdb->get_var_return_values = [0];
+        $wpdb->results_to_return = [];
+
+        $_REQUEST['s'] = 'broken link';
+
+        $table = new \BLC_Links_List_Table();
+        $table->prepare_items();
+
+        $expected_like = "(url LIKE '%broken link%' OR anchor LIKE '%broken link%' OR post_title LIKE '%broken link%')";
+
+        $this->assertStringContainsString($expected_like, $wpdb->last_get_var_query);
+        $this->assertStringContainsString($expected_like, $wpdb->last_get_results_query);
+    }
+
     public function test_links_prepare_items_internal_filter_adds_like_condition(): void
     {
         global $wpdb;

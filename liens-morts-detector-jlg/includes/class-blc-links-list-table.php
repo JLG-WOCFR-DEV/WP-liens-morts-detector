@@ -19,6 +19,7 @@ class BLC_Links_List_Table extends WP_List_Table {
     private $site_url;
 
     private $internal_url_condition_cache = null;
+    private $search_term = null;
 
     /**
      * Constructeur de la classe.
@@ -30,6 +31,33 @@ class BLC_Links_List_Table extends WP_List_Table {
             'ajax'     => false
         ]);
         $this->site_url = home_url();
+    }
+
+    /**
+     * Retourne le champ de recherche à afficher au-dessus du tableau.
+     */
+    protected function get_search_box() {
+        $input_id    = 'blc-links-search-input';
+        $search_term = $this->get_search_term();
+
+        return sprintf(
+            '<p class="search-box"><label class="screen-reader-text" for="%1$s">%2$s</label><input type="search" id="%1$s" name="s" value="%3$s" /><input type="submit" class="button" value="%4$s" /></p>',
+            esc_attr($input_id),
+            esc_html__('Rechercher des liens morts :', 'liens-morts-detector-jlg'),
+            esc_attr($search_term),
+            esc_attr__('Rechercher', 'liens-morts-detector-jlg')
+        );
+    }
+
+    /**
+     * Ajoute le champ de recherche avant le tableau.
+     */
+    protected function extra_tablenav($which) {
+        if ($which !== 'top') {
+            return;
+        }
+
+        echo $this->get_search_box(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
     }
 
     /**
@@ -251,6 +279,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         $current_view = (!empty($_GET['link_type'])) ? sanitize_text_field(wp_unslash($_GET['link_type'])) : 'all';
         $per_page     = 20;
         $current_page = max(1, (int) $this->get_pagenum());
+        $search_term  = $this->get_search_term();
 
         if (is_array($data)) {
             $total_items = ($total_items_override !== null) ? (int) $total_items_override : count($data);
@@ -269,6 +298,12 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         $where  = ['type = %s'];
         $params = ['link'];
+
+        if ($search_term !== '') {
+            $like = '%' . $wpdb->esc_like($search_term) . '%';
+            $where[] = '(url LIKE %s OR anchor LIKE %s OR post_title LIKE %s)';
+            $params  = array_merge($params, [$like, $like, $like]);
+        }
 
         if ($current_view === 'internal') {
             $where[] = '(is_internal = 1 OR (is_internal IS NULL AND ' . $internal_sql . '))';
@@ -301,6 +336,35 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         $this->set_pagination_args(['total_items' => $total_items, 'per_page' => $per_page]);
         $this->items = $items ? $items : [];
+    }
+
+    private function get_search_term() {
+        if (is_string($this->search_term)) {
+            return $this->search_term;
+        }
+
+        if (!isset($_REQUEST['s'])) {
+            $this->search_term = '';
+            return $this->search_term;
+        }
+
+        $raw = $_REQUEST['s'];
+        if (!is_string($raw)) {
+            $this->search_term = '';
+            return $this->search_term;
+        }
+
+        if (function_exists('wp_unslash')) {
+            $raw = wp_unslash($raw);
+        }
+
+        if (function_exists('sanitize_text_field')) {
+            $raw = sanitize_text_field($raw);
+        }
+
+        $this->search_term = $raw;
+
+        return $this->search_term;
     }
 
     private function build_internal_url_condition() {
