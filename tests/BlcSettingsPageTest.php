@@ -38,6 +38,7 @@ class BlcSettingsPageTest extends TestCase
             'blc_debug_mode'       => false,
             'timezone_string'      => '',
             'gmt_offset'           => 0,
+            'blc_post_statuses'    => ['publish'],
         ];
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-admin-pages.php';
@@ -70,6 +71,7 @@ class BlcSettingsPageTest extends TestCase
             return true;
         });
         Functions\when('wp_next_scheduled')->justReturn(false);
+        Functions\when('wp_get_schedule')->justReturn(false);
         Functions\when('wp_clear_scheduled_hook')->justReturn(true);
         Functions\when('wp_nonce_field')->alias(static function ($action = -1, $name = '_wpnonce', $referer = true, $echo = true) {
             echo '';
@@ -92,8 +94,8 @@ class BlcSettingsPageTest extends TestCase
 
             return $result;
         });
-        Functions\when('checked')->alias(static function ($value, $compare, $echo = true) {
-            $result = ((string) $value === (string) $compare) ? 'checked="checked"' : '';
+        Functions\when('checked')->alias(static function ($value, $compare = true, $echo = true) {
+            $result = ($value == $compare) ? 'checked="checked"' : '';
 
             if ($echo) {
                 echo $result;
@@ -104,6 +106,19 @@ class BlcSettingsPageTest extends TestCase
         Functions\when('wp_timezone_string')->justReturn('');
         Functions\when('wp_timezone')->alias(static function () {
             return new \DateTimeZone('UTC');
+        });
+        Functions\when('get_post_stati')->alias(static function ($args = [], $output = 'names', $operator = 'and') {
+            $statuses = [
+                'publish' => (object) ['label' => 'Publié'],
+                'draft'   => (object) ['label' => 'Brouillon'],
+                'pending' => (object) ['label' => 'En attente'],
+            ];
+
+            if ($output === 'objects') {
+                return $statuses;
+            }
+
+            return array_keys($statuses);
         });
     }
 

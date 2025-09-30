@@ -354,6 +354,57 @@ function blc_settings_page() {
         $scan_method = sanitize_text_field($scan_method_raw);
         update_option('blc_scan_method', $scan_method);
 
+        $available_status_names = get_post_stati([], 'names');
+        if (!is_array($available_status_names)) {
+            $available_status_names = [];
+        }
+        $available_status_lookup = [];
+        foreach ($available_status_names as $status_name) {
+            $normalized_status = sanitize_key((string) $status_name);
+            if ($normalized_status === '') {
+                continue;
+            }
+            $available_status_lookup[$normalized_status] = true;
+        }
+
+        $post_statuses_raw = isset($_POST['blc_post_statuses']) ? wp_unslash($_POST['blc_post_statuses']) : [];
+        if (!is_array($post_statuses_raw)) {
+            $post_statuses_raw = [$post_statuses_raw];
+        }
+
+        $selected_statuses = [];
+        foreach ($post_statuses_raw as $status_value) {
+            if (!is_scalar($status_value)) {
+                continue;
+            }
+
+            $status_key = sanitize_key((string) $status_value);
+            if ($status_key === '') {
+                continue;
+            }
+
+            if ($available_status_lookup !== [] && !isset($available_status_lookup[$status_key])) {
+                continue;
+            }
+
+            $selected_statuses[$status_key] = $status_key;
+        }
+
+        if ($selected_statuses === []) {
+            if (isset($available_status_lookup['publish'])) {
+                $selected_statuses = ['publish'];
+            } elseif ($available_status_lookup !== []) {
+                foreach ($available_status_lookup as $status_key => $_unused) {
+                    $selected_statuses = [$status_key];
+                    break;
+                }
+            } else {
+                $selected_statuses = ['publish'];
+            }
+        }
+
+        update_option('blc_post_statuses', array_values($selected_statuses));
+
         $excluded_domains_raw = isset($_POST['blc_excluded_domains']) ? wp_unslash($_POST['blc_excluded_domains']) : '';
         $excluded_domains = sanitize_textarea_field($excluded_domains_raw);
         update_option('blc_excluded_domains', $excluded_domains);
@@ -503,6 +554,36 @@ function blc_settings_page() {
     $excluded_domains = get_option('blc_excluded_domains', "x.com\ntwitter.com\nlinkedin.com");
     $debug_mode = get_option('blc_debug_mode', false);
     $notification_recipients = (string) get_option('blc_notification_recipients', '');
+    $selected_post_statuses_option = get_option('blc_post_statuses', ['publish']);
+    if (!is_array($selected_post_statuses_option)) {
+        $selected_post_statuses_option = [$selected_post_statuses_option];
+    }
+    $selected_post_statuses = [];
+    foreach ($selected_post_statuses_option as $status_value) {
+        if (!is_scalar($status_value)) {
+            continue;
+        }
+        $status_key = sanitize_key((string) $status_value);
+        if ($status_key === '') {
+            continue;
+        }
+        $selected_post_statuses[$status_key] = $status_key;
+    }
+    if ($selected_post_statuses === []) {
+        $selected_post_statuses = ['publish'];
+    } else {
+        $selected_post_statuses = array_values($selected_post_statuses);
+    }
+
+    $status_objects = get_post_stati(['internal' => false], 'objects');
+    if (!is_array($status_objects)) {
+        $status_objects = [];
+    }
+    if ($status_objects === []) {
+        $status_objects['publish'] = (object) [
+            'label' => esc_html__('Publié', 'liens-morts-detector-jlg'),
+        ];
+    }
     ?>
     <div class="wrap">
         <h1><?php esc_html_e('Réglages des liens morts', 'liens-morts-detector-jlg'); ?></h1>
@@ -595,6 +676,37 @@ function blc_settings_page() {
                         </td>
                     </tr>
                  </tbody>
+            </table>
+            <h2><?php esc_html_e('Statuts analysés', 'liens-morts-detector-jlg'); ?></h2>
+            <table class="form-table" role="presentation">
+                <tbody>
+                    <tr>
+                        <th scope="row"><?php esc_html_e('Statuts des contenus à analyser', 'liens-morts-detector-jlg'); ?></th>
+                        <td>
+                            <fieldset>
+                                <?php foreach ($status_objects as $status_key => $status_object) :
+                                    $sanitized_key = sanitize_key((string) $status_key);
+                                    if ($sanitized_key === '') {
+                                        continue;
+                                    }
+                                    $label = '';
+                                    if (is_object($status_object) && isset($status_object->label) && $status_object->label !== '') {
+                                        $label = (string) $status_object->label;
+                                    }
+                                    if ($label === '') {
+                                        $label = ucwords(str_replace(['-', '_'], ' ', $sanitized_key));
+                                    }
+                                    ?>
+                                    <label>
+                                        <input type="checkbox" name="blc_post_statuses[]" value="<?php echo esc_attr($sanitized_key); ?>" <?php checked(in_array($sanitized_key, $selected_post_statuses, true)); ?>>
+                                        <?php echo esc_html($label); ?>
+                                    </label><br>
+                                <?php endforeach; ?>
+                                <p class="description"><?php esc_html_e('Sélectionnez les statuts des contenus à inclure dans l’analyse. Par défaut, seuls les contenus publiés sont examinés.', 'liens-morts-detector-jlg'); ?></p>
+                            </fieldset>
+                        </td>
+                    </tr>
+                </tbody>
             </table>
             <h2><?php esc_html_e('Méthode d\'Analyse', 'liens-morts-detector-jlg'); ?></h2>
             <table class="form-table" role="presentation">
