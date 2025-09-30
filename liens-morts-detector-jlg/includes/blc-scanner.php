@@ -467,8 +467,12 @@ function blc_is_image_scan_lock_active(array $state, $timeout) {
         return false;
     }
 
-    if (!is_int($timeout) || $timeout <= 0) {
-        return true;
+    if (!is_int($timeout)) {
+        $timeout = (int) $timeout;
+    }
+
+    if ($timeout <= 0) {
+        return false;
     }
 
     return ($locked_at + $timeout) > time();
@@ -1698,6 +1702,18 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                 if (false === $scheduled) {
                     error_log(sprintf('BLC: Failed to reschedule image batch #%d due to missing lock token.', $batch));
                     do_action('blc_check_image_batch_schedule_failed', $batch, $is_full_scan, 'missing_lock_token');
+                }
+                return;
+            }
+        } elseif (!$lock_active) {
+            $lock_token = blc_acquire_image_scan_lock($lock_timeout);
+            if ($lock_token === '') {
+                if ($debug_mode) { error_log('Impossible de reprendre le scan d\'images (verrou expiré).'); }
+                $retry_delay = max(60, $batch_delay_s);
+                $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
+                if (false === $scheduled) {
+                    error_log(sprintf('BLC: Failed to reschedule image batch #%d after lock expiration.', $batch));
+                    do_action('blc_check_image_batch_schedule_failed', $batch, $is_full_scan, 'expired_lock');
                 }
                 return;
             }
