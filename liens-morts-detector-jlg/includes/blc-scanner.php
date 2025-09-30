@@ -757,6 +757,125 @@ function blc_release_image_scan_lock($token) {
 }
 
 /**
+ * Retrieve the current link scan lock data.
+ *
+ * @return array
+ */
+function blc_get_link_scan_lock_state() {
+    $state = get_option('blc_link_scan_lock', []);
+
+    return is_array($state) ? $state : [];
+}
+
+/**
+ * Determine if a link scan lock is still considered active.
+ *
+ * @param array $state   Lock state array.
+ * @param int   $timeout Timeout in seconds.
+ *
+ * @return bool
+ */
+function blc_is_link_scan_lock_active(array $state, $timeout) {
+    $token     = isset($state['token']) ? (string) $state['token'] : '';
+    $locked_at = isset($state['locked_at']) ? (int) $state['locked_at'] : 0;
+
+    if ($token === '') {
+        return false;
+    }
+
+    $timeout = (int) $timeout;
+    if ($timeout <= 0) {
+        return false;
+    }
+
+    if ($locked_at <= 0) {
+        return false;
+    }
+
+    $expires_at = $locked_at + $timeout;
+    if ($expires_at <= 0) {
+        return false;
+    }
+
+    return $expires_at > time();
+}
+
+/**
+ * Acquire the link scan lock if possible.
+ *
+ * @param int $timeout Timeout in seconds.
+ *
+ * @return string Lock token on success, empty string otherwise.
+ */
+function blc_acquire_link_scan_lock($timeout) {
+    $state = blc_get_link_scan_lock_state();
+    if (blc_is_link_scan_lock_active($state, $timeout)) {
+        return '';
+    }
+
+    $token = blc_generate_lock_token();
+    update_option('blc_link_scan_lock', [
+        'token'     => $token,
+        'locked_at' => time(),
+    ]);
+    update_option('blc_link_scan_lock_token', $token);
+
+    return $token;
+}
+
+/**
+ * Refresh the link scan lock timestamp for the current token.
+ *
+ * @param string $token   Lock token.
+ * @param int    $timeout Timeout in seconds.
+ *
+ * @return void
+ */
+function blc_refresh_link_scan_lock($token, $timeout) {
+    if ($token === '') {
+        return;
+    }
+
+    $state = blc_get_link_scan_lock_state();
+    $current_token = isset($state['token']) ? (string) $state['token'] : '';
+    if ($current_token !== $token) {
+        return;
+    }
+
+    update_option('blc_link_scan_lock', [
+        'token'     => $token,
+        'locked_at' => time(),
+    ]);
+
+    $stored_token = get_option('blc_link_scan_lock_token', '');
+    if ($stored_token !== $token) {
+        update_option('blc_link_scan_lock_token', $token);
+    }
+}
+
+/**
+ * Release the link scan lock if the token matches.
+ *
+ * @param string $token Lock token.
+ *
+ * @return void
+ */
+function blc_release_link_scan_lock($token) {
+    if ($token === '') {
+        return;
+    }
+
+    $state = blc_get_link_scan_lock_state();
+    $current_token = isset($state['token']) ? (string) $state['token'] : '';
+    if ($current_token !== '' && $current_token !== $token) {
+        return;
+    }
+
+    delete_option('blc_link_scan_lock');
+    delete_option('blc_link_scan_lock_token');
+}
+
+/**
  * Helper to build a DOMDocument instance from raw post content.
  *
  * @param string $content Raw HTML content from the post.
@@ -974,7 +1093,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
     // --- 1. Récupération des réglages ---
     $debug_mode = get_option('blc_debug_mode', false);
-    if ($debug_mode) { error_log("--- Début du scan LIENS (Lot #$batch) ---"); }
+    $batch_delay_s = max(0, (int) get_option('blc_batch_delay', 60));
 
     $current_hook = function_exists('current_filter') ? current_filter() : '';
     if (!$is_full_scan && $current_hook === 'blc_check_links') {
@@ -985,12 +1104,42 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         $bypass_rest_window = false;
     }
 
+    $default_lock_timeout = defined('MINUTE_IN_SECONDS') ? 15 * MINUTE_IN_SECONDS : 900;
+    $lock_timeout = apply_filters('blc_link_scan_lock_timeout', $default_lock_timeout);
+    if (!is_int($lock_timeout)) {
+        $lock_timeout = (int) $lock_timeout;
+    }
+    if ($lock_timeout < 0) {
+        $lock_timeout = 0;
+    }
+
+    $lock_token = blc_acquire_link_scan_lock($lock_timeout);
+    if ($lock_token === '') {
+        $retry_delay = max(60, $batch_delay_s);
+
+        if ($current_hook === 'blc_check_batch' || $current_hook === 'blc_check_links') {
+            if ($debug_mode) { error_log("Analyse de liens déjà en cours, reprogrammation du lot #$batch."); }
+            $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
+            if (false === $scheduled) {
+                error_log(sprintf('BLC: Failed to reschedule link batch #%d while waiting for lock.', $batch));
+                do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'link_lock');
+            }
+
+            return;
+        }
+
+        if ($debug_mode) { error_log("Analyse de liens refusée : un autre processus est déjà en cours."); }
+
+        return new \WP_Error('blc_link_scan_locked', __('Une analyse des liens est déjà en cours.', 'liens-morts-detector-jlg'));
+    }
+
+    if ($debug_mode) { error_log("--- Début du scan LIENS (Lot #$batch) ---"); }
+
     $rest_start_hour_option = get_option('blc_rest_start_hour', '08');
     $rest_end_hour_option   = get_option('blc_rest_end_hour', '20');
     $rest_start_hour = (int) blc_normalize_hour_option($rest_start_hour_option, '08');
     $rest_end_hour   = (int) blc_normalize_hour_option($rest_end_hour_option, '20');
     $link_delay_ms   = max(0, (int) get_option('blc_link_delay', 200));
-    $batch_delay_s   = max(0, (int) get_option('blc_batch_delay', 60));
 
     $timeout_constraints = blc_get_request_timeout_constraints();
     $head_timeout_limits = $timeout_constraints['head'];
@@ -1173,6 +1322,9 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             error_log(sprintf('BLC: Failed to schedule link batch #%d during rest window.', $batch));
             do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'rest_window');
         }
+        if ($lock_token !== '') {
+            blc_release_link_scan_lock($lock_token);
+        }
         return;
     }
 
@@ -1195,6 +1347,9 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                     if (false === $scheduled) {
                         error_log(sprintf('BLC: Failed to schedule link batch #%d after high load.', $batch));
                         do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'server_load');
+                    }
+                    if ($lock_token !== '') {
+                        blc_release_link_scan_lock($lock_token);
                     }
                     return;
                 }
@@ -1290,6 +1445,9 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         $scan_run_token = blc_generate_scan_run_token();
         $stage_result = blc_stage_dataset_refresh($table_name, 'link', $scan_run_token, $post_ids_in_batch);
         if (is_wp_error($stage_result)) {
+            if ($lock_token !== '') {
+                blc_release_link_scan_lock($lock_token);
+            }
             return $stage_result;
         }
     }
@@ -1385,6 +1543,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
     try {
         foreach ($posts as $post) {
+            blc_refresh_link_scan_lock($lock_token, $lock_timeout);
             try {
                 if ($debug_mode) { error_log("Analyse LIENS pour : '" . $post->post_title . "'"); }
 
@@ -1862,6 +2021,9 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
         if ($debug_mode) { error_log("--- Fin du scan LIENS (Lot #$batch) ---"); }
     } finally {
+        if ($lock_token !== '') {
+            blc_release_link_scan_lock($lock_token);
+        }
         wp_reset_postdata();
     }
 }
