@@ -239,8 +239,10 @@ class AdminListTablesTest extends TestCase
         $table->prepare_items();
 
         $this->assertSame($expected_items, $table->items);
-        $this->assertStringContainsString("post_type = 'page'", $wpdb->last_get_var_query);
-        $this->assertStringContainsString("post_type = 'page'", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("posts.post_type = 'page'", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("posts.post_type = 'page'", $wpdb->last_get_results_query);
+        $this->assertStringContainsString('LEFT JOIN wp_posts AS posts', $wpdb->last_get_var_query);
+        $this->assertStringContainsString('LEFT JOIN wp_posts AS posts', $wpdb->last_get_results_query);
     }
 
     public function test_links_extra_tablenav_displays_post_type_filter(): void
@@ -565,6 +567,7 @@ class AdminListTablesTest extends TestCase
 class DummyWpdb
 {
     public $prefix = 'wp_';
+    public $posts = 'wp_posts';
     public $get_var_return_values = [];
     public $results_to_return;
     public $last_get_var_query;

@@ -438,7 +438,9 @@ class BLC_Links_List_Table extends WP_List_Table {
         }
 
         global $wpdb;
-        $table_name = $wpdb->prefix . 'blc_broken_links';
+        $table_name  = $wpdb->prefix . 'blc_broken_links';
+        $posts_table = $wpdb->posts;
+        $join_clause = "LEFT JOIN {$posts_table} AS posts ON {$table_name}.post_id = posts.ID";
         $internal_condition = $this->build_internal_url_condition();
         $internal_sql       = $internal_condition['sql'];
         $internal_params    = $internal_condition['params'];
@@ -457,7 +459,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         }
 
         if ($selected_post_type !== '' && in_array($selected_post_type, $available_post_types, true)) {
-            $where[] = 'post_type = %s';
+            $where[] = 'posts.post_type = %s';
             $params[] = $selected_post_type;
         }
 
@@ -492,7 +494,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         $where_clause = implode(' AND ', $where);
 
         $total_query = $wpdb->prepare(
-            "SELECT COUNT(*) FROM $table_name WHERE $where_clause",
+            "SELECT COUNT(*) FROM {$table_name} {$join_clause} WHERE $where_clause",
             $params
         );
         $total_items = (int) $wpdb->get_var($total_query);
@@ -502,8 +504,9 @@ class BLC_Links_List_Table extends WP_List_Table {
         $order_by = $is_ignored_view ? 'ignored_at DESC, id DESC' : 'id DESC';
 
         $data_query = $wpdb->prepare(
-            "SELECT id, occurrence_index, url, anchor, post_id, post_title, http_status, last_checked_at, ignored_at
-             FROM $table_name
+            "SELECT id, occurrence_index, url, anchor, post_id, post_title, http_status, last_checked_at, ignored_at, posts.post_type AS post_type
+             FROM {$table_name}
+             {$join_clause}
              WHERE $where_clause
              ORDER BY $order_by
              LIMIT %d OFFSET %d",
