@@ -341,6 +341,28 @@ class BlcDashboardLinksPageTest extends TestCase
         $this->assertStringContainsString("À revérifier <span class='count'>(2)</span>", $output);
     }
 
+    public function test_hidden_page_field_not_rendered_for_non_scalar_request(): void
+    {
+        $_REQUEST['page'] = ['foo'];
+
+        $errors = [];
+        set_error_handler(static function ($severity, $message) use (&$errors) {
+            $errors[] = $message;
+
+            return true;
+        });
+
+        ob_start();
+        blc_dashboard_links_page();
+        $output = (string) ob_get_clean();
+
+        restore_error_handler();
+        unset($_REQUEST['page']);
+
+        $this->assertSame([], $errors);
+        $this->assertStringNotContainsString('<input type="hidden" name="page"', $output);
+    }
+
     /**
      * @return array<string, array{0: string, 1: string}>
      */

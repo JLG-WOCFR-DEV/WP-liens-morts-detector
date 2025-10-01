@@ -247,7 +247,11 @@ function blc_dashboard_links_page() {
                     }
                 }
 
-                if (isset($_REQUEST['page']) && (!isset($current_get_params['page']) || !is_scalar($current_get_params['page']))) {
+                if (
+                    isset($_REQUEST['page'])
+                    && is_scalar($_REQUEST['page'])
+                    && (!isset($current_get_params['page']) || !is_scalar($current_get_params['page']))
+                ) {
                     printf(
                         '<input type="hidden" name="page" value="%s" />',
                         esc_attr((string) $_REQUEST['page'])
