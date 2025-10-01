@@ -20,6 +20,7 @@ class BLC_Links_List_Table extends WP_List_Table {
 
     private $internal_url_condition_cache = null;
     private $search_term = null;
+    private $column_labels_cache = null;
 
     /**
      * Constructeur de la classe.
@@ -180,13 +181,14 @@ class BLC_Links_List_Table extends WP_List_Table {
             }
         }
 
-        $output = sprintf(
+        $output = $this->get_column_label_html('url');
+        $output .= sprintf(
             '<strong><a href="%s" target="_blank" rel="noopener noreferrer" title="%s">%s</a></strong>',
             esc_url($href),
             esc_attr__('Vérifier ce lien (nouvel onglet)', 'liens-morts-detector-jlg'),
             esc_html($original_url)
         );
-        
+
         // Les actions rapides (Modifier, Dissocier) sont ajoutées sous la colonne principale
         $output .= $this->row_actions($this->get_row_actions($item), true);
 
@@ -197,10 +199,12 @@ class BLC_Links_List_Table extends WP_List_Table {
      * Gère le rendu de la nouvelle colonne "Texte du lien".
      */
     protected function column_anchor_text($item) {
+        $output = $this->get_column_label_html('anchor_text');
+
         if (!empty($item['anchor'])) {
-            return '<em>' . esc_html($item['anchor']) . '</em>';
+            return $output . '<em>' . esc_html($item['anchor']) . '</em>';
         }
-        return esc_html__('—', 'liens-morts-detector-jlg'); // Affiche un tiret si aucun texte de lien n'a été capturé
+        return $output . esc_html__('—', 'liens-morts-detector-jlg'); // Affiche un tiret si aucun texte de lien n'a été capturé
     }
 
     /**
@@ -210,30 +214,30 @@ class BLC_Links_List_Table extends WP_List_Table {
         $edit_link = get_edit_post_link($item['post_id']);
 
         if ($edit_link === false) {
-            return esc_html__('—', 'liens-morts-detector-jlg');
+            return $this->get_column_label_html('post_title') . esc_html__('—', 'liens-morts-detector-jlg');
         }
 
-        return sprintf('<a href="%s">%s</a>', esc_url($edit_link), esc_html($item['post_title']));
+        return $this->get_column_label_html('post_title') . sprintf('<a href="%s">%s</a>', esc_url($edit_link), esc_html($item['post_title']));
     }
 
     protected function column_http_status($item) {
         $raw_status = $item['http_status'] ?? null;
 
         if ($raw_status === null || $raw_status === '') {
-            return esc_html__('—', 'liens-morts-detector-jlg');
+            return $this->get_column_label_html('http_status') . esc_html__('—', 'liens-morts-detector-jlg');
         }
 
         if (is_numeric($raw_status)) {
             $raw_status = (int) $raw_status;
         }
 
-        return esc_html((string) $raw_status);
+        return $this->get_column_label_html('http_status') . esc_html((string) $raw_status);
     }
 
     protected function column_last_checked_at($item) {
         $raw_value = $item['last_checked_at'] ?? '';
 
-        return $this->format_last_checked_at_for_display($raw_value);
+        return $this->get_column_label_html('last_checked_at') . $this->format_last_checked_at_for_display($raw_value);
     }
 
     /**
@@ -243,14 +247,31 @@ class BLC_Links_List_Table extends WP_List_Table {
         $edit_link = get_edit_post_link($item['post_id']);
 
         if ($edit_link === false) {
-            return esc_html__('—', 'liens-morts-detector-jlg');
+            return $this->get_column_label_html('actions') . esc_html__('—', 'liens-morts-detector-jlg');
         }
 
-        return sprintf(
+        return $this->get_column_label_html('actions') . sprintf(
             '<a href="%s" class="button button-secondary">%s</a>',
             esc_url($edit_link),
             esc_html__('Modifier l\'article', 'liens-morts-detector-jlg')
         );
+    }
+
+    protected function get_column_label_html($column_name) {
+        if ($this->column_labels_cache === null) {
+            $this->column_labels_cache = $this->get_columns();
+        }
+
+        $label = '';
+        if (is_array($this->column_labels_cache) && array_key_exists($column_name, $this->column_labels_cache)) {
+            $label = (string) $this->column_labels_cache[$column_name];
+        }
+
+        if ($label === '') {
+            return '';
+        }
+
+        return sprintf('<span class="blc-column-label">%s</span>', esc_html($label));
     }
 
     /**

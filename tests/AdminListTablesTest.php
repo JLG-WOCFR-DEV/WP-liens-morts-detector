@@ -119,6 +119,11 @@ class AdminListTablesTest extends TestCase
             'post_title' => 'Sample Post',
         ]);
 
+        $columns = $table->get_columns();
+        $this->assertStringStartsWith(
+            sprintf('<span class="blc-column-label">%s</span>', $columns['url']),
+            $html
+        );
         $this->assertStringContainsString('href="https://example.com/post-12/images/photo.jpg"', $html);
         $this->assertStringContainsString('>images/photo.jpg<', $html);
     }
@@ -151,6 +156,9 @@ class AdminListTablesTest extends TestCase
         $this->assertArrayHasKey('http_status', $columns);
         $this->assertArrayHasKey('last_checked_at', $columns);
 
+        $http_status_label = sprintf('<span class="blc-column-label">%s</span>', $columns['http_status']);
+        $last_checked_label = sprintf('<span class="blc-column-label">%s</span>', $columns['last_checked_at']);
+
         $item = [
             'http_status'     => 410,
             'last_checked_at' => '1970-01-01 00:00:00',
@@ -159,8 +167,8 @@ class AdminListTablesTest extends TestCase
             'url'             => 'https://example.com',
         ];
 
-        $this->assertSame('410', $table->renderHttpStatus($item));
-        $this->assertSame('1970-01-01 00:00', $table->renderLastChecked($item));
+        $this->assertSame($http_status_label . '410', $table->renderHttpStatus($item));
+        $this->assertSame($last_checked_label . '1970-01-01 00:00', $table->renderLastChecked($item));
 
         $empty = [
             'http_status'     => null,
@@ -170,8 +178,8 @@ class AdminListTablesTest extends TestCase
             'url'             => 'https://example.com/empty',
         ];
 
-        $this->assertSame('—', $table->renderHttpStatus($empty));
-        $this->assertSame('—', $table->renderLastChecked($empty));
+        $this->assertSame($http_status_label . '—', $table->renderHttpStatus($empty));
+        $this->assertSame($last_checked_label . '—', $table->renderLastChecked($empty));
     }
 
     public function test_links_prepare_items_supports_injected_data_with_pagination(): void
@@ -223,6 +231,9 @@ class AdminListTablesTest extends TestCase
         $this->assertArrayHasKey('http_status', $columns);
         $this->assertArrayHasKey('last_checked_at', $columns);
 
+        $http_status_label = sprintf('<span class="blc-column-label">%s</span>', $columns['http_status']);
+        $last_checked_label = sprintf('<span class="blc-column-label">%s</span>', $columns['last_checked_at']);
+
         $item = [
             'http_status'     => null,
             'last_checked_at' => '1970-01-01 00:00:00',
@@ -232,8 +243,8 @@ class AdminListTablesTest extends TestCase
             'post_title'      => 'Gallery',
         ];
 
-        $this->assertSame('—', $table->renderHttpStatus($item));
-        $this->assertSame('1970-01-01 00:00', $table->renderLastChecked($item));
+        $this->assertSame($http_status_label . '—', $table->renderHttpStatus($item));
+        $this->assertSame($last_checked_label . '1970-01-01 00:00', $table->renderLastChecked($item));
 
         $missing = [
             'http_status'     => null,
@@ -244,8 +255,8 @@ class AdminListTablesTest extends TestCase
             'post_title'      => 'Empty',
         ];
 
-        $this->assertSame('—', $table->renderHttpStatus($missing));
-        $this->assertSame('—', $table->renderLastChecked($missing));
+        $this->assertSame($http_status_label . '—', $table->renderHttpStatus($missing));
+        $this->assertSame($last_checked_label . '—', $table->renderLastChecked($missing));
     }
 
     public function test_links_prepare_items_adds_search_term_conditions(): void
