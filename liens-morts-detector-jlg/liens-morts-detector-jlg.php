@@ -58,6 +58,37 @@ require_once BLC_PLUGIN_PATH . 'includes/blc-admin-pages.php';
 require_once BLC_PLUGIN_PATH . 'includes/class-blc-links-list-table.php';
 require_once BLC_PLUGIN_PATH . 'includes/class-blc-images-list-table.php';
 
+/**
+ * Mark the cached view counters for broken links as stale so they can be recalculated.
+ *
+ * @return void
+ */
+function blc_mark_link_view_counts_dirty() {
+    if (!function_exists('update_option')) {
+        return;
+    }
+
+    static $already_marked = false;
+
+    if ($already_marked) {
+        return;
+    }
+
+    $already_marked = true;
+    $timestamp = time();
+
+    update_option('blc_links_view_counts_dirty', $timestamp, false);
+
+    /**
+     * Fires after the broken link view counters have been flagged for refresh.
+     *
+     * @since 1.0.0
+     *
+     * @param int $timestamp Unix timestamp saved alongside the dirty flag.
+     */
+    do_action('blc_links_view_counts_marked_dirty', $timestamp);
+}
+
 // --- Hameçons (Hooks) d'Activation et de Désactivation ---
 // Ces fonctions s'exécutent uniquement à l'activation ou la désactivation du plugin.
 register_activation_hook(__FILE__, 'blc_activation');
@@ -143,6 +174,7 @@ function blc_enqueue_admin_assets($hook) {
             'sameUrlMessage'     => __('La nouvelle URL doit être différente de l\'URL actuelle.', 'liens-morts-detector-jlg'),
             'genericError'        => __('Une erreur est survenue. Veuillez réessayer.', 'liens-morts-detector-jlg'),
             'successAnnouncement' => __('Action effectuée avec succès. La ligne a été retirée de la liste.', 'liens-morts-detector-jlg'),
+            'noItemsMessage'      => __('Aucun lien cassé à afficher.', 'liens-morts-detector-jlg'),
         )
     );
 }
@@ -377,6 +409,7 @@ function blc_ajax_edit_link_callback() {
             blc_adjust_dataset_storage_footprint('link', -$row_cache_footprint);
         }
 
+        blc_mark_link_view_counts_dirty();
         wp_send_json_success(['purged' => true]);
         return;
     }
@@ -441,6 +474,7 @@ function blc_ajax_edit_link_callback() {
         blc_adjust_dataset_storage_footprint('link', -$row_cache_footprint);
     }
 
+    blc_mark_link_view_counts_dirty();
     wp_send_json_success();
 }
 
@@ -516,6 +550,7 @@ function blc_ajax_unlink_callback() {
             blc_adjust_dataset_storage_footprint('link', -$row_cache_footprint);
         }
 
+        blc_mark_link_view_counts_dirty();
         wp_send_json_success(['purged' => true]);
         return;
     }
@@ -569,5 +604,6 @@ function blc_ajax_unlink_callback() {
         blc_adjust_dataset_storage_footprint('link', -$row_cache_footprint);
     }
 
+    blc_mark_link_view_counts_dirty();
     wp_send_json_success();
 }
