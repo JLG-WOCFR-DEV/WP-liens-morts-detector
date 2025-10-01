@@ -225,7 +225,8 @@ function blc_dashboard_links_page() {
         <?php if ($broken_links_count === 0): ?>
              <p><?php esc_html_e('✅ Aucun lien mort trouvé. Bravo !', 'liens-morts-detector-jlg'); ?></p>
         <?php else: ?>
-            <form method="get">
+            <form method="get" class="blc-links-filter-form" aria-labelledby="blc-links-filter-heading">
+                <h2 id="blc-links-filter-heading" class="screen-reader-text"><?php esc_html_e('Filtres de la liste des liens cassés', 'liens-morts-detector-jlg'); ?></h2>
                 <?php
                 $current_get_params = [];
                 if (!empty($_GET) && is_array($_GET)) {

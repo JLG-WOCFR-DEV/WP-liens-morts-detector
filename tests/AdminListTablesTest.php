@@ -243,6 +243,28 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString("post_type = 'page'", $wpdb->last_get_results_query);
     }
 
+    public function test_links_extra_tablenav_displays_post_type_filter(): void
+    {
+        $_GET['post_type'] = 'page';
+
+        $table = new class() extends \BLC_Links_List_Table {
+            public function captureExtraTablenav($which)
+            {
+                ob_start();
+                parent::extra_tablenav($which);
+
+                return ob_get_clean();
+            }
+        };
+
+        $output = $table->captureExtraTablenav('top');
+
+        $this->assertStringContainsString('name="post_type"', $output);
+        $this->assertStringContainsString('id="blc-post-type-filter"', $output);
+        $this->assertStringContainsString('Filtrer par type de contenu', $output);
+        $this->assertStringContainsString('<option value="page" selected="selected">', $output);
+    }
+
     public function test_images_columns_display_status_and_timestamp(): void
     {
         $table = new class() extends \BLC_Images_List_Table {

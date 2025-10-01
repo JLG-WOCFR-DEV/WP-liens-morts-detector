@@ -57,27 +57,12 @@ class BLC_Links_List_Table extends WP_List_Table {
             return;
         }
 
-        $available_post_types = [];
-        $post_types = function_exists('get_post_types') ? get_post_types(['public' => true]) : [];
-        if (is_array($post_types)) {
-            foreach ($post_types as $post_type) {
-                if (is_string($post_type) && $post_type !== '') {
-                    $available_post_types[] = $post_type;
-                }
-            }
-        }
-
-        $selected_post_type = '';
-        if (isset($_GET['post_type'])) {
-            $candidate = sanitize_key(wp_unslash($_GET['post_type']));
-            if ($candidate !== '') {
-                $selected_post_type = $candidate;
-            }
-        }
+        $available_post_types = $this->get_available_post_types();
+        $selected_post_type  = $this->get_selected_post_type();
 
         if (!empty($available_post_types)) {
             echo '<div class="alignleft actions">';
-            echo '<label class="screen-reader-text" for="blc-post-type-filter">' . esc_html__('Filtrer par type de contenu', 'liens-morts-detector-jlg') . '</label>';
+            echo '<label for="blc-post-type-filter" class="blc-filter__label">' . esc_html__('Filtrer par type de contenu', 'liens-morts-detector-jlg') . '</label>';
 
             $select  = '<select name="post_type" id="blc-post-type-filter" aria-label="' . esc_attr__('Filtrer par type de contenu', 'liens-morts-detector-jlg') . '">';
             $select .= '<option value="">' . esc_html__('Tous les types de contenu', 'liens-morts-detector-jlg') . '</option>';
@@ -407,23 +392,8 @@ class BLC_Links_List_Table extends WP_List_Table {
         $current_page = max(1, (int) $this->get_pagenum());
         $search_term  = $this->get_search_term();
 
-        $available_post_types = [];
-        $post_types = function_exists('get_post_types') ? get_post_types(['public' => true]) : [];
-        if (is_array($post_types)) {
-            foreach ($post_types as $post_type) {
-                if (is_string($post_type) && $post_type !== '') {
-                    $available_post_types[] = $post_type;
-                }
-            }
-        }
-
-        $selected_post_type = '';
-        if (isset($_GET['post_type'])) {
-            $candidate = sanitize_key(wp_unslash($_GET['post_type']));
-            if ($candidate !== '') {
-                $selected_post_type = $candidate;
-            }
-        }
+        $available_post_types = $this->get_available_post_types();
+        $selected_post_type  = $this->get_selected_post_type();
 
         if (is_array($data)) {
             $total_items = ($total_items_override !== null) ? (int) $total_items_override : count($data);
@@ -585,6 +555,48 @@ class BLC_Links_List_Table extends WP_List_Table {
         }
 
         return trim($date_format . ' ' . $time_format);
+    }
+
+    private function get_available_post_types() {
+        if (!function_exists('get_post_types')) {
+            return [];
+        }
+
+        $post_types = get_post_types(['public' => true]);
+        if (!is_array($post_types)) {
+            return [];
+        }
+
+        $available_post_types = [];
+
+        foreach ($post_types as $post_type) {
+            if (is_string($post_type) && $post_type !== '') {
+                $available_post_types[] = $post_type;
+            }
+        }
+
+        return array_values(array_unique($available_post_types));
+    }
+
+    private function get_selected_post_type() {
+        if (!isset($_GET['post_type'])) {
+            return '';
+        }
+
+        $raw_value = $_GET['post_type'];
+        if (!is_string($raw_value)) {
+            return '';
+        }
+
+        if (function_exists('wp_unslash')) {
+            $raw_value = wp_unslash($raw_value);
+        }
+
+        if (function_exists('sanitize_key')) {
+            $raw_value = sanitize_key($raw_value);
+        }
+
+        return $raw_value === '' ? '' : $raw_value;
     }
 
     private function get_search_term() {
