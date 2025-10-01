@@ -35,6 +35,10 @@ jQuery(document).ready(function($) {
             };
         }
 
+        if (!$modal.attr('tabindex')) {
+            $modal.attr('tabindex', '-1');
+        }
+
         var $title = $modal.find('.blc-modal__title');
         var $message = $modal.find('.blc-modal__message');
         var $error = $modal.find('.blc-modal__error');
@@ -46,6 +50,31 @@ jQuery(document).ready(function($) {
         var $close = $modal.find('.blc-modal__close');
 
         var lastFocusedElement = null;
+        var focusableSelectors = 'a[href], area[href], input:not([type="hidden"]), select, textarea, button, [tabindex], [contenteditable="true"]';
+
+        function getFocusableElements() {
+            return $modal.find(focusableSelectors).filter(function() {
+                var $element = $(this);
+                if (!$element.is(':visible')) {
+                    return false;
+                }
+
+                if ($element.is(':disabled') || $element.attr('disabled')) {
+                    return false;
+                }
+
+                var tabindex = $element.attr('tabindex');
+                if (typeof tabindex !== 'undefined' && parseInt(tabindex, 10) < 0) {
+                    return false;
+                }
+
+                if ($element.attr('aria-hidden') === 'true') {
+                    return false;
+                }
+
+                return true;
+            });
+        }
 
         var state = {
             isOpen: false,
@@ -196,6 +225,43 @@ jQuery(document).ready(function($) {
         $(document).on('keydown', function(event) {
             if (event.key === 'Escape' && state.isOpen && !state.isSubmitting) {
                 close();
+            }
+        });
+
+        $modal.on('keydown', function(event) {
+            if (event.key !== 'Tab' || !state.isOpen) {
+                return;
+            }
+
+            var focusableElements = getFocusableElements();
+
+            if (!focusableElements.length) {
+                event.preventDefault();
+                $modal.focus();
+                return;
+            }
+
+            var activeElement = document.activeElement;
+            var currentIndex = focusableElements.index(activeElement);
+            var direction = event.shiftKey ? -1 : 1;
+            var nextIndex;
+
+            if (currentIndex === -1) {
+                nextIndex = direction > 0 ? 0 : focusableElements.length - 1;
+            } else {
+                nextIndex = currentIndex + direction;
+                if (nextIndex < 0) {
+                    nextIndex = focusableElements.length - 1;
+                } else if (nextIndex >= focusableElements.length) {
+                    nextIndex = 0;
+                }
+            }
+
+            event.preventDefault();
+
+            var $nextElement = focusableElements.eq(nextIndex);
+            if ($nextElement.length && typeof $nextElement[0].focus === 'function') {
+                $nextElement[0].focus();
             }
         });
 
