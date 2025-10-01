@@ -333,23 +333,29 @@ function blc_dashboard_images_page() {
     global $wpdb;
     $table_name = $wpdb->prefix . 'blc_broken_links';
     $image_row_types = blc_get_dataset_row_types('image');
-    if (count($image_row_types) === 1) {
-        $broken_images_count = (int) $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT COUNT(*) FROM $table_name WHERE type = %s",
-                reset($image_row_types)
-            )
-        );
-    } else {
-        $placeholders = implode(',', array_fill(0, count($image_row_types), '%s'));
-        $query = $wpdb->prepare(
-            "SELECT COUNT(*) FROM $table_name WHERE type IN ($placeholders)",
-            $image_row_types
-        );
-        $broken_images_count = (int) $wpdb->get_var($query);
-    }
-    $option_size_bytes = blc_get_dataset_storage_footprint_bytes('image');
+    $broken_images_count = 0;
+    $option_size_bytes = 0;
     $last_image_check_time = get_option('blc_last_image_check_time', 0);
+
+    if ($image_row_types !== []) {
+        if (count($image_row_types) === 1) {
+            $broken_images_count = (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM $table_name WHERE type = %s",
+                    reset($image_row_types)
+                )
+            );
+        } else {
+            $placeholders = implode(',', array_fill(0, count($image_row_types), '%s'));
+            $query = $wpdb->prepare(
+                "SELECT COUNT(*) FROM $table_name WHERE type IN ($placeholders)",
+                $image_row_types
+            );
+            $broken_images_count = (int) $wpdb->get_var($query);
+        }
+
+        $option_size_bytes = blc_get_dataset_storage_footprint_bytes('image');
+    }
     $option_size_kb      = $option_size_bytes / 1024;
     $size_display        = ($option_size_kb < 1024)
         ? sprintf('%s %s', number_format_i18n($option_size_kb, 2), __('Ko', 'liens-morts-detector-jlg'))

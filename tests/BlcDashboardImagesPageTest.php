@@ -24,6 +24,21 @@ class BlcDashboardImagesPageTest extends TestCase
      */
     private $previous_wpdb;
 
+    /**
+     * @var array<int, array{0:string,1:array<int, mixed>}>
+     */
+    public array $wpdbPrepareCalls = [];
+
+    /**
+     * @var array<int, string>
+     */
+    public array $wpdbGetVarQueries = [];
+
+    /**
+     * @var array<int, string>
+     */
+    public array $wpdbGetResultsQueries = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -50,23 +65,39 @@ class BlcDashboardImagesPageTest extends TestCase
         ];
 
         $this->previous_wpdb = $GLOBALS['wpdb'] ?? null;
+        $this->wpdbPrepareCalls = [];
+        $this->wpdbGetVarQueries = [];
+        $this->wpdbGetResultsQueries = [];
 
-        $GLOBALS['wpdb'] = new class() {
+        $GLOBALS['wpdb'] = new class($this) {
             /** @var string */
             public $prefix = 'wp_';
+            /** @var BlcDashboardImagesPageTest */
+            private $test_case;
+
+            public function __construct($test_case)
+            {
+                $this->test_case = $test_case;
+            }
 
             public function prepare($query, ...$args)
             {
+                $this->test_case->wpdbPrepareCalls[] = [$query, $args];
+
                 return $query;
             }
 
             public function get_var($query)
             {
+                $this->test_case->wpdbGetVarQueries[] = $query;
+
                 return 0;
             }
 
             public function get_results($query, $output = ARRAY_A)
             {
+                $this->test_case->wpdbGetResultsQueries[] = $query;
+
                 return [];
             }
         };
@@ -175,6 +206,73 @@ class BlcDashboardImagesPageTest extends TestCase
         $this->assertSame(1, $calls);
         $this->assertStringContainsString("La vérification des images a été programmée", $output);
         $this->assertStringContainsString("Le déclenchement immédiat du cron a échoué", $output);
+    }
+
+    public function test_dashboard_images_page_handles_empty_dataset_row_types(): void
+    {
+        $registered_filters = [];
+        Functions\when('add_filter')->alias(static function ($hook, $callback, $priority = 10, $accepted_args = 1) use (&$registered_filters) {
+            $registered_filters[$hook][$priority][] = [
+                'callback'      => $callback,
+                'accepted_args' => $accepted_args,
+            ];
+
+            return true;
+        });
+        Functions\when('apply_filters')->alias(static function ($hook, $value, ...$args) use (&$registered_filters) {
+            if (!isset($registered_filters[$hook])) {
+                return $value;
+            }
+
+            ksort($registered_filters[$hook]);
+            $params = array_merge([$value], $args);
+
+            foreach ($registered_filters[$hook] as $callbacks) {
+                foreach ($callbacks as $handler) {
+                    $callback = $handler['callback'];
+                    $accepted_args = max(0, (int) $handler['accepted_args']);
+
+                    $arg_count = $accepted_args;
+                    try {
+                        if (is_array($callback) && count($callback) === 2) {
+                            $reflection = new \ReflectionMethod($callback[0], $callback[1]);
+                        } elseif (is_string($callback) && str_contains($callback, '::')) {
+                            $reflection = new \ReflectionMethod($callback);
+                        } elseif (is_object($callback) && !($callback instanceof \Closure) && method_exists($callback, '__invoke')) {
+                            $reflection = new \ReflectionMethod($callback, '__invoke');
+                        } else {
+                            $reflection = new \ReflectionFunction($callback);
+                        }
+
+                        if (!$reflection->isVariadic()) {
+                            $arg_count = min($arg_count, $reflection->getNumberOfParameters());
+                        }
+                    } catch (\ReflectionException $e) {
+                        // Fallback to accepted args when reflection fails.
+                    }
+
+                    $callback_args = array_slice($params, 0, max(0, $arg_count));
+                    $value = $callback(...$callback_args);
+                    $params[0] = $value;
+                }
+            }
+
+            return $value;
+        });
+        Functions\expect('blc_get_dataset_storage_footprint_bytes')->never();
+
+        add_filter('blc_dataset_row_types', fn() => [], 10, 2);
+
+        ob_start();
+        blc_dashboard_images_page();
+        $output = (string) ob_get_clean();
+
+        $this->assertSame([], $this->wpdbPrepareCalls);
+        $this->assertSame([], $this->wpdbGetVarQueries);
+        $this->assertSame([], $this->wpdbGetResultsQueries);
+        $this->assertStringContainsString('<span class="blc-stat-value">0</span>', $output);
+        $this->assertStringContainsString('0.00', $output);
+        $this->assertStringContainsString('Jamais', $output);
     }
 
     /**
