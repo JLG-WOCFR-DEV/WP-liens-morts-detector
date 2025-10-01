@@ -133,6 +133,13 @@ class BLC_Images_List_Table extends WP_List_Table {
         $table_name = $wpdb->prefix . 'blc_broken_links';
 
         $image_row_types = blc_get_dataset_row_types('image');
+        if ($image_row_types === []) {
+            $this->set_pagination_args(['total_items' => 0, 'per_page' => $per_page]);
+            $this->items = [];
+
+            return;
+        }
+
         if (count($image_row_types) === 1) {
             $total_items = (int) $wpdb->get_var(
                 $wpdb->prepare(

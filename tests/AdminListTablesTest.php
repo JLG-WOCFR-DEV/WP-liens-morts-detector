@@ -492,6 +492,75 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString('LIMIT 20', $wpdb->last_get_results_query);
         $this->assertStringContainsString('OFFSET 0', $wpdb->last_get_results_query);
     }
+
+    public function test_images_prepare_items_returns_empty_pagination_when_row_types_missing(): void
+    {
+        global $wpdb;
+        $wpdb = new DummyWpdb();
+
+        $registered_filters = [];
+        Functions\when('add_filter')->alias(static function ($hook, $callback, $priority = 10, $accepted_args = 1) use (&$registered_filters) {
+            $registered_filters[$hook][$priority][] = [
+                'callback'      => $callback,
+                'accepted_args' => $accepted_args,
+            ];
+
+            return true;
+        });
+        Functions\when('apply_filters')->alias(static function ($hook, $value, ...$args) use (&$registered_filters) {
+            if (!isset($registered_filters[$hook])) {
+                return $value;
+            }
+
+            ksort($registered_filters[$hook]);
+            $params = array_merge([$value], $args);
+
+            foreach ($registered_filters[$hook] as $callbacks) {
+                foreach ($callbacks as $handler) {
+                    $callback = $handler['callback'];
+                    $accepted_args = max(0, (int) $handler['accepted_args']);
+
+                    $arg_count = $accepted_args;
+                    try {
+                        if (is_array($callback) && count($callback) === 2) {
+                            $reflection = new \ReflectionMethod($callback[0], $callback[1]);
+                        } elseif (is_string($callback) && str_contains($callback, '::')) {
+                            $reflection = new \ReflectionMethod($callback);
+                        } elseif (is_object($callback) && !($callback instanceof \Closure) && method_exists($callback, '__invoke')) {
+                            $reflection = new \ReflectionMethod($callback, '__invoke');
+                        } else {
+                            $reflection = new \ReflectionFunction($callback);
+                        }
+
+                        if (!$reflection->isVariadic()) {
+                            $arg_count = min($arg_count, $reflection->getNumberOfParameters());
+                        }
+                    } catch (\ReflectionException $e) {
+                        // Fallback to accepted args when reflection fails.
+                    }
+
+                    $callback_args = array_slice($params, 0, max(0, $arg_count));
+                    $value = $callback(...$callback_args);
+                    $params[0] = $value;
+                }
+            }
+
+            return $value;
+        });
+
+        add_filter('blc_dataset_row_types', fn() => [], 10, 2);
+
+        $table = new \BLC_Images_List_Table();
+        $table->prepare_items();
+
+        $this->assertSame([], $table->items);
+        $this->assertSame([
+            'total_items' => 0,
+            'per_page'    => 20,
+        ], $table->get_pagination_args());
+        $this->assertNull($wpdb->last_get_var_query);
+        $this->assertNull($wpdb->last_get_results_query);
+    }
 }
 class DummyWpdb
 {
