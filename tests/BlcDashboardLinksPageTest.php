@@ -74,6 +74,9 @@ class BlcDashboardLinksPageTest extends TestCase
             /** @var string */
             public $prefix = 'wp_';
 
+            /** @var string */
+            public $posts = 'wp_posts';
+
             /** @var array<int, array<string, mixed>> */
             public $prepared_calls = [];
 
@@ -369,9 +372,9 @@ class BlcDashboardLinksPageTest extends TestCase
     public function statusViewProvider(): array
     {
         return [
-            'not_found'  => ['status_404_410', 'http_status IN (404, 410)'],
-            'server'     => ['status_5xx', '(http_status BETWEEN 500 AND 599)'],
-            'redirects'  => ['status_redirects', '(http_status BETWEEN 300 AND 399)'],
+            'not_found'  => ['status_404_410', 'broken_links.http_status IN (404, 410)'],
+            'server'     => ['status_5xx', '(broken_links.http_status BETWEEN 500 AND 599)'],
+            'redirects'  => ['status_redirects', '(broken_links.http_status BETWEEN 300 AND 399)'],
         ];
     }
 
@@ -406,7 +409,7 @@ class BlcDashboardLinksPageTest extends TestCase
 
         unset($_GET['link_type']);
 
-        $needs_recheck_snippet = 'last_checked_at IS NULL OR last_checked_at = %s OR last_checked_at <= %s';
+        $needs_recheck_snippet = 'broken_links.last_checked_at IS NULL OR broken_links.last_checked_at = %s OR broken_links.last_checked_at <= %s';
         $expected_threshold = gmdate('Y-m-d H:i:s', 1700000000 - (int) WEEK_IN_SECONDS);
 
         $matching_calls = array_filter(
@@ -421,6 +424,38 @@ class BlcDashboardLinksPageTest extends TestCase
             $this->assertContains('0000-00-00 00:00:00', $call['params']);
             $this->assertContains($expected_threshold, $call['params']);
         }
+    }
+
+    public function test_prepare_items_filters_by_selected_post_type(): void
+    {
+        $_GET['post_type'] = 'page';
+        $list_table = new \BLC_Links_List_Table();
+
+        $list_table->prepare_items();
+
+        unset($_GET['post_type']);
+
+        $matching_calls = array_filter(
+            $GLOBALS['wpdb']->prepared_calls,
+            static fn(array $call): bool => isset($call['query']) && is_string($call['query'])
+                && str_contains($call['query'], 'LEFT JOIN wp_posts AS posts ON posts.ID = broken_links.post_id')
+                && str_contains($call['query'], 'posts.post_type = %s')
+        );
+
+        $this->assertNotEmpty($matching_calls);
+
+        foreach ($matching_calls as $call) {
+            $this->assertContains('page', $call['params']);
+        }
+
+        $select_calls = array_filter(
+            $GLOBALS['wpdb']->prepared_calls,
+            static fn(array $call): bool => isset($call['query']) && is_string($call['query'])
+                && str_contains($call['query'], 'SELECT broken_links.id')
+                && str_contains($call['query'], 'posts.post_type AS post_type')
+        );
+
+        $this->assertNotEmpty($select_calls);
     }
 
     /**

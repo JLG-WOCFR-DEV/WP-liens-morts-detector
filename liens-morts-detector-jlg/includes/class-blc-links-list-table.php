@@ -438,40 +438,48 @@ class BLC_Links_List_Table extends WP_List_Table {
         }
 
         global $wpdb;
-        $table_name = $wpdb->prefix . 'blc_broken_links';
+        $table_name      = $wpdb->prefix . 'blc_broken_links';
+        $posts_table     = isset($wpdb->posts) ? $wpdb->posts : $wpdb->prefix . 'posts';
+        $links_alias     = 'broken_links';
+        $posts_alias     = 'posts';
+        $join_clause     = "LEFT JOIN $posts_table AS $posts_alias ON $posts_alias.ID = $links_alias.post_id";
         $internal_condition = $this->build_internal_url_condition();
-        $internal_sql       = $internal_condition['sql'];
+        $internal_sql       = str_replace('url', "$links_alias.url", $internal_condition['sql']);
         $internal_params    = $internal_condition['params'];
-        $external_sql       = $internal_condition['not_sql'];
+        $external_sql       = str_replace('url', "$links_alias.url", $internal_condition['not_sql']);
         $external_params    = $internal_condition['not_params'];
 
         $is_ignored_view = ($current_view === 'ignored');
 
-        $where  = ['type = %s'];
+        $where  = ["$links_alias.type = %s"];
         $params = ['link'];
 
         if ($search_term !== '') {
             $like = '%' . $wpdb->esc_like($search_term) . '%';
-            $where[] = '(url LIKE %s OR anchor LIKE %s OR post_title LIKE %s)';
+            $where[] = "($links_alias.url LIKE %s OR $links_alias.anchor LIKE %s OR $links_alias.post_title LIKE %s)";
             $params  = array_merge($params, [$like, $like, $like]);
         }
 
         if ($selected_post_type !== '' && in_array($selected_post_type, $available_post_types, true)) {
-            $where[] = 'post_type = %s';
+            $where[] = "$posts_alias.post_type = %s";
             $params[] = $selected_post_type;
         }
 
         if ($is_ignored_view) {
-            $where[] = 'ignored_at IS NOT NULL';
+            $where[] = "$links_alias.ignored_at IS NOT NULL";
         } else {
-            $where[] = 'ignored_at IS NULL';
+            $where[] = "$links_alias.ignored_at IS NULL";
         }
 
         if ($current_view === 'internal') {
-            $where[] = '(is_internal = 1 OR (is_internal IS NULL AND ' . $internal_sql . '))';
+            $where[] = "($links_alias.is_internal = 1 OR ($links_alias.is_internal IS NULL AND $internal_sql))";
             $params  = array_merge($params, $internal_params);
         } elseif ($current_view === 'external') {
-            $external_clause = '(is_internal = 0 OR (is_internal IS NULL AND (' . $external_sql . " OR url IS NULL OR url = ''" . ')))';
+            $external_clause = sprintf(
+                '(%1$s.is_internal = 0 OR (%1$s.is_internal IS NULL AND (%2$s OR %1$s.url IS NULL OR %1$s.url = \'\')))',
+                $links_alias,
+                $external_sql
+            );
             $where[] = $external_clause;
             $params  = array_merge($params, $external_params);
         }
@@ -479,31 +487,32 @@ class BLC_Links_List_Table extends WP_List_Table {
         $needs_recheck_clause = '(last_checked_at IS NULL OR last_checked_at = %s OR last_checked_at <= %s)';
 
         if ($current_view === 'status_404_410') {
-            $where[] = 'http_status IN (404, 410)';
+            $where[] = "$links_alias.http_status IN (404, 410)";
         } elseif ($current_view === 'status_5xx') {
-            $where[] = '(http_status BETWEEN 500 AND 599)';
+            $where[] = "($links_alias.http_status BETWEEN 500 AND 599)";
         } elseif ($current_view === 'status_redirects') {
-            $where[] = '(http_status BETWEEN 300 AND 399)';
+            $where[] = "($links_alias.http_status BETWEEN 300 AND 399)";
         } elseif ($current_view === 'needs_recheck') {
-            $where[] = $needs_recheck_clause;
+            $where[] = str_replace('last_checked_at', "$links_alias.last_checked_at", $needs_recheck_clause);
             $params = array_merge($params, [$this->get_unchecked_sentinel_value(), $this->get_recheck_threshold_gmt()]);
         }
 
         $where_clause = implode(' AND ', $where);
 
         $total_query = $wpdb->prepare(
-            "SELECT COUNT(*) FROM $table_name WHERE $where_clause",
+            "SELECT COUNT(*) FROM $table_name AS $links_alias $join_clause WHERE $where_clause",
             $params
         );
         $total_items = (int) $wpdb->get_var($total_query);
 
         $offset = ($current_page - 1) * $per_page;
 
-        $order_by = $is_ignored_view ? 'ignored_at DESC, id DESC' : 'id DESC';
+        $order_by = $is_ignored_view ? "$links_alias.ignored_at DESC, $links_alias.id DESC" : "$links_alias.id DESC";
 
         $data_query = $wpdb->prepare(
-            "SELECT id, occurrence_index, url, anchor, post_id, post_title, http_status, last_checked_at, ignored_at
-             FROM $table_name
+            "SELECT $links_alias.id, $links_alias.occurrence_index, $links_alias.url, $links_alias.anchor, $links_alias.post_id, $links_alias.post_title, $links_alias.http_status, $links_alias.last_checked_at, $links_alias.ignored_at, $posts_alias.post_type AS post_type
+             FROM $table_name AS $links_alias
+             $join_clause
              WHERE $where_clause
              ORDER BY $order_by
              LIMIT %d OFFSET %d",
