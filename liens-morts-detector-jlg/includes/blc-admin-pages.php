@@ -116,10 +116,45 @@ function blc_dashboard_links_page() {
                 esc_html__("La vérification des liens n'a pas pu être programmée. Veuillez réessayer.", 'liens-morts-detector-jlg')
             );
         } else {
+            $manual_trigger_failed = false;
+
+            if (!defined('DISABLE_WP_CRON') || !DISABLE_WP_CRON) {
+                $manual_trigger_result = null;
+
+                if (function_exists('spawn_cron')) {
+                    $manual_trigger_result = spawn_cron();
+                } elseif (function_exists('wp_cron')) {
+                    $manual_trigger_result = wp_cron();
+                }
+
+                if (null !== $manual_trigger_result) {
+                    $is_error = (false === $manual_trigger_result);
+
+                    if (function_exists('is_wp_error') && is_wp_error($manual_trigger_result)) {
+                        $is_error = true;
+                    }
+
+                    if ($is_error) {
+                        $manual_trigger_failed = true;
+                        error_log('BLC: Manual cron trigger failed for link check.');
+                    }
+                }
+            }
+
             printf(
                 '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
                 esc_html__("La vérification des liens a été programmée et s'exécute en arrière-plan.", 'liens-morts-detector-jlg')
             );
+
+            if ($manual_trigger_failed) {
+                printf(
+                    '<div class="notice notice-error is-dismissible"><p>%s</p></div>',
+                    esc_html__(
+                        "Le déclenchement immédiat du cron a échoué. Le système WordPress essaiera de l'exécuter automatiquement.",
+                        'liens-morts-detector-jlg'
+                    )
+                );
+            }
         }
     }
 
@@ -223,10 +258,45 @@ function blc_dashboard_images_page() {
                 esc_html__("La vérification des images n'a pas pu être programmée. Veuillez réessayer.", 'liens-morts-detector-jlg')
             );
         } else {
+            $manual_trigger_failed = false;
+
+            if (!defined('DISABLE_WP_CRON') || !DISABLE_WP_CRON) {
+                $manual_trigger_result = null;
+
+                if (function_exists('spawn_cron')) {
+                    $manual_trigger_result = spawn_cron();
+                } elseif (function_exists('wp_cron')) {
+                    $manual_trigger_result = wp_cron();
+                }
+
+                if (null !== $manual_trigger_result) {
+                    $is_error = (false === $manual_trigger_result);
+
+                    if (function_exists('is_wp_error') && is_wp_error($manual_trigger_result)) {
+                        $is_error = true;
+                    }
+
+                    if ($is_error) {
+                        $manual_trigger_failed = true;
+                        error_log('BLC: Manual cron trigger failed for image check.');
+                    }
+                }
+            }
+
             printf(
                 '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
                 esc_html__("La vérification des images a été programmée et s'exécute en arrière-plan.", 'liens-morts-detector-jlg')
             );
+
+            if ($manual_trigger_failed) {
+                printf(
+                    '<div class="notice notice-error is-dismissible"><p>%s</p></div>',
+                    esc_html__(
+                        "Le déclenchement immédiat du cron a échoué. Le système WordPress essaiera de l'exécuter automatiquement.",
+                        'liens-morts-detector-jlg'
+                    )
+                );
+            }
         }
     }
 

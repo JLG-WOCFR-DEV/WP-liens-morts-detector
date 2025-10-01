@@ -2,6 +2,7 @@
 
 namespace {
     require_once __DIR__ . '/translation-stubs.php';
+    require_once __DIR__ . '/stubs/cron-stubs.php';
 }
 
 namespace Tests {
@@ -123,6 +124,7 @@ class BlcDashboardLinksPageTest extends TestCase
         }
 
         $_POST = [];
+        unset($GLOBALS['__blc_spawn_cron_callback'], $GLOBALS['__blc_wp_cron_callback']);
     }
 
     public function test_last_check_time_uses_site_timezone(): void
@@ -173,6 +175,51 @@ class BlcDashboardLinksPageTest extends TestCase
         $this->assertStringContainsString('notice-error', $output);
         $this->assertStringContainsString("La vérification des liens n'a pas pu être programmée.", $output);
         $this->assertStringNotContainsString("La vérification des liens a été programmée", $output);
+    }
+
+    public function test_manual_check_triggers_spawn_cron_when_schedule_succeeds(): void
+    {
+        $_POST['blc_manual_check'] = '1';
+
+        $calls = 0;
+        $GLOBALS['__blc_spawn_cron_callback'] = static function () use (&$calls) {
+            $calls++;
+
+            return true;
+        };
+
+        ob_start();
+        blc_dashboard_links_page();
+        $output = (string) ob_get_clean();
+
+        $this->assertSame(1, $calls);
+        $this->assertStringContainsString("La vérification des liens a été programmée", $output);
+        $this->assertStringNotContainsString("Le déclenchement immédiat du cron a échoué", $output);
+    }
+
+    public function test_manual_check_shows_error_when_manual_trigger_fails(): void
+    {
+        $_POST['blc_manual_check'] = '1';
+
+        $calls = 0;
+        $GLOBALS['__blc_spawn_cron_callback'] = static function () use (&$calls) {
+            $calls++;
+
+            return false;
+        };
+
+        Functions\expect('error_log')->once()->withArgs(static function ($message) {
+            return is_string($message)
+                && str_contains($message, 'Manual cron trigger failed for link check');
+        });
+
+        ob_start();
+        blc_dashboard_links_page();
+        $output = (string) ob_get_clean();
+
+        $this->assertSame(1, $calls);
+        $this->assertStringContainsString("La vérification des liens a été programmée", $output);
+        $this->assertStringContainsString("Le déclenchement immédiat du cron a échoué", $output);
     }
 
     /**
