@@ -1,4 +1,6 @@
 jQuery(document).ready(function($) {
+    var ACTION_FOCUS_SELECTOR = '.blc-edit-link, .blc-unlink';
+
     var defaultMessages = {
         editPromptMessage: "Entrez la nouvelle URL pour :\n%s",
         editPromptDefault: 'https://',
@@ -14,10 +16,57 @@ jQuery(document).ready(function($) {
         emptyUrlMessage: 'Veuillez saisir une URL.',
         invalidUrlMessage: 'Veuillez saisir une URL valide.',
         sameUrlMessage: "La nouvelle URL doit être différente de l'URL actuelle.",
-        genericError: 'Une erreur est survenue. Veuillez réessayer.'
+        genericError: 'Une erreur est survenue. Veuillez réessayer.',
+        successAnnouncement: 'La ligne a été mise à jour avec succès.'
     };
 
     var messages = $.extend({}, defaultMessages, window.blcAdminMessages || {});
+
+    var accessibility = (function() {
+        var $liveRegion = null;
+
+        function ensureLiveRegion() {
+            if ($liveRegion && $liveRegion.length && document.body.contains($liveRegion[0])) {
+                return $liveRegion;
+            }
+
+            $liveRegion = $('<div>', {
+                class: 'blc-aria-live screen-reader-text',
+                'aria-live': 'polite',
+                'aria-atomic': 'true'
+            });
+
+            $('body').append($liveRegion);
+
+            return $liveRegion;
+        }
+
+        function speak(message, politeness) {
+            if (!message) {
+                return;
+            }
+
+            if (window.wp && wp.a11y && typeof wp.a11y.speak === 'function') {
+                wp.a11y.speak(message, politeness || 'polite');
+                return;
+            }
+
+            var $region = ensureLiveRegion();
+            $region.text('');
+
+            window.setTimeout(function() {
+                $region.text(message);
+            }, 50);
+        }
+
+        return {
+            speak: speak,
+            ensureLiveRegion: ensureLiveRegion
+        };
+    })();
+
+    window.blcAdmin = window.blcAdmin || {};
+    window.blcAdmin.accessibility = accessibility;
 
     var modal = (function() {
         var $modal = $('#blc-modal');
@@ -103,7 +152,23 @@ jQuery(document).ready(function($) {
             $modal.toggleClass('is-submitting', isSubmitting);
         }
 
-        function close() {
+        function normalizeFocusTarget(focusTarget) {
+            if (!focusTarget) {
+                return null;
+            }
+
+            if (focusTarget.jquery) {
+                focusTarget = focusTarget.get(0);
+            }
+
+            if (focusTarget && typeof focusTarget.focus === 'function') {
+                return focusTarget;
+            }
+
+            return null;
+        }
+
+        function close(focusTarget) {
             if (!state.isOpen) {
                 return;
             }
@@ -124,8 +189,18 @@ jQuery(document).ready(function($) {
             $input.val('').attr('type', 'url');
             $field.removeClass('is-hidden');
 
-            if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
-                lastFocusedElement.focus();
+            var finalFocusTarget = normalizeFocusTarget(focusTarget);
+
+            var body = document.body;
+
+            if (!finalFocusTarget && lastFocusedElement && body && typeof body.contains === 'function' && body.contains(lastFocusedElement) && typeof lastFocusedElement.focus === 'function') {
+                finalFocusTarget = lastFocusedElement;
+            }
+
+            if (finalFocusTarget) {
+                window.setTimeout(function() {
+                    finalFocusTarget.focus();
+                }, 0);
             }
 
             lastFocusedElement = null;
@@ -279,6 +354,71 @@ jQuery(document).ready(function($) {
         };
     })();
 
+    function getAnnouncementMessage(response) {
+        if (!response || !response.data) {
+            return messages.successAnnouncement || '';
+        }
+
+        var data = response.data;
+
+        if (typeof data.announcement === 'string' && data.announcement.trim()) {
+            return data.announcement.trim();
+        }
+
+        if (typeof data.message === 'string' && data.message.trim()) {
+            return data.message.trim();
+        }
+
+        return messages.successAnnouncement || '';
+    }
+
+    function findNextFocusTarget(row) {
+        var $row = row && row.jquery ? row : $(row);
+
+        if (!$row || !$row.length) {
+            return null;
+        }
+
+        var $candidate = $row.nextAll('tr').filter(':visible').find(ACTION_FOCUS_SELECTOR).filter(':visible').first();
+
+        if (!$candidate.length) {
+            $candidate = $row.prevAll('tr').filter(':visible').find(ACTION_FOCUS_SELECTOR).filter(':visible').first();
+        }
+
+        if (!$candidate.length) {
+            $candidate = $('#post-query-submit').filter(':visible').first();
+        }
+
+        if (!$candidate.length) {
+            $candidate = $('.tablenav .button, .tablenav input[type="submit"]').filter(':visible').first();
+        }
+
+        return $candidate.length ? $candidate[0] : null;
+    }
+
+    function handleSuccessfulResponse(response, row, helpers) {
+        var $row = row && row.jquery ? row : $(row);
+
+        accessibility.speak(getAnnouncementMessage(response), 'polite');
+
+        var nextFocusTarget = findNextFocusTarget($row);
+
+        if (helpers && typeof helpers.close === 'function') {
+            helpers.close(nextFocusTarget);
+        }
+
+        if ($row && $row.length) {
+            $row.fadeOut(300, function() {
+                $(this).remove();
+            });
+        }
+    }
+
+    window.blcAdmin.listActions = $.extend({}, window.blcAdmin.listActions, {
+        handleSuccessfulResponse: handleSuccessfulResponse,
+        findNextFocusTarget: findNextFocusTarget
+    });
+
     function hasWhitespace(value) {
         return /\s/.test(value);
     }
@@ -347,8 +487,7 @@ jQuery(document).ready(function($) {
                     _ajax_nonce: nonce
                 }).done(function(response) {
                     if (response && response.success) {
-                        helpers.close();
-                        row.fadeOut(300, function() { $(this).remove(); });
+                        handleSuccessfulResponse(response, row, helpers);
                     } else {
                         var errorMessage = response && response.data && response.data.message
                             ? response.data.message
@@ -412,8 +551,7 @@ jQuery(document).ready(function($) {
                     _ajax_nonce: nonce
                 }).done(function(response) {
                     if (response && response.success) {
-                        helpers.close();
-                        row.fadeOut(300, function() { $(this).remove(); });
+                        handleSuccessfulResponse(response, row, helpers);
                     } else {
                         var errorMessage = response && response.data && response.data.message
                             ? response.data.message
