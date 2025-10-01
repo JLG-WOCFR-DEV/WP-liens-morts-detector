@@ -57,6 +57,64 @@ class BLC_Links_List_Table extends WP_List_Table {
             return;
         }
 
+        $available_post_types = [];
+        $post_types = function_exists('get_post_types') ? get_post_types(['public' => true]) : [];
+        if (is_array($post_types)) {
+            foreach ($post_types as $post_type) {
+                if (is_string($post_type) && $post_type !== '') {
+                    $available_post_types[] = $post_type;
+                }
+            }
+        }
+
+        $selected_post_type = '';
+        if (isset($_GET['post_type'])) {
+            $candidate = sanitize_key(wp_unslash($_GET['post_type']));
+            if ($candidate !== '') {
+                $selected_post_type = $candidate;
+            }
+        }
+
+        if (!empty($available_post_types)) {
+            echo '<div class="alignleft actions">';
+            echo '<label class="screen-reader-text" for="blc-post-type-filter">' . esc_html__('Filtrer par type de contenu', 'liens-morts-detector-jlg') . '</label>';
+
+            $select  = '<select name="post_type" id="blc-post-type-filter" aria-label="' . esc_attr__('Filtrer par type de contenu', 'liens-morts-detector-jlg') . '">';
+            $select .= '<option value="">' . esc_html__('Tous les types de contenu', 'liens-morts-detector-jlg') . '</option>';
+
+            foreach ($available_post_types as $post_type) {
+                $label = $post_type;
+                if (function_exists('get_post_type_object')) {
+                    $post_type_object = get_post_type_object($post_type);
+                    if (is_object($post_type_object)) {
+                        if (isset($post_type_object->labels) && is_object($post_type_object->labels) && !empty($post_type_object->labels->singular_name)) {
+                            $label = (string) $post_type_object->labels->singular_name;
+                        } elseif (!empty($post_type_object->label)) {
+                            $label = (string) $post_type_object->label;
+                        }
+                    }
+                }
+
+                $is_selected = ($selected_post_type === $post_type) ? ' selected="selected"' : '';
+                $select     .= sprintf(
+                    '<option value="%1$s"%3$s>%2$s</option>',
+                    esc_attr($post_type),
+                    esc_html($label),
+                    $is_selected
+                );
+            }
+
+            $select .= '</select>';
+            echo $select; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+
+            printf(
+                '<input type="submit" class="button" value="%s" />',
+                esc_attr__('Filtrer', 'liens-morts-detector-jlg')
+            );
+
+            echo '</div>';
+        }
+
         echo $this->get_search_box(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
     }
 
@@ -349,6 +407,24 @@ class BLC_Links_List_Table extends WP_List_Table {
         $current_page = max(1, (int) $this->get_pagenum());
         $search_term  = $this->get_search_term();
 
+        $available_post_types = [];
+        $post_types = function_exists('get_post_types') ? get_post_types(['public' => true]) : [];
+        if (is_array($post_types)) {
+            foreach ($post_types as $post_type) {
+                if (is_string($post_type) && $post_type !== '') {
+                    $available_post_types[] = $post_type;
+                }
+            }
+        }
+
+        $selected_post_type = '';
+        if (isset($_GET['post_type'])) {
+            $candidate = sanitize_key(wp_unslash($_GET['post_type']));
+            if ($candidate !== '') {
+                $selected_post_type = $candidate;
+            }
+        }
+
         if (is_array($data)) {
             $total_items = ($total_items_override !== null) ? (int) $total_items_override : count($data);
             $this->set_pagination_args(['total_items' => $total_items, 'per_page' => $per_page]);
@@ -371,6 +447,11 @@ class BLC_Links_List_Table extends WP_List_Table {
             $like = '%' . $wpdb->esc_like($search_term) . '%';
             $where[] = '(url LIKE %s OR anchor LIKE %s OR post_title LIKE %s)';
             $params  = array_merge($params, [$like, $like, $like]);
+        }
+
+        if ($selected_post_type !== '' && in_array($selected_post_type, $available_post_types, true)) {
+            $where[] = 'post_type = %s';
+            $params[] = $selected_post_type;
         }
 
         if ($current_view === 'internal') {
