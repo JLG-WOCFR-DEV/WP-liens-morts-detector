@@ -26,4 +26,24 @@ class WP_List_Table
             ? (int) $_REQUEST['paged']
             : 1;
     }
+
+    public function views()
+    {
+        if (!method_exists($this, 'get_views')) {
+            return;
+        }
+
+        $views = $this->get_views();
+
+        if (empty($views)) {
+            return;
+        }
+
+        echo implode('', $views);
+    }
+
+    public function display()
+    {
+        // Intentionally left blank for tests.
+    }
 }
