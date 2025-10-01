@@ -211,6 +211,7 @@ class BlcScannerTest extends TestCase
             'blc_last_check_time'  => 0,
             'blc_notification_recipients' => '',
             'blc_post_statuses'    => ['publish'],
+            'blc_remote_image_scan_enabled' => false,
         ];
 
         $this->httpRequests = [];
@@ -3044,10 +3045,10 @@ class BlcScannerTest extends TestCase
         $deleteQueryFound = false;
         foreach ($wpdb->queries as $query) {
             $sql = $query['sql'] ?? '';
-            if (strpos($sql, 'SET scan_run_id = NULL') !== false && strpos($sql, "type = 'image'") !== false) {
+            if (strpos($sql, 'SET scan_run_id = NULL') !== false && strpos($sql, "type IN ('image','remote-image')") !== false) {
                 $restoreQueryFound = true;
             }
-            if (strpos($sql, 'DELETE FROM wp_blc_broken_links') !== false && strpos($sql, 'scan_run_id') !== false && strpos($sql, "type = 'image'") !== false) {
+            if (strpos($sql, 'DELETE FROM wp_blc_broken_links') !== false && strpos($sql, 'scan_run_id') !== false && strpos($sql, "type IN ('image','remote-image')") !== false) {
                 $deleteQueryFound = true;
             }
         }
@@ -3114,10 +3115,10 @@ class BlcScannerTest extends TestCase
         $deleteQueryFound = false;
         foreach ($wpdb->queries as $query) {
             $sql = $query['sql'] ?? '';
-            if (strpos($sql, 'SET scan_run_id') !== false && strpos($sql, "type = 'image'") !== false) {
+            if (strpos($sql, 'SET scan_run_id') !== false && strpos($sql, "type IN ('image','remote-image')") !== false) {
                 $markQueryFound = true;
             }
-            if (strpos($sql, 'DELETE FROM wp_blc_broken_links') !== false && strpos($sql, 'scan_run_id') !== false && strpos($sql, "type = 'image'") !== false) {
+            if (strpos($sql, 'DELETE FROM wp_blc_broken_links') !== false && strpos($sql, 'scan_run_id') !== false && strpos($sql, "type IN ('image','remote-image')") !== false) {
                 $deleteQueryFound = true;
             }
         }
@@ -3362,6 +3363,111 @@ class BlcScannerTest extends TestCase
                 'basedir' => sys_get_temp_dir() . '/uploads-test',
             ];
         });
+    }
+
+    public function test_blc_perform_image_check_skips_remote_cdn_when_option_disabled(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $uploads_dir = sys_get_temp_dir() . '/uploads-remote-off-' . uniqid('', true);
+        if (!is_dir($uploads_dir) && !mkdir($uploads_dir, 0777, true) && !is_dir($uploads_dir)) {
+            $this->fail('Unable to create uploads directory for test.');
+        }
+
+        Functions\when('wp_upload_dir')->alias(function () use ($uploads_dir) {
+            return [
+                'baseurl' => 'https://example.com/wp-content/uploads',
+                'basedir' => $uploads_dir,
+            ];
+        });
+
+        $this->options['blc_remote_image_scan_enabled'] = false;
+
+        $post = (object) [
+            'ID' => 501,
+            'post_title' => 'Remote CDN Disabled',
+            'post_content' => '<img src="https://cdn.example.net/wp-content/uploads/2024/05/remote-disabled.png" />',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_image_check(0, true);
+
+        $this->assertCount(
+            0,
+            $wpdb->inserted,
+            'Remote CDN images should be ignored when the option is disabled.'
+        );
+
+        Functions\when('wp_upload_dir')->alias(function () {
+            return [
+                'baseurl' => 'https://example.com/wp-content/uploads',
+                'basedir' => sys_get_temp_dir() . '/uploads-test',
+            ];
+        });
+
+        if (is_dir($uploads_dir)) {
+            @rmdir($uploads_dir);
+        }
+    }
+
+    public function test_blc_perform_image_check_records_remote_cdn_when_option_enabled(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $uploads_dir = sys_get_temp_dir() . '/uploads-remote-on-' . uniqid('', true);
+        if (!is_dir($uploads_dir) && !mkdir($uploads_dir, 0777, true) && !is_dir($uploads_dir)) {
+            $this->fail('Unable to create uploads directory for test.');
+        }
+
+        Functions\when('wp_upload_dir')->alias(function () use ($uploads_dir) {
+            return [
+                'baseurl' => 'https://example.com/wp-content/uploads',
+                'basedir' => $uploads_dir,
+            ];
+        });
+
+        Functions\when('blc_is_safe_remote_host')->alias(fn() => true);
+        $this->options['blc_remote_image_scan_enabled'] = true;
+
+        $post = (object) [
+            'ID' => 777,
+            'post_title' => 'Remote CDN Enabled',
+            'post_content' => '<img src="https://cdn.example.net/wp-content/uploads/2024/05/remote-enabled.png" />',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_image_check(0, true);
+
+        $this->assertCount(1, $wpdb->inserted, 'Remote CDN images should be recorded when the option is enabled.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('remote-image', $insert['data']['type']);
+        $this->assertSame('remote-enabled.png', $insert['data']['anchor']);
+        $this->assertSame(777, $insert['data']['post_id']);
+        $this->assertSame(
+            'https://cdn.example.net/wp-content/uploads/2024/05/remote-enabled.png',
+            $insert['data']['url']
+        );
+
+        Functions\when('wp_upload_dir')->alias(function () {
+            return [
+                'baseurl' => 'https://example.com/wp-content/uploads',
+                'basedir' => sys_get_temp_dir() . '/uploads-test',
+            ];
+        });
+
+        if (is_dir($uploads_dir)) {
+            @rmdir($uploads_dir);
+        }
     }
 
     public function test_blc_perform_image_check_detects_missing_srcset_variant(): void

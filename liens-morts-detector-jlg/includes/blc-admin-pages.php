@@ -302,12 +302,22 @@ function blc_dashboard_images_page() {
 
     global $wpdb;
     $table_name = $wpdb->prefix . 'blc_broken_links';
-    $broken_images_count = (int) $wpdb->get_var(
-        $wpdb->prepare(
-            "SELECT COUNT(*) FROM $table_name WHERE type = %s",
-            'image'
-        )
-    );
+    $image_row_types = blc_get_dataset_row_types('image');
+    if (count($image_row_types) === 1) {
+        $broken_images_count = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(*) FROM $table_name WHERE type = %s",
+                reset($image_row_types)
+            )
+        );
+    } else {
+        $placeholders = implode(',', array_fill(0, count($image_row_types), '%s'));
+        $query = $wpdb->prepare(
+            "SELECT COUNT(*) FROM $table_name WHERE type IN ($placeholders)",
+            $image_row_types
+        );
+        $broken_images_count = (int) $wpdb->get_var($query);
+    }
     $option_size_bytes = blc_get_dataset_storage_footprint_bytes('image');
     $last_image_check_time = get_option('blc_last_image_check_time', 0);
     $option_size_kb      = $option_size_bytes / 1024;
@@ -465,6 +475,9 @@ function blc_settings_page() {
         $scan_method_raw = isset($_POST['blc_scan_method']) ? wp_unslash($_POST['blc_scan_method']) : '';
         $scan_method = sanitize_text_field($scan_method_raw);
         update_option('blc_scan_method', $scan_method);
+
+        $remote_image_scan_enabled = isset($_POST['blc_remote_image_scan_enabled']) ? (bool) $_POST['blc_remote_image_scan_enabled'] : false;
+        update_option('blc_remote_image_scan_enabled', $remote_image_scan_enabled);
 
         $available_status_names = get_post_stati([], 'names');
         if (!is_array($available_status_names)) {
@@ -663,6 +676,7 @@ function blc_settings_page() {
         $get_timeout_limits['max']
     );
     $scan_method = get_option('blc_scan_method', 'precise');
+    $remote_image_scan_enabled = (bool) get_option('blc_remote_image_scan_enabled', false);
     $excluded_domains = get_option('blc_excluded_domains', "x.com\ntwitter.com\nlinkedin.com");
     $debug_mode = get_option('blc_debug_mode', false);
     $notification_recipients = (string) get_option('blc_notification_recipients', '');
@@ -866,6 +880,30 @@ function blc_settings_page() {
                         </td>
                     </tr>
                  </tbody>
+            </table>
+            <h2><?php esc_html_e('Images distantes', 'liens-morts-detector-jlg'); ?></h2>
+            <table class="form-table" role="presentation">
+                <tbody>
+                    <tr>
+                        <th scope="row"><?php esc_html_e('Analyse des images CDN', 'liens-morts-detector-jlg'); ?></th>
+                        <td>
+                            <fieldset>
+                                <label for="blc_remote_image_scan_enabled">
+                                    <input type="checkbox" name="blc_remote_image_scan_enabled" id="blc_remote_image_scan_enabled" <?php checked($remote_image_scan_enabled, true); ?>>
+                                    <?php esc_html_e('Vérifier aussi les images servies depuis un domaine ou un CDN distinct.', 'liens-morts-detector-jlg'); ?>
+                                </label>
+                                <p class="description">
+                                    <?php
+                                    echo wp_kses(
+                                        __('Activez cette option si vos images sont délivrées via un CDN ou un sous-domaine dédié. Le plugin s\'appuie toujours sur les fichiers présents dans <code>wp-content/uploads</code> pour détecter les absences. Cette vérification supplémentaire peut rallonger la durée du scan et consommer davantage de quotas côté CDN (latence, limitations de requêtes).', 'liens-morts-detector-jlg'),
+                                        ['code' => []]
+                                    );
+                                    ?>
+                                </p>
+                            </fieldset>
+                        </td>
+                    </tr>
+                </tbody>
             </table>
             <h2><?php esc_html_e('Notifications', 'liens-morts-detector-jlg'); ?></h2>
             <table class="form-table" role="presentation">

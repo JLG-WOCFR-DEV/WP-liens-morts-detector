@@ -10,6 +10,10 @@ if (!class_exists('WP_List_Table')) {
     require_once(ABSPATH . 'wp-admin/includes/class-wp-list-table.php');
 }
 
+if (!function_exists('blc_get_dataset_row_types')) {
+    require_once __DIR__ . '/blc-utils.php';
+}
+
 /**
  * Classe pour afficher la liste des images cassées dans une table d'administration WordPress
  * avec pagination et colonnes personnalisées.
@@ -128,23 +132,47 @@ class BLC_Images_List_Table extends WP_List_Table {
         global $wpdb;
         $table_name = $wpdb->prefix . 'blc_broken_links';
 
-        $total_items = (int) $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT COUNT(*) FROM $table_name WHERE type = %s",
-                'image'
-            )
-        );
+        $image_row_types = blc_get_dataset_row_types('image');
+        if (count($image_row_types) === 1) {
+            $total_items = (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM $table_name WHERE type = %s",
+                    reset($image_row_types)
+                )
+            );
+        } else {
+            $placeholders = implode(',', array_fill(0, count($image_row_types), '%s'));
+            $total_items = (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM $table_name WHERE type IN ($placeholders)",
+                    $image_row_types
+                )
+            );
+        }
 
         $offset = ($current_page - 1) * $per_page;
 
-        $data_query = $wpdb->prepare(
-            "SELECT url, anchor, post_id, post_title, http_status, last_checked_at
-             FROM $table_name
-             WHERE type = %s
-             ORDER BY id DESC
-             LIMIT %d OFFSET %d",
-            ['image', $per_page, $offset]
-        );
+        if (count($image_row_types) === 1) {
+            $data_query = $wpdb->prepare(
+                "SELECT url, anchor, post_id, post_title, http_status, last_checked_at
+                 FROM $table_name
+                 WHERE type = %s
+                 ORDER BY id DESC
+                 LIMIT %d OFFSET %d",
+                [reset($image_row_types), $per_page, $offset]
+            );
+        } else {
+            $placeholders = implode(',', array_fill(0, count($image_row_types), '%s'));
+            $args = array_merge($image_row_types, [$per_page, $offset]);
+            $data_query = $wpdb->prepare(
+                "SELECT url, anchor, post_id, post_title, http_status, last_checked_at
+                 FROM $table_name
+                 WHERE type IN ($placeholders)
+                 ORDER BY id DESC
+                 LIMIT %d OFFSET %d",
+                $args
+            );
+        }
         $items = $wpdb->get_results($data_query, ARRAY_A);
 
         $this->set_pagination_args(['total_items' => $total_items, 'per_page' => $per_page]);
