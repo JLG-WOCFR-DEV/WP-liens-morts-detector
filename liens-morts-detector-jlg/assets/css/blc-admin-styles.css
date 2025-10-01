@@ -108,8 +108,11 @@
         content: attr(data-colname) ":";
         font-weight: 600;
         color: #50575e;
-        flex: 0 0 120px;
-        max-width: 40%;
+        flex: 0 0 clamp(96px, 42%, 180px);
+        max-width: 100%;
+        white-space: normal;
+        word-break: break-word;
+        margin-right: 6px;
         text-transform: none;
         letter-spacing: 0;
     }
