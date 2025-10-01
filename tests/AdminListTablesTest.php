@@ -201,8 +201,10 @@ class AdminListTablesTest extends TestCase
         $this->assertCount(20, $table->items);
         $this->assertSame($expected_items, $table->items);
         $this->assertStringContainsString('COUNT(*)', $wpdb->last_get_var_query);
+        $this->assertStringContainsString('ignored_at IS NULL', $wpdb->last_get_var_query);
         $this->assertStringContainsString('LIMIT 20', $wpdb->last_get_results_query);
         $this->assertStringContainsString('OFFSET 0', $wpdb->last_get_results_query);
+        $this->assertStringContainsString('ignored_at IS NULL', $wpdb->last_get_results_query);
     }
 
     public function test_images_columns_display_status_and_timestamp(): void
@@ -264,6 +266,8 @@ class AdminListTablesTest extends TestCase
 
         $this->assertStringContainsString($expected_like, $wpdb->last_get_var_query);
         $this->assertStringContainsString($expected_like, $wpdb->last_get_results_query);
+        $this->assertStringContainsString('ignored_at IS NULL', $wpdb->last_get_var_query);
+        $this->assertStringContainsString('ignored_at IS NULL', $wpdb->last_get_results_query);
     }
 
     public function test_links_prepare_items_internal_filter_adds_like_condition(): void
@@ -289,6 +293,8 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString("(url LIKE '//example.com%' AND url REGEXP '^//example\\\.com(?:[/?#]|$)')", $wpdb->last_get_results_query);
         $this->assertStringContainsString("url LIKE '/%' AND url NOT LIKE '//%'", $wpdb->last_get_results_query);
         $this->assertStringContainsString("(url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_results_query);
+        $this->assertStringContainsString('ignored_at IS NULL', $wpdb->last_get_results_query);
+        $this->assertStringContainsString('ignored_at IS NULL', $wpdb->last_get_var_query);
     }
 
     public function test_links_prepare_items_external_filter_adds_not_like_condition(): void
@@ -316,6 +322,8 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString("NOT ((url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_results_query);
         $this->assertStringContainsString('url IS NULL', $wpdb->last_get_results_query);
         $this->assertStringContainsString("url = ''", $wpdb->last_get_results_query);
+        $this->assertStringContainsString('ignored_at IS NULL', $wpdb->last_get_results_query);
+        $this->assertStringContainsString('ignored_at IS NULL', $wpdb->last_get_var_query);
     }
 
     public function test_links_prepare_items_external_filter_includes_lookalike_domains(): void
@@ -345,6 +353,22 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString("NOT ((url LIKE 'https://example.com%' AND url REGEXP '^https://example\\\.com(?:[/?#]|$)'))", $wpdb->last_get_results_query);
     }
 
+    public function test_links_prepare_items_ignored_view_adds_condition(): void
+    {
+        global $wpdb;
+        $wpdb = new DummyWpdb();
+        $wpdb->get_var_return_values = [3];
+        $wpdb->results_to_return = $this->createItems(3, 'ignored');
+
+        $_GET['link_type'] = 'ignored';
+
+        $table = new \BLC_Links_List_Table();
+        $table->prepare_items();
+
+        $this->assertStringContainsString('ignored_at IS NOT NULL', $wpdb->last_get_var_query);
+        $this->assertStringContainsString('ignored_at IS NOT NULL', $wpdb->last_get_results_query);
+    }
+
     public function test_links_get_views_counts_internal_patterns(): void
     {
         global $wpdb;
@@ -352,7 +376,7 @@ class AdminListTablesTest extends TestCase
         $wpdb->get_row_return_value = [
             'total'          => 3,
             'internal_count' => 2,
-            'external_count' => 1,
+            'ignored_count'  => 1,
         ];
 
         $table = new \BLC_Links_List_Table();
@@ -362,11 +386,13 @@ class AdminListTablesTest extends TestCase
 
         $this->assertArrayHasKey('internal', $views);
         $this->assertArrayHasKey('external', $views);
-        $this->assertStringContainsString("CASE WHEN (url LIKE 'https://example.com%' AND url REGEXP '^https://example\\\.com(?:[/?#]|$)') THEN 1", $wpdb->last_get_row_query);
-        $this->assertStringContainsString("WHEN (url LIKE 'http://example.com%' AND url REGEXP '^http://example\\\.com(?:[/?#]|$)') THEN 1", $wpdb->last_get_row_query);
-        $this->assertStringContainsString("(url LIKE '//example.com%' AND url REGEXP '^//example\\\.com(?:[/?#]|$)')", $wpdb->last_get_row_query);
-        $this->assertStringContainsString("'/%'", $wpdb->last_get_row_query);
-        $this->assertStringContainsString("WHEN (url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_row_query);
+        $this->assertStringContainsString('SUM(CASE WHEN ignored_at IS NULL THEN 1 ELSE 0 END) AS total', $wpdb->last_get_row_query);
+        $this->assertStringContainsString('SUM(CASE WHEN ignored_at IS NOT NULL THEN 1 ELSE 0 END) AS ignored_count', $wpdb->last_get_row_query);
+        $this->assertStringContainsString('WHEN ignored_at IS NULL THEN', $wpdb->last_get_row_query);
+        $this->assertStringContainsString('ELSE CASE', $wpdb->last_get_row_query);
+        $this->assertStringContainsString('ignored_at IS NULL AND http_status IN (404, 410)', $wpdb->last_get_row_query);
+        $this->assertStringContainsString('ignored_at IS NULL AND http_status BETWEEN 500 AND 599', $wpdb->last_get_row_query);
+        $this->assertStringContainsString('ignored_at IS NULL AND http_status BETWEEN 300 AND 399', $wpdb->last_get_row_query);
         $prepare_call = end($wpdb->prepare_calls);
         $this->assertIsArray($prepare_call);
         $this->assertSame('link', end($prepare_call[1]));
@@ -380,6 +406,8 @@ class AdminListTablesTest extends TestCase
         $this->assertContains('%://%', $prepare_call[1]);
         $this->assertContains('//%', $prepare_call[1]);
         $this->assertContains('%:%', $prepare_call[1]);
+        $this->assertContains('0000-00-00 00:00:00', $prepare_call[1]);
+        $this->assertStringContainsString("Ignorés <span class='count'>(1)</span>", $views['ignored']);
     }
 
     public function test_links_get_views_counts_internal_includes_http_links(): void
@@ -389,7 +417,7 @@ class AdminListTablesTest extends TestCase
         $wpdb->get_row_return_value = [
             'total'          => 2,
             'internal_count' => 1,
-            'external_count' => 1,
+            'ignored_count'  => 0,
         ];
 
         $table = new \BLC_Links_List_Table();
@@ -400,6 +428,7 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString("url LIKE 'http://example.com%'", $wpdb->last_get_row_query);
         $this->assertArrayHasKey('internal', $views);
         $this->assertStringContainsString("Internes <span class='count'>(1)</span>", $views['internal']);
+        $this->assertArrayHasKey('ignored', $views);
     }
 
     public function test_images_prepare_items_supports_injected_data_with_pagination(): void
@@ -513,6 +542,7 @@ class DummyWpdb
             'total'          => 0,
             'internal_count' => 0,
             'external_count' => 0,
+            'ignored_count'  => 0,
         ];
     }
 }

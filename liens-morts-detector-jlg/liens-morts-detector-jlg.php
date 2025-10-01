@@ -136,6 +136,12 @@ function blc_enqueue_admin_assets($hook) {
             'editModalConfirm'   => __('Mettre à jour', 'liens-morts-detector-jlg'),
             'unlinkModalTitle'   => __('Supprimer le lien', 'liens-morts-detector-jlg'),
             'unlinkModalConfirm' => __('Supprimer', 'liens-morts-detector-jlg'),
+            'ignoreModalTitle'   => __('Ignorer ce lien ?', 'liens-morts-detector-jlg'),
+            'ignoreModalMessage' => __('Ce lien sera masqué des résultats et ne sera plus pris en compte lors des prochains contrôles.', 'liens-morts-detector-jlg'),
+            'ignoreModalConfirm' => __('Ignorer', 'liens-morts-detector-jlg'),
+            'restoreModalTitle'  => __('Réactiver le lien ignoré', 'liens-morts-detector-jlg'),
+            'restoreModalMessage' => __('Le lien réapparaîtra dans la liste principale et pourra de nouveau être vérifié.', 'liens-morts-detector-jlg'),
+            'restoreModalConfirm' => __('Réintégrer', 'liens-morts-detector-jlg'),
             'cancelButton'       => __('Annuler', 'liens-morts-detector-jlg'),
             'closeLabel'         => __('Fermer la fenêtre modale', 'liens-morts-detector-jlg'),
             'emptyUrlMessage'    => __('Veuillez saisir une URL.', 'liens-morts-detector-jlg'),
@@ -570,4 +576,143 @@ function blc_ajax_unlink_callback() {
     }
 
     wp_send_json_success();
+}
+
+add_action('wp_ajax_blc_ignore_link', 'blc_ajax_ignore_link_callback');
+function blc_ajax_ignore_link_callback() {
+    check_ajax_referer('blc_ignore_link_nonce');
+
+    $params = blc_require_post_params(['post_id', 'row_id', 'mode']);
+
+    $post_id = absint($params['post_id']);
+    $row_id  = absint($params['row_id']);
+    $mode_raw = strtolower($params['mode']);
+    $mode = ($mode_raw === 'restore') ? 'restore' : ($mode_raw === 'ignore' ? 'ignore' : '');
+
+    if ($mode === '') {
+        wp_send_json_error([
+            'message' => __('Mode d\'action invalide.', 'liens-morts-detector-jlg'),
+        ], BLC_HTTP_BAD_REQUEST);
+    }
+
+    $occurrence_input = null;
+    if (isset($_POST['occurrence_index'])) {
+        $occurrence_input = wp_unslash($_POST['occurrence_index']);
+    }
+
+    $resolution = blc_resolve_link_row($post_id, $row_id, $occurrence_input);
+    $row = $resolution['row'];
+    $table_name = $resolution['table'];
+    $row_to_delete = $resolution['cache_row'];
+    $row_cache_footprint = $resolution['cache_footprint'];
+
+    global $wpdb;
+
+    $post = get_post($post_id);
+
+    if (!$post) {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')], BLC_HTTP_FORBIDDEN);
+        }
+
+        $deleted = $wpdb->delete(
+            $table_name,
+            ['id' => $row_id],
+            ['%d']
+        );
+
+        if ($deleted && is_array($row_to_delete) && $row_cache_footprint > 0) {
+            blc_adjust_dataset_storage_footprint('link', -$row_cache_footprint);
+        }
+
+        wp_send_json_success([
+            'purged' => true,
+            'announcement' => __('Le lien a été retiré de la liste.', 'liens-morts-detector-jlg'),
+        ]);
+    }
+
+    if (!current_user_can('edit_post', $post_id)) {
+        wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')], BLC_HTTP_FORBIDDEN);
+    }
+
+    $ignored_raw = $row['ignored_at'] ?? null;
+    $is_currently_ignored = false;
+    if (is_string($ignored_raw)) {
+        $ignored_raw = trim($ignored_raw);
+    }
+    if ($ignored_raw !== null && $ignored_raw !== '' && $ignored_raw !== '0000-00-00 00:00:00') {
+        $is_currently_ignored = true;
+    }
+
+    if ($mode === 'ignore') {
+        if ($is_currently_ignored) {
+            wp_send_json_success([
+                'announcement' => __('Ce lien était déjà ignoré.', 'liens-morts-detector-jlg'),
+                'ignored' => true,
+            ]);
+        }
+
+        $ignored_at = current_time('mysql', true);
+        if (!is_string($ignored_at) || $ignored_at === '') {
+            $ignored_at = gmdate('Y-m-d H:i:s');
+        }
+
+        $updated = $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE $table_name SET ignored_at = %s WHERE id = %d",
+                $ignored_at,
+                $row_id
+            )
+        );
+
+        if ($updated === false || is_wp_error($updated)) {
+            $error_message = __('La mise à jour du statut du lien a échoué.', 'liens-morts-detector-jlg');
+            if (is_wp_error($updated)) {
+                $error_message .= ' ' . $updated->get_error_message();
+            }
+
+            wp_send_json_error(['message' => $error_message], BLC_HTTP_SERVER_ERROR);
+        }
+
+        if ($updated > 0 && is_array($row_to_delete) && $row_cache_footprint > 0) {
+            blc_adjust_dataset_storage_footprint('link', -$row_cache_footprint);
+        }
+
+        wp_send_json_success([
+            'announcement' => __('Le lien sera ignoré et masqué de la liste principale.', 'liens-morts-detector-jlg'),
+            'ignored' => true,
+        ]);
+    }
+
+    if (!$is_currently_ignored) {
+        wp_send_json_success([
+            'announcement' => __('Ce lien est déjà actif.', 'liens-morts-detector-jlg'),
+            'restored' => true,
+        ]);
+    }
+
+    $updated = $wpdb->query(
+        $wpdb->prepare(
+            "UPDATE $table_name SET ignored_at = NULL WHERE id = %d",
+            $row_id
+        )
+    );
+
+    if ($updated === false || is_wp_error($updated)) {
+        $error_message = __('La mise à jour du statut du lien a échoué.', 'liens-morts-detector-jlg');
+        if (is_wp_error($updated)) {
+            $error_message .= ' ' . $updated->get_error_message();
+        }
+
+        wp_send_json_error(['message' => $error_message], BLC_HTTP_SERVER_ERROR);
+    }
+
+    if ($updated > 0 && is_array($row_to_delete) && $row_cache_footprint > 0) {
+        blc_adjust_dataset_storage_footprint('link', $row_cache_footprint);
+    }
+
+    wp_send_json_success([
+        'announcement' => __('Le lien a été réintégré dans la liste principale.', 'liens-morts-detector-jlg'),
+        'restored' => true,
+    ]);
 }

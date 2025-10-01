@@ -1,5 +1,5 @@
 jQuery(document).ready(function($) {
-    var ACTION_FOCUS_SELECTOR = '.blc-edit-link, .blc-unlink';
+    var ACTION_FOCUS_SELECTOR = '.blc-edit-link, .blc-unlink, .blc-ignore';
 
     var defaultMessages = {
         editPromptMessage: "Entrez la nouvelle URL pour :\n%s",
@@ -11,6 +11,12 @@ jQuery(document).ready(function($) {
         editModalConfirm: 'Mettre à jour',
         unlinkModalTitle: 'Supprimer le lien',
         unlinkModalConfirm: 'Supprimer',
+        ignoreModalTitle: 'Ignorer ce lien ?',
+        ignoreModalMessage: 'Ce lien sera masqué des résultats et ne sera plus pris en compte lors des prochains contrôles.',
+        ignoreModalConfirm: 'Ignorer',
+        restoreModalTitle: 'Réactiver le lien ignoré',
+        restoreModalMessage: 'Le lien réapparaîtra dans la liste principale et pourra de nouveau être vérifié.',
+        restoreModalConfirm: 'Réintégrer',
         cancelButton: 'Annuler',
         closeLabel: 'Fermer la fenêtre modale',
         emptyUrlMessage: 'Veuillez saisir une URL.',
@@ -548,6 +554,69 @@ jQuery(document).ready(function($) {
                     row_id: rowId,
                     occurrence_index: occurrenceIndex,
                     url_to_unlink: urlToUnlink,
+                    _ajax_nonce: nonce
+                }).done(function(response) {
+                    if (response && response.success) {
+                        handleSuccessfulResponse(response, row, helpers);
+                    } else {
+                        var errorMessage = response && response.data && response.data.message
+                            ? response.data.message
+                            : messages.genericError;
+                        helpers.setSubmitting(false);
+                        helpers.showError((messages.errorPrefix || '') + errorMessage);
+                        row.css('opacity', 1);
+                    }
+                }).fail(function() {
+                    helpers.setSubmitting(false);
+                    helpers.showError(messages.genericError);
+                    row.css('opacity', 1);
+                });
+            }
+        });
+    });
+
+    $('#the-list').on('click', '.blc-ignore', function(e) {
+        e.preventDefault();
+
+        var linkElement = $(this);
+        var postId = linkElement.data('postid');
+        var rowId = linkElement.data('rowId');
+        if (typeof rowId === 'undefined') {
+            rowId = '';
+        }
+        var occurrenceIndex = linkElement.data('occurrenceIndex');
+        if (typeof occurrenceIndex === 'undefined') {
+            occurrenceIndex = '';
+        }
+        var nonce = linkElement.data('nonce');
+        var mode = (linkElement.data('ignoreMode') || '').toString().toLowerCase();
+        if (mode !== 'restore') {
+            mode = 'ignore';
+        }
+
+        var titleKey = mode === 'restore' ? 'restoreModalTitle' : 'ignoreModalTitle';
+        var messageKey = mode === 'restore' ? 'restoreModalMessage' : 'ignoreModalMessage';
+        var confirmKey = mode === 'restore' ? 'restoreModalConfirm' : 'ignoreModalConfirm';
+
+        modal.open({
+            title: messages[titleKey] || '',
+            message: messages[messageKey] || '',
+            showInput: false,
+            confirmText: messages[confirmKey] || '',
+            cancelText: messages.cancelButton,
+            closeLabel: messages.closeLabel,
+            onConfirm: function(_value, helpers) {
+                helpers.setSubmitting(true);
+
+                var row = linkElement.closest('tr');
+                row.css('opacity', 0.5);
+
+                $.post(ajaxurl, {
+                    action: 'blc_ignore_link',
+                    post_id: postId,
+                    row_id: rowId,
+                    occurrence_index: occurrenceIndex,
+                    mode: mode,
                     _ajax_nonce: nonce
                 }).done(function(response) {
                     if (response && response.success) {

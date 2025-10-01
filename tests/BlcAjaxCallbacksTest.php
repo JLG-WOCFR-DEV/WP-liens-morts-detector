@@ -135,6 +135,8 @@ class BlcAjaxCallbacksTest extends TestCase
             public $delete_calls = [];
             public $delete_return_value = true;
             public $get_row_result = null;
+            public $query_calls = [];
+            public $query_return_value = 1;
             private $get_row_callback;
 
             public function __construct(?callable $get_row_callback)
@@ -176,6 +178,13 @@ class BlcAjaxCallbacksTest extends TestCase
                 return $this->delete_return_value;
             }
 
+            public function query($sql)
+            {
+                $this->query_calls[] = $sql;
+
+                return $this->query_return_value;
+            }
+
             public function get_row($query, $output = ARRAY_A)
             {
                 if ($this->get_row_callback) {
@@ -208,22 +217,23 @@ class BlcAjaxCallbacksTest extends TestCase
                         }
 
                         if ($trimmed_occurrence !== '') {
-                            $occurrence_value = (int) $trimmed_occurrence;
-                        }
+                        $occurrence_value = (int) $trimmed_occurrence;
                     }
-
-                    $row = [
-                        'id' => $row_id,
-                        'post_id' => $post_id,
-                        'url' => $url,
-                        'anchor' => '',
-                        'post_title' => '',
-                        'occurrence_index' => $occurrence_value,
-                    ];
                 }
 
-                if ($row === null) {
-                    return null;
+                $row = [
+                    'id' => $row_id,
+                    'post_id' => $post_id,
+                    'url' => $url,
+                    'anchor' => '',
+                    'post_title' => '',
+                    'occurrence_index' => $occurrence_value,
+                    'ignored_at' => null,
+                ];
+            }
+
+            if ($row === null) {
+                return null;
                 }
 
                 if ($output === ARRAY_A) {
@@ -247,6 +257,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => 'Example',
             'post_title' => 'Sample post',
             'occurrence_index' => 2,
+            'ignored_at' => null,
         ];
 
         $result = \blc_resolve_link_row(7, 7, '2');
@@ -273,6 +284,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => 'Example',
             'post_title' => 'Sample post',
             'occurrence_index' => 4,
+            'ignored_at' => null,
         ];
 
         Functions\expect('wp_send_json_error')->once()->with([
@@ -308,6 +320,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => 'Example',
             'post_title' => 'Sample post',
             'occurrence_index' => null,
+            'ignored_at' => null,
         ];
 
         Functions\expect('wp_send_json_error')->once()->with([
@@ -452,6 +465,204 @@ class BlcAjaxCallbacksTest extends TestCase
         blc_ajax_unlink_callback();
     }
 
+    public function ignoreLinkMissingParamProvider(): array
+    {
+        return [
+            'missing post_id' => [
+                ['row_id' => '1', 'mode' => 'ignore'],
+                'post_id',
+            ],
+            'missing row_id' => [
+                ['post_id' => '3', 'mode' => 'ignore'],
+                'row_id',
+            ],
+            'missing mode' => [
+                ['post_id' => '3', 'row_id' => '7'],
+                'mode',
+            ],
+        ];
+    }
+
+    /**
+     * @dataProvider ignoreLinkMissingParamProvider
+     */
+    public function test_ignore_link_returns_error_when_required_param_is_missing(array $post_data, string $missing_param): void
+    {
+        $_POST = $post_data;
+
+        Functions\expect('check_ajax_referer')->once()->with('blc_ignore_link_nonce')->andReturn(true);
+
+        $expected_message = sprintf('Le paramètre requis "%s" est manquant ou vide.', $missing_param);
+        Functions\expect('wp_send_json_error')->once()->with(['message' => $expected_message], 400)->andReturnUsing(function () {
+            throw new \RuntimeException('error');
+        });
+
+        $this->expectExceptionMessage('error');
+        blc_ajax_ignore_link_callback();
+    }
+
+    public function test_ignore_link_rejects_invalid_mode(): void
+    {
+        $_POST = [
+            'post_id' => '10',
+            'row_id'  => '11',
+            'mode'    => 'skip',
+        ];
+
+        Functions\expect('check_ajax_referer')->once()->with('blc_ignore_link_nonce')->andReturn(true);
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => "Mode d'action invalide.",
+        ], 400)->andReturnUsing(function () {
+            throw new \RuntimeException('invalid-mode');
+        });
+
+        $this->expectExceptionMessage('invalid-mode');
+        blc_ajax_ignore_link_callback();
+    }
+
+    public function test_ignore_link_marks_row_and_updates_cache(): void
+    {
+        $_POST = [
+            'post_id' => '20',
+            'row_id'  => '21',
+            'mode'    => 'ignore',
+            'occurrence_index' => '0',
+        ];
+
+        Functions\expect('check_ajax_referer')->once()->with('blc_ignore_link_nonce')->andReturn(true);
+        Functions\expect('get_post')->once()->with(20)->andReturn((object) ['ID' => 20]);
+        Functions\expect('current_user_can')->once()->with('edit_post', 20)->andReturn(true);
+        Functions\when('current_time')->alias(function () {
+            return '2024-01-01 00:00:00';
+        });
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->prefix = 'wp_';
+        $wpdb->get_row_result = [
+            'id' => 21,
+            'post_id' => 20,
+            'url' => 'http://example.com/ignored',
+            'anchor' => 'Ignored',
+            'post_title' => 'Ignored title',
+            'occurrence_index' => 0,
+            'ignored_at' => null,
+        ];
+
+        $row_bytes = \blc_calculate_row_storage_footprint_bytes(
+            $wpdb->get_row_result['url'],
+            $wpdb->get_row_result['anchor'],
+            $wpdb->get_row_result['post_title']
+        );
+
+        Functions\expect('blc_adjust_dataset_storage_footprint')->once()->with('link', -$row_bytes);
+        Functions\expect('wp_send_json_success')->once()->with([
+            'announcement' => 'Le lien sera ignoré et masqué de la liste principale.',
+            'ignored' => true,
+        ])->andReturnUsing(function () {
+            throw new \RuntimeException('ignored-success');
+        });
+
+        $this->expectExceptionMessage('ignored-success');
+        blc_ajax_ignore_link_callback();
+
+        $this->assertNotEmpty($wpdb->query_calls);
+        $this->assertStringContainsString('ignored_at =', $wpdb->query_calls[0]);
+    }
+
+    public function test_ignore_link_restores_row_and_updates_cache(): void
+    {
+        $_POST = [
+            'post_id' => '30',
+            'row_id'  => '31',
+            'mode'    => 'restore',
+            'occurrence_index' => '0',
+        ];
+
+        Functions\expect('check_ajax_referer')->once()->with('blc_ignore_link_nonce')->andReturn(true);
+        Functions\expect('get_post')->once()->with(30)->andReturn((object) ['ID' => 30]);
+        Functions\expect('current_user_can')->once()->with('edit_post', 30)->andReturn(true);
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->prefix = 'wp_';
+        $wpdb->get_row_result = [
+            'id' => 31,
+            'post_id' => 30,
+            'url' => 'http://example.com/restored',
+            'anchor' => 'Restored',
+            'post_title' => 'Restored title',
+            'occurrence_index' => 0,
+            'ignored_at' => '2024-01-01 00:00:00',
+        ];
+
+        $row_bytes = \blc_calculate_row_storage_footprint_bytes(
+            $wpdb->get_row_result['url'],
+            $wpdb->get_row_result['anchor'],
+            $wpdb->get_row_result['post_title']
+        );
+
+        Functions\expect('blc_adjust_dataset_storage_footprint')->once()->with('link', $row_bytes);
+        Functions\expect('wp_send_json_success')->once()->with([
+            'announcement' => 'Le lien a été réintégré dans la liste principale.',
+            'restored' => true,
+        ])->andReturnUsing(function () {
+            throw new \RuntimeException('restored-success');
+        });
+
+        $this->expectExceptionMessage('restored-success');
+        blc_ajax_ignore_link_callback();
+
+        $this->assertNotEmpty($wpdb->query_calls);
+        $this->assertStringContainsString('ignored_at = NULL', end($wpdb->query_calls));
+    }
+
+    public function test_ignore_link_deletes_row_when_post_missing_and_user_can_manage(): void
+    {
+        $_POST = [
+            'post_id' => '40',
+            'row_id'  => '41',
+            'mode'    => 'ignore',
+            'occurrence_index' => '0',
+        ];
+
+        Functions\expect('check_ajax_referer')->once()->with('blc_ignore_link_nonce')->andReturn(true);
+        Functions\expect('get_post')->once()->with(40)->andReturn(null);
+        Functions\expect('current_user_can')->once()->with('manage_options')->andReturn(true);
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->prefix = 'wp_';
+        $wpdb->get_row_result = [
+            'id' => 41,
+            'post_id' => 40,
+            'url' => 'http://example.com/legacy',
+            'anchor' => 'Legacy',
+            'post_title' => 'Legacy title',
+            'occurrence_index' => 0,
+            'ignored_at' => null,
+        ];
+
+        $row_bytes = \blc_calculate_row_storage_footprint_bytes(
+            $wpdb->get_row_result['url'],
+            $wpdb->get_row_result['anchor'],
+            $wpdb->get_row_result['post_title']
+        );
+
+        Functions\expect('blc_adjust_dataset_storage_footprint')->once()->with('link', -$row_bytes);
+        Functions\expect('wp_send_json_success')->once()->with([
+            'purged' => true,
+            'announcement' => 'Le lien a été retiré de la liste.',
+        ])->andReturnUsing(function () {
+            throw new \RuntimeException('purged-success');
+        });
+
+        $this->expectExceptionMessage('purged-success');
+        blc_ajax_ignore_link_callback();
+
+        $this->assertSame(['wp_blc_broken_links', ['id' => 41], ['%d']], $wpdb->delete_args);
+    }
+
     public function test_edit_link_denied_for_user_without_permission(): void
     {
         $_POST['post_id'] = 1;
@@ -479,6 +690,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 14,
             'row_id' => '14',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'old_url' => 'http://old.com',
             'new_url' => 'http://new.com',
         ];
@@ -509,6 +721,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 15,
             'row_id' => '15',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'old_url' => 'http://old.example',
             'new_url' => 'http://new.example',
         ];
@@ -527,6 +740,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => '',
             'post_title' => 'Sample',
             'occurrence_index' => null,
+            'ignored_at' => null,
         ];
 
         Functions\expect('wp_send_json_error')->once()->with([
@@ -545,6 +759,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 16,
             'row_id' => '16',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'old_url' => 'http://old.test',
             'new_url' => 'http://new.test',
         ];
@@ -563,6 +778,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => '',
             'post_title' => 'Sample',
             'occurrence_index' => 3,
+            'ignored_at' => null,
         ];
 
         Functions\expect('wp_send_json_error')->once()->with([
@@ -581,6 +797,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 17,
             'row_id' => '17',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'old_url' => 'http://old-different.test',
             'new_url' => 'http://new-different.test',
         ];
@@ -602,6 +819,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => '',
             'post_title' => 'Sample',
             'occurrence_index' => null,
+            'ignored_at' => null,
         ];
 
         Functions\expect('wp_send_json_error')->once()->with([
@@ -620,6 +838,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 18,
             'row_id' => '18',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'old_url' => 'http://old.manage',
             'new_url' => 'http://new.manage',
         ];
@@ -640,6 +859,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => '',
             'post_title' => 'Sample',
             'occurrence_index' => null,
+            'ignored_at' => null,
         ];
 
         Functions\expect('wp_send_json_error')->once()->with([
@@ -658,6 +878,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 19,
             'row_id' => '19',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'old_url' => 'http://old.replace',
             'new_url' => 'http://new.replace',
         ];
@@ -692,6 +913,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => '',
             'post_title' => 'Sample',
             'occurrence_index' => null,
+            'ignored_at' => null,
         ];
 
         Functions\expect('wp_send_json_error')->once()->with([
@@ -710,6 +932,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 20,
             'row_id' => '20',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'old_url' => 'http://old.update',
             'new_url' => 'http://new.update',
         ];
@@ -745,6 +968,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => '',
             'post_title' => 'Sample',
             'occurrence_index' => null,
+            'ignored_at' => null,
         ];
 
         Functions\expect('wp_send_json_error')->once()->with([
@@ -763,6 +987,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 21,
             'row_id' => '21',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'old_url' => 'http://old.delete',
             'new_url' => 'http://new.delete',
         ];
@@ -798,6 +1023,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => '',
             'post_title' => 'Sample',
             'occurrence_index' => null,
+            'ignored_at' => null,
         ];
         $wpdb->delete_return_value = false;
 
@@ -1290,6 +1516,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 45,
             'row_id' => '45',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'old_url' => 'https://example.com/old.js',
             'new_url' => '//cdn.example.com/asset.js',
         ];
@@ -1336,6 +1563,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => '',
             'post_title' => 'Sample',
             'occurrence_index' => null,
+            'ignored_at' => null,
         ];
 
         Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
@@ -1368,6 +1596,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 46,
             'row_id' => '46',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'old_url' => 'https://example.com/old-asset.js',
             'new_url' => '//cdn.example.com/asset.js',
         ];
@@ -1422,6 +1651,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => '',
             'post_title' => 'Sample Asset',
             'occurrence_index' => null,
+            'ignored_at' => null,
         ];
 
         Functions\expect('wp_send_json_success')->once()->andReturnUsing(function () {
@@ -1505,6 +1735,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 42,
             'row_id' => '420',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'old_url' => $long_old_url,
             'new_url' => $long_new_url,
         ];
@@ -1529,6 +1760,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 42,
             'row_id' => '421',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'url_to_unlink' => $long_new_url,
         ];
 
@@ -1575,6 +1807,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 44,
             'row_id' => '44',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'url_to_unlink' => 'http://missing.test',
         ];
 
@@ -1604,6 +1837,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 45,
             'row_id' => '45',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'url_to_unlink' => 'http://conflict-post.test',
         ];
 
@@ -1621,6 +1855,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => '',
             'post_title' => 'Sample',
             'occurrence_index' => null,
+            'ignored_at' => null,
         ];
 
         Functions\expect('wp_send_json_error')->once()->with([
@@ -1639,6 +1874,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 46,
             'row_id' => '46',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'url_to_unlink' => 'http://occurrence.test',
         ];
 
@@ -1656,6 +1892,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => '',
             'post_title' => 'Sample',
             'occurrence_index' => 2,
+            'ignored_at' => null,
         ];
 
         Functions\expect('wp_send_json_error')->once()->with([
@@ -1674,6 +1911,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 47,
             'row_id' => '47',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'url_to_unlink' => 'http://unlink-mismatch.test',
         ];
 
@@ -1694,6 +1932,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => '',
             'post_title' => 'Sample',
             'occurrence_index' => null,
+            'ignored_at' => null,
         ];
 
         Functions\expect('wp_send_json_error')->once()->with([
@@ -1712,6 +1951,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 48,
             'row_id' => '48',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'url_to_unlink' => 'http://manage-unlink.test',
         ];
 
@@ -1731,6 +1971,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => '',
             'post_title' => 'Sample',
             'occurrence_index' => null,
+            'ignored_at' => null,
         ];
 
         Functions\expect('wp_send_json_error')->once()->with([
@@ -1749,6 +1990,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 49,
             'row_id' => '49',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'url_to_unlink' => 'http://unlink-remove.test',
         ];
 
@@ -1782,6 +2024,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => '',
             'post_title' => 'Sample',
             'occurrence_index' => null,
+            'ignored_at' => null,
         ];
 
         Functions\expect('wp_send_json_error')->once()->with([
@@ -1800,6 +2043,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 50,
             'row_id' => '50',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'url_to_unlink' => 'http://unlink-update.test',
         ];
 
@@ -1834,6 +2078,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => '',
             'post_title' => 'Sample',
             'occurrence_index' => null,
+            'ignored_at' => null,
         ];
 
         Functions\expect('wp_send_json_error')->once()->with([
@@ -1852,6 +2097,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'post_id' => 51,
             'row_id' => '51',
             'occurrence_index' => '0',
+            'ignored_at' => null,
             'url_to_unlink' => 'http://unlink-delete.test',
         ];
 
@@ -1886,6 +2132,7 @@ class BlcAjaxCallbacksTest extends TestCase
             'anchor' => '',
             'post_title' => 'Sample',
             'occurrence_index' => null,
+            'ignored_at' => null,
         ];
         $wpdb->delete_return_value = false;
 
