@@ -45,6 +45,8 @@ jQuery(document).ready(function($) {
         var $cancel = $modal.find('.blc-modal__cancel');
         var $close = $modal.find('.blc-modal__close');
 
+        var lastFocusedElement = null;
+
         var state = {
             isOpen: false,
             onConfirm: null,
@@ -92,6 +94,12 @@ jQuery(document).ready(function($) {
             $label.text('');
             $input.val('').attr('type', 'url');
             $field.removeClass('is-hidden');
+
+            if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
+                lastFocusedElement.focus();
+            }
+
+            lastFocusedElement = null;
         }
 
         function open(options) {
@@ -103,6 +111,8 @@ jQuery(document).ready(function($) {
 
             state.onConfirm = typeof options.onConfirm === 'function' ? options.onConfirm : null;
             state.showInput = options.showInput !== false;
+
+            lastFocusedElement = document.activeElement;
 
             $title.text(options.title || '');
             $message.text(options.message || '');
