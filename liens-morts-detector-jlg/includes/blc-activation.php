@@ -6,7 +6,7 @@ if (!defined('ABSPATH')) {
 }
 
 if (!defined('BLC_DB_VERSION')) {
-    define('BLC_DB_VERSION', '1.8.0');
+    define('BLC_DB_VERSION', '1.9.0');
 }
 
 if (!defined('BLC_TEXT_FIELD_LENGTH')) {
@@ -70,6 +70,11 @@ function blc_maybe_upgrade_database() {
     if (!$installed_version || version_compare($installed_version, '1.8.0', '<')) {
         blc_maybe_add_column($table_name, 'http_status', 'smallint(6) NULL');
         blc_maybe_add_column($table_name, 'last_checked_at', 'datetime NULL DEFAULT NULL');
+    }
+
+    if (!$installed_version || version_compare($installed_version, '1.9.0', '<')) {
+        blc_maybe_add_column($table_name, 'ignored_at', 'datetime NULL DEFAULT NULL');
+        blc_maybe_add_index($table_name, 'ignored_at', 'ignored_at');
     }
 
     update_option('blc_plugin_db_version', BLC_DB_VERSION);
@@ -342,12 +347,14 @@ function blc_activate_site() {
         is_internal tinyint(1) NOT NULL DEFAULT 0,
         http_status smallint(6) NULL,
         last_checked_at datetime NULL DEFAULT NULL,
+        ignored_at datetime NULL DEFAULT NULL,
         PRIMARY KEY  (id),
         KEY type (type),
         KEY post_id (post_id),
         KEY url_prefix (url(191)),
         KEY url_host (url_host),
-        KEY is_internal (is_internal)
+        KEY is_internal (is_internal),
+        KEY ignored_at (ignored_at)
     ) $charset_collate;";
 
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';

@@ -175,6 +175,16 @@ function blc_enqueue_admin_assets($hook) {
             'genericError'        => __('Une erreur est survenue. Veuillez réessayer.', 'liens-morts-detector-jlg'),
             'successAnnouncement' => __('Action effectuée avec succès. La ligne a été retirée de la liste.', 'liens-morts-detector-jlg'),
             'noItemsMessage'      => __('Aucun lien cassé à afficher.', 'liens-morts-detector-jlg'),
+            'ignoreModalTitle'    => __('Ignorer le lien', 'liens-morts-detector-jlg'),
+            /* translators: %s: URL that will be ignored. */
+            'ignoreModalMessage'  => __('Voulez-vous ignorer ce lien ? Il ne sera plus signalé.\n%s', 'liens-morts-detector-jlg'),
+            'ignoreModalConfirm'  => __('Ignorer', 'liens-morts-detector-jlg'),
+            'restoreModalTitle'   => __('Ne plus ignorer', 'liens-morts-detector-jlg'),
+            /* translators: %s: URL that will be restored. */
+            'restoreModalMessage' => __('Voulez-vous réintégrer ce lien dans la liste ?\n%s', 'liens-morts-detector-jlg'),
+            'restoreModalConfirm' => __('Réintégrer', 'liens-morts-detector-jlg'),
+            'ignoredAnnouncement' => __('Le lien est désormais ignoré.', 'liens-morts-detector-jlg'),
+            'restoredAnnouncement' => __('Le lien n\'est plus ignoré.', 'liens-morts-detector-jlg'),
         )
     );
 }
@@ -606,4 +616,132 @@ function blc_ajax_unlink_callback() {
 
     blc_mark_link_view_counts_dirty();
     wp_send_json_success();
+}
+
+add_action('wp_ajax_blc_ignore_link', 'blc_ajax_ignore_link_callback');
+function blc_ajax_ignore_link_callback() {
+    check_ajax_referer('blc_ignore_link_nonce');
+
+    $params = blc_require_post_params(['post_id', 'row_id', 'mode']);
+
+    $post_id = absint($params['post_id']);
+    $row_id  = absint($params['row_id']);
+
+    $mode_raw = strtolower($params['mode']);
+    if ($mode_raw === 'unignore') {
+        $mode_raw = 'restore';
+    }
+
+    if (!in_array($mode_raw, ['ignore', 'restore'], true)) {
+        wp_send_json_error([
+            'message' => __('Action ignorée invalide.', 'liens-morts-detector-jlg'),
+        ], BLC_HTTP_BAD_REQUEST);
+    }
+
+    $occurrence_input = null;
+    if (isset($_POST['occurrence_index'])) {
+        $occurrence_input = wp_unslash($_POST['occurrence_index']);
+    }
+
+    $resolution = blc_resolve_link_row($post_id, $row_id, $occurrence_input);
+    $row = $resolution['row'];
+    $table_name = $resolution['table'];
+    $row_cache_footprint = isset($resolution['cache_footprint']) ? (int) $resolution['cache_footprint'] : 0;
+
+    $ignored_raw = $row['ignored_at'] ?? null;
+    $is_currently_ignored = false;
+    if (is_string($ignored_raw)) {
+        $normalized_ignored = trim($ignored_raw);
+        $is_currently_ignored = ($normalized_ignored !== '' && $normalized_ignored !== '0000-00-00 00:00:00');
+    } elseif ($ignored_raw !== null) {
+        $is_currently_ignored = true;
+    }
+
+    global $wpdb;
+
+    $post = get_post($post_id);
+    if ($post) {
+        if (!current_user_can('edit_post', $post_id)) {
+            wp_send_json_error([
+                'message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg'),
+            ], BLC_HTTP_FORBIDDEN);
+        }
+    } else {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error([
+                'message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg'),
+            ], BLC_HTTP_FORBIDDEN);
+        }
+    }
+
+    $mode = $mode_raw;
+    $announcement = '';
+    $changed = false;
+
+    if ($mode === 'ignore') {
+        if ($is_currently_ignored) {
+            $announcement = __('Le lien est déjà ignoré.', 'liens-morts-detector-jlg');
+        } else {
+            $timestamp = current_time('mysql', true);
+            $updated = $wpdb->query(
+                $wpdb->prepare("UPDATE $table_name SET ignored_at = %s WHERE id = %d", $timestamp, $row_id)
+            );
+
+            if ($updated === false) {
+                $error_message = __('La mise à jour du statut ignoré a échoué.', 'liens-morts-detector-jlg');
+                if (!empty($wpdb->last_error)) {
+                    $error_message .= ' ' . $wpdb->last_error;
+                }
+
+                wp_send_json_error(['message' => $error_message], BLC_HTTP_SERVER_ERROR);
+            }
+
+            if ((int) $updated > 0) {
+                $changed = true;
+                if ($row_cache_footprint > 0) {
+                    blc_adjust_dataset_storage_footprint('link', -$row_cache_footprint);
+                }
+            }
+
+            $announcement = __('Le lien est désormais ignoré.', 'liens-morts-detector-jlg');
+            $is_currently_ignored = true;
+        }
+    } else { // restore
+        if (!$is_currently_ignored) {
+            $announcement = __('Le lien n\'était pas ignoré.', 'liens-morts-detector-jlg');
+        } else {
+            $updated = $wpdb->query(
+                $wpdb->prepare("UPDATE $table_name SET ignored_at = NULL WHERE id = %d", $row_id)
+            );
+
+            if ($updated === false) {
+                $error_message = __('La réactivation du lien a échoué.', 'liens-morts-detector-jlg');
+                if (!empty($wpdb->last_error)) {
+                    $error_message .= ' ' . $wpdb->last_error;
+                }
+
+                wp_send_json_error(['message' => $error_message], BLC_HTTP_SERVER_ERROR);
+            }
+
+            if ((int) $updated > 0) {
+                $changed = true;
+                if ($row_cache_footprint > 0) {
+                    blc_adjust_dataset_storage_footprint('link', $row_cache_footprint);
+                }
+            }
+
+            $announcement = __('Le lien n\'est plus ignoré.', 'liens-morts-detector-jlg');
+            $is_currently_ignored = false;
+        }
+    }
+
+    if ($changed) {
+        blc_mark_link_view_counts_dirty();
+    }
+
+    wp_send_json_success([
+        'purged'       => true,
+        'announcement' => $announcement,
+        'ignored'      => $is_currently_ignored,
+    ]);
 }
