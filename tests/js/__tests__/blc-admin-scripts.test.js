@@ -25,6 +25,24 @@ describe('blc-admin-scripts accessibility helper', () => {
                     <button type="button" id="post-query-submit">Filtrer</button>
                 </div>
             </div>
+            <div id="blc-modal" class="blc-modal" role="presentation" aria-hidden="true">
+                <div class="blc-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="blc-modal-title" aria-describedby="blc-modal-message">
+                    <button type="button" class="blc-modal__close" aria-label="Fermer la fenêtre modale">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                    <h2 id="blc-modal-title" class="blc-modal__title"></h2>
+                    <p id="blc-modal-message" class="blc-modal__message"></p>
+                    <div class="blc-modal__error" role="alert" aria-live="assertive"></div>
+                    <div class="blc-modal__field">
+                        <label for="blc-modal-url" class="blc-modal__label"></label>
+                        <input type="url" id="blc-modal-url" class="blc-modal__input" placeholder="https://">
+                    </div>
+                    <div class="blc-modal__actions">
+                        <button type="button" class="button button-secondary blc-modal__cancel">Annuler</button>
+                        <button type="button" class="button button-primary blc-modal__confirm">Confirmer</button>
+                    </div>
+                </div>
+            </div>
         `;
 
         originalReady = $.fn.ready;
@@ -123,5 +141,16 @@ describe('blc-admin-scripts accessibility helper', () => {
         );
 
         expect(window.wp.a11y.speak).toHaveBeenCalledWith('La ligne a été mise à jour.', 'polite');
+    });
+
+    it('maintains aria-describedby on the modal dialog when opened', () => {
+        const trigger = $('#row-1 .blc-edit-link');
+
+        trigger.trigger('click');
+
+        const dialog = document.querySelector('.blc-modal__dialog');
+
+        expect(dialog).not.toBeNull();
+        expect(dialog.getAttribute('aria-describedby')).toBe('blc-modal-message');
     });
 });

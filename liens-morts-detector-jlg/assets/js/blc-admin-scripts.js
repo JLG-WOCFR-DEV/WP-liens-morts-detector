@@ -88,6 +88,7 @@ jQuery(document).ready(function($) {
             $modal.attr('tabindex', '-1');
         }
 
+        var $dialog = $modal.find('[role="dialog"]');
         var $title = $modal.find('.blc-modal__title');
         var $message = $modal.find('.blc-modal__message');
         var $error = $modal.find('.blc-modal__error');
@@ -97,6 +98,12 @@ jQuery(document).ready(function($) {
         var $confirm = $modal.find('.blc-modal__confirm');
         var $cancel = $modal.find('.blc-modal__cancel');
         var $close = $modal.find('.blc-modal__close');
+
+        var messageId = $message.attr('id');
+
+        if (messageId && $dialog.length && !$dialog.attr('aria-describedby')) {
+            $dialog.attr('aria-describedby', messageId);
+        }
 
         var lastFocusedElement = null;
         var focusableSelectors = 'a[href], area[href], input:not([type="hidden"]), select, textarea, button, [tabindex], [contenteditable="true"]';
@@ -219,7 +226,13 @@ jQuery(document).ready(function($) {
             lastFocusedElement = document.activeElement;
 
             $title.text(options.title || '');
-            $message.text(options.message || '');
+
+            var messageText = options.message || '';
+            $message.text(messageText);
+
+            if (messageId && $dialog.length) {
+                $dialog.attr('aria-describedby', messageId);
+            }
 
             var labelText = options.label || (state.showInput ? messages.editModalLabel : '');
             $label.text(labelText);
