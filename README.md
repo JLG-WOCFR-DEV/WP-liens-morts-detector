@@ -47,7 +47,9 @@ add_filter('blc_load_retry_delay', function (int $delay): int {
 ## Développement
 - PHP 7.3 ou supérieur et [Composer](https://getcomposer.org/) sont requis pour installer les dépendances de développement.
 - Installer les dépendances : `composer install`.
-- Exécuter la suite de tests : `vendor/bin/phpunit`.
+- Installer les dépendances front : `npm install`.
+- Exécuter les tests PHP : `vendor/bin/phpunit`.
+- Exécuter les tests front : `npm test` (ou `composer test:js`).
 
 ## Auteur
 Jérôme Le Gousse
