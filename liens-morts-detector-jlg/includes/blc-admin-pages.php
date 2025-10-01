@@ -658,9 +658,11 @@ function blc_settings_page() {
                         <th scope="row"><label for="blc_rest_start_hour"><?php esc_html_e('😴 Plage horaire de repos', 'liens-morts-detector-jlg'); ?></label></th>
                         <td>
                             <?php esc_html_e('Ne pas lancer de scan entre', 'liens-morts-detector-jlg'); ?>
-                            <input type="time" name="blc_rest_start_hour" value="<?php echo esc_attr($rest_start_hour); ?>">
+                            <label class="screen-reader-text" for="blc_rest_start_hour"><?php esc_html_e('Heure de début de la plage de repos', 'liens-morts-detector-jlg'); ?></label>
+                            <input type="time" name="blc_rest_start_hour" id="blc_rest_start_hour" value="<?php echo esc_attr($rest_start_hour); ?>">
                             <?php esc_html_e('et', 'liens-morts-detector-jlg'); ?>
-                            <input type="time" name="blc_rest_end_hour" value="<?php echo esc_attr($rest_end_hour); ?>">
+                            <label class="screen-reader-text" for="blc_rest_end_hour"><?php esc_html_e('Heure de fin de la plage de repos', 'liens-morts-detector-jlg'); ?></label>
+                            <input type="time" name="blc_rest_end_hour" id="blc_rest_end_hour" value="<?php echo esc_attr($rest_end_hour); ?>">
                             <p class="description">
                                 <?php
                                 $timezone_information = sprintf(
