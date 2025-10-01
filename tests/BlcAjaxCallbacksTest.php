@@ -110,6 +110,9 @@ class BlcAjaxCallbacksTest extends TestCase
         Functions\when('is_wp_error')->alias(function () {
             return false;
         });
+        Functions\when('wp_schedule_single_event')->alias(function () {
+            return true;
+        });
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/liens-morts-detector-jlg.php';
 
@@ -135,6 +138,8 @@ class BlcAjaxCallbacksTest extends TestCase
             public $delete_calls = [];
             public $delete_return_value = true;
             public $get_row_result = null;
+            public $query_calls = [];
+            public $query_return_value = 1;
             private $get_row_callback;
 
             public function __construct(?callable $get_row_callback)
@@ -232,6 +237,13 @@ class BlcAjaxCallbacksTest extends TestCase
 
                 return is_object($row) ? $row : (object) $row;
             }
+
+            public function query($query)
+            {
+                $this->query_calls[] = $query;
+
+                return $this->query_return_value;
+            }
         };
     }
 
@@ -318,6 +330,107 @@ class BlcAjaxCallbacksTest extends TestCase
 
         $this->expectExceptionMessage('occ-invalid');
         \blc_resolve_link_row(10, 10, 'abc');
+    }
+
+    public function test_ignore_link_adds_url_and_removes_row(): void
+    {
+        $_POST['post_id'] = '5';
+        $_POST['row_id'] = '5';
+        $_POST['occurrence_index'] = '0';
+        $_POST['url_to_ignore'] = 'http://example.com/item';
+
+        Functions\expect('check_ajax_referer')->once()->with('blc_ignore_link_nonce')->andReturn(true);
+        Functions\when('current_user_can')->alias(function () {
+            return true;
+        });
+        Functions\expect('get_post')->once()->with(5)->andReturn((object) ['ID' => 5]);
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->prefix = 'wp_';
+        $wpdb->get_row_result = [
+            'id' => 5,
+            'post_id' => 5,
+            'url' => 'http://example.com/item',
+            'anchor' => '',
+            'post_title' => '',
+            'occurrence_index' => 0,
+        ];
+        $wpdb->delete_return_value = 1;
+
+        OptionsStore::$options['blc_link_recheck_queue'] = ['5:5'];
+
+        Functions\expect('wp_send_json_success')->once()->with(['ignored' => true])->andReturnUsing(static function () {
+            throw new \RuntimeException('ignore-success');
+        });
+
+        try {
+            blc_ajax_ignore_link_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('ignore-success', $e->getMessage());
+        }
+
+        $ignored = OptionsStore::$options['blc_ignored_links'] ?? [];
+        $this->assertSame(['http://example.com/item'], $ignored);
+        $queue = OptionsStore::$options['blc_link_recheck_queue'] ?? [];
+        $this->assertSame([], $queue);
+    }
+
+    public function test_recheck_link_schedules_event_and_marks_pending(): void
+    {
+        $_POST['post_id'] = '9';
+        $_POST['row_id'] = '9';
+        $_POST['occurrence_index'] = '0';
+        $_POST['url_to_recheck'] = 'http://example.com/item';
+
+        Functions\expect('check_ajax_referer')->once()->with('blc_recheck_link_nonce')->andReturn(true);
+        Functions\when('current_user_can')->alias(function () {
+            return true;
+        });
+        Functions\expect('get_post')->once()->with(9)->andReturn((object) ['ID' => 9]);
+
+        global $wpdb;
+        $wpdb = $this->createAjaxWpdbStub();
+        $wpdb->prefix = 'wp_';
+        $wpdb->get_row_result = [
+            'id' => 9,
+            'post_id' => 9,
+            'url' => 'http://example.com/item',
+            'anchor' => '',
+            'post_title' => '',
+            'occurrence_index' => 0,
+        ];
+        $wpdb->query_return_value = 1;
+
+        $scheduled_call = null;
+        Functions\when('wp_schedule_single_event')->alias(function ($timestamp, $hook, $args) use (&$scheduled_call) {
+            $scheduled_call = [$timestamp, $hook, $args];
+
+            return true;
+        });
+
+        Functions\expect('wp_send_json_success')->once()->with(['status' => 'pending'])->andReturnUsing(static function () {
+            throw new \RuntimeException('recheck-success');
+        });
+
+        try {
+            blc_ajax_recheck_link_callback();
+            $this->fail('wp_send_json_success was not called');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('recheck-success', $e->getMessage());
+        }
+
+        $this->assertNotNull($scheduled_call);
+        $this->assertSame('blc_manual_check_batch', $scheduled_call[1]);
+        $this->assertSame([0, true, true], $scheduled_call[2]);
+
+        $queue = OptionsStore::$options['blc_link_recheck_queue'] ?? [];
+        $this->assertSame(['9:9'], $queue);
+        $ignored = OptionsStore::$options['blc_ignored_links'] ?? [];
+        $this->assertSame([], $ignored);
+        $this->assertNotEmpty($wpdb->query_calls);
+        $this->assertStringContainsString('UPDATE', $wpdb->query_calls[0]);
     }
 
     public function editLinkMissingParamProvider(): array

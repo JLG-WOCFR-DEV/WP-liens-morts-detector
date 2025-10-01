@@ -290,6 +290,18 @@ class BLC_Links_List_Table extends WP_List_Table {
             wp_create_nonce('blc_unlink_nonce'),
             esc_html__('Dissocier', 'liens-morts-detector-jlg')
         );
+        $actions['ignore'] = sprintf(
+            '<a href="#" class="blc-ignore-link" %s data-nonce="%s">%s</a>',
+            $data_attributes,
+            wp_create_nonce('blc_ignore_link_nonce'),
+            esc_html__('Ignorer', 'liens-morts-detector-jlg')
+        );
+        $actions['recheck'] = sprintf(
+            '<a href="#" class="blc-recheck-link" %s data-nonce="%s">%s</a>',
+            $data_attributes,
+            wp_create_nonce('blc_recheck_link_nonce'),
+            esc_html__('Reprogrammer', 'liens-morts-detector-jlg')
+        );
         return $actions;
     }
 

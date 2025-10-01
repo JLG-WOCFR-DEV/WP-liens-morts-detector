@@ -5,6 +5,257 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+if (!defined('BLC_IGNORED_LINKS_OPTION')) {
+    define('BLC_IGNORED_LINKS_OPTION', 'blc_ignored_links');
+}
+
+if (!defined('BLC_LINK_RECHECK_QUEUE_OPTION')) {
+    define('BLC_LINK_RECHECK_QUEUE_OPTION', 'blc_link_recheck_queue');
+}
+
+/**
+ * Normalize a URL candidate before storing it in the ignored links list.
+ *
+ * @param string $url Raw URL provided by the UI or stored in the option.
+ * @return string Normalized representation ready for storage.
+ */
+function blc_normalize_ignored_link_candidate($url) {
+    if (!is_scalar($url)) {
+        return '';
+    }
+
+    $prepared = blc_prepare_posted_url($url);
+    if ($prepared === '') {
+        return '';
+    }
+
+    return blc_prepare_url_for_storage($prepared);
+}
+
+/**
+ * Retrieve the list of ignored link URLs as stored in the options table.
+ *
+ * @return string[]
+ */
+function blc_get_ignored_link_urls() {
+    $stored = get_option(BLC_IGNORED_LINKS_OPTION, []);
+    if (!is_array($stored)) {
+        return [];
+    }
+
+    $normalized = [];
+
+    foreach ($stored as $value) {
+        $candidate = blc_normalize_ignored_link_candidate($value);
+        if ($candidate === '') {
+            continue;
+        }
+
+        $normalized[$candidate] = $candidate;
+    }
+
+    return array_values($normalized);
+}
+
+/**
+ * Build an associative lookup table from a list of ignored URLs.
+ *
+ * @param string[] $ignored_urls List of normalized ignored URLs.
+ * @return array<string, bool>
+ */
+function blc_build_ignored_link_lookup(array $ignored_urls) {
+    $lookup = [];
+
+    foreach ($ignored_urls as $url) {
+        if (!is_string($url) || $url === '') {
+            continue;
+        }
+
+        $lookup[$url] = true;
+    }
+
+    return $lookup;
+}
+
+/**
+ * Determine whether a URL should be ignored.
+ *
+ * @param string      $url    Raw URL to evaluate.
+ * @param array|null  $lookup Optional lookup produced by blc_build_ignored_link_lookup().
+ * @return bool
+ */
+function blc_is_link_ignored($url, ?array $lookup = null) {
+    $candidate = blc_normalize_ignored_link_candidate($url);
+    if ($candidate === '') {
+        return false;
+    }
+
+    if (is_array($lookup)) {
+        return isset($lookup[$candidate]);
+    }
+
+    $ignored_urls = blc_get_ignored_link_urls();
+
+    return in_array($candidate, $ignored_urls, true);
+}
+
+/**
+ * Store a URL in the ignored links list.
+ *
+ * @param string $url Raw URL captured from the UI.
+ * @return bool True when the URL has been stored or was already present.
+ */
+function blc_add_ignored_link_url($url) {
+    $candidate = blc_normalize_ignored_link_candidate($url);
+    if ($candidate === '') {
+        return false;
+    }
+
+    $ignored = blc_get_ignored_link_urls();
+    if (in_array($candidate, $ignored, true)) {
+        return true;
+    }
+
+    $ignored[] = $candidate;
+
+    return update_option(BLC_IGNORED_LINKS_OPTION, array_values($ignored));
+}
+
+/**
+ * Retrieve the raw tokens representing queued link rechecks.
+ *
+ * @return string[]
+ */
+function blc_get_link_recheck_queue_tokens() {
+    $stored = get_option(BLC_LINK_RECHECK_QUEUE_OPTION, []);
+    if (!is_array($stored)) {
+        return [];
+    }
+
+    $tokens = [];
+
+    foreach ($stored as $value) {
+        if (is_string($value)) {
+            $token = trim($value);
+        } elseif (is_array($value)) {
+            $post_id = isset($value['post_id']) ? (int) $value['post_id'] : 0;
+            $row_id  = isset($value['row_id']) ? (int) $value['row_id'] : 0;
+            if ($post_id <= 0) {
+                continue;
+            }
+            $token = $post_id . ':' . max(0, $row_id);
+        } else {
+            continue;
+        }
+
+        if ($token === '') {
+            continue;
+        }
+
+        $tokens[$token] = $token;
+    }
+
+    return array_values($tokens);
+}
+
+/**
+ * Retrieve the queue of link recheck requests.
+ *
+ * @return array<int, array{post_id:int,row_id:int,token:string}>
+ */
+function blc_get_link_recheck_queue() {
+    $tokens = blc_get_link_recheck_queue_tokens();
+    if ($tokens === []) {
+        return [];
+    }
+
+    $queue = [];
+
+    foreach ($tokens as $token) {
+        $parts = explode(':', (string) $token, 2);
+        $post_id = isset($parts[0]) ? (int) $parts[0] : 0;
+        $row_id  = isset($parts[1]) ? (int) $parts[1] : 0;
+
+        if ($post_id <= 0) {
+            continue;
+        }
+
+        $key = $post_id . ':' . max(0, $row_id);
+
+        $queue[$key] = [
+            'post_id' => $post_id,
+            'row_id'  => max(0, $row_id),
+            'token'   => $key,
+        ];
+    }
+
+    return array_values($queue);
+}
+
+/**
+ * Enqueue a link for rechecking.
+ *
+ * @param int $post_id Post identifier containing the link.
+ * @param int $row_id  Row identifier in the broken links table.
+ * @return bool
+ */
+function blc_enqueue_link_recheck_request($post_id, $row_id) {
+    $post_id = (int) $post_id;
+    $row_id  = (int) $row_id;
+
+    if ($post_id <= 0) {
+        return false;
+    }
+
+    $tokens = blc_get_link_recheck_queue_tokens();
+    $token  = $post_id . ':' . max(0, $row_id);
+
+    if (!in_array($token, $tokens, true)) {
+        $tokens[] = $token;
+        update_option(BLC_LINK_RECHECK_QUEUE_OPTION, array_values($tokens));
+    }
+
+    return true;
+}
+
+/**
+ * Remove processed recheck requests associated with the provided posts.
+ *
+ * @param int[] $post_ids List of post identifiers.
+ * @return void
+ */
+function blc_dequeue_link_recheck_requests(array $post_ids) {
+    if ($post_ids === []) {
+        return;
+    }
+
+    $post_ids = array_values(array_unique(array_map('intval', $post_ids)));
+    $tokens   = blc_get_link_recheck_queue_tokens();
+
+    if ($tokens === []) {
+        return;
+    }
+
+    $remaining = [];
+
+    foreach ($tokens as $token) {
+        $parts = explode(':', (string) $token, 2);
+        $post_id = isset($parts[0]) ? (int) $parts[0] : 0;
+
+        if ($post_id <= 0) {
+            continue;
+        }
+
+        if (in_array($post_id, $post_ids, true)) {
+            continue;
+        }
+
+        $remaining[] = $token;
+    }
+
+    update_option(BLC_LINK_RECHECK_QUEUE_OPTION, $remaining);
+}
+
 /**
  * Build a descriptive HTTP user agent string for outbound requests.
  *

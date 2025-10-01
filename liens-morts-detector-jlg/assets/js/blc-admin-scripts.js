@@ -14,10 +14,45 @@ jQuery(document).ready(function($) {
         emptyUrlMessage: 'Veuillez saisir une URL.',
         invalidUrlMessage: 'Veuillez saisir une URL valide.',
         sameUrlMessage: "La nouvelle URL doit être différente de l'URL actuelle.",
-        genericError: 'Une erreur est survenue. Veuillez réessayer.'
+        genericError: 'Une erreur est survenue. Veuillez réessayer.',
+        ignoreModalTitle: 'Ignorer ce lien',
+        ignoreModalMessage: 'Voulez-vous ignorer définitivement cette URL lors des prochains contrôles ?',
+        ignoreModalConfirm: 'Ignorer',
+        ignoreSuccess: 'Le lien a été ajouté à la liste d’exclusion.',
+        recheckModalTitle: 'Replanifier la vérification',
+        recheckModalMessage: 'Voulez-vous relancer immédiatement une vérification de cette URL ?',
+        recheckModalConfirm: 'Reprogrammer',
+        recheckSuccess: 'Une nouvelle vérification sera effectuée sous peu.',
+        pendingStatus: 'En attente'
     };
 
     var messages = $.extend({}, defaultMessages, window.blcAdminMessages || {});
+
+    var $feedbackRegion = $('#blc-admin-feedback');
+    if (!$feedbackRegion.length) {
+        $feedbackRegion = $('<div>', {
+            id: 'blc-admin-feedback',
+            class: 'screen-reader-text',
+            role: 'status',
+            'aria-live': 'polite'
+        }).appendTo(document.body);
+    }
+
+    function announce(message) {
+        if (!$feedbackRegion.length) {
+            return;
+        }
+
+        $feedbackRegion.text('');
+
+        if (!message) {
+            return;
+        }
+
+        window.setTimeout(function() {
+            $feedbackRegion.text(message);
+        }, 15);
+    }
 
     var modal = (function() {
         var $modal = $('#blc-modal');
@@ -401,6 +436,7 @@ jQuery(document).ready(function($) {
                 helpers.setSubmitting(true);
 
                 var row = linkElement.closest('tr');
+                row.addClass('is-processing');
                 row.css('opacity', 0.5);
 
                 $.post(ajaxurl, {
@@ -426,6 +462,151 @@ jQuery(document).ready(function($) {
                     helpers.setSubmitting(false);
                     helpers.showError(messages.genericError);
                     row.css('opacity', 1);
+                });
+            }
+        });
+    });
+
+    $('#the-list').on('click', '.blc-ignore-link', function(e) {
+        e.preventDefault();
+
+        var linkElement = $(this);
+        var urlToIgnore = linkElement.data('url');
+        var postId = linkElement.data('postid');
+        var rowId = linkElement.data('rowId');
+        if (typeof rowId === 'undefined') {
+            rowId = '';
+        }
+        var occurrenceIndex = linkElement.data('occurrenceIndex');
+        if (typeof occurrenceIndex === 'undefined') {
+            occurrenceIndex = '';
+        }
+        var nonce = linkElement.data('nonce');
+
+        var ignoreMessage = messages.ignoreModalMessage || '';
+        if (urlToIgnore) {
+            ignoreMessage = ignoreMessage ? ignoreMessage + '\n' + urlToIgnore : urlToIgnore;
+        }
+
+        modal.open({
+            title: messages.ignoreModalTitle,
+            message: ignoreMessage,
+            showInput: false,
+            confirmText: messages.ignoreModalConfirm,
+            cancelText: messages.cancelButton,
+            closeLabel: messages.closeLabel,
+            onConfirm: function(_value, helpers) {
+                helpers.setSubmitting(true);
+
+                var row = linkElement.closest('tr');
+                row.addClass('is-processing');
+                row.css('opacity', 0.5);
+
+                $.post(ajaxurl, {
+                    action: 'blc_ignore_link',
+                    post_id: postId,
+                    row_id: rowId,
+                    occurrence_index: occurrenceIndex,
+                    url_to_ignore: urlToIgnore,
+                    _ajax_nonce: nonce
+                }).done(function(response) {
+                    if (response && response.success) {
+                        helpers.close();
+                        announce(messages.ignoreSuccess || '');
+                        row.fadeOut(300, function() { $(this).remove(); });
+                    } else {
+                        var errorMessage = response && response.data && response.data.message
+                            ? response.data.message
+                            : messages.genericError;
+                        helpers.setSubmitting(false);
+                        helpers.showError((messages.errorPrefix || '') + errorMessage);
+                        row.css('opacity', 1);
+                        row.removeClass('is-processing');
+                    }
+                }).fail(function() {
+                    helpers.setSubmitting(false);
+                    helpers.showError(messages.genericError);
+                    row.css('opacity', 1);
+                    row.removeClass('is-processing');
+                });
+            }
+        });
+    });
+
+    $('#the-list').on('click', '.blc-recheck-link', function(e) {
+        e.preventDefault();
+
+        var linkElement = $(this);
+        var urlToRecheck = linkElement.data('url');
+        var postId = linkElement.data('postid');
+        var rowId = linkElement.data('rowId');
+        if (typeof rowId === 'undefined') {
+            rowId = '';
+        }
+        var occurrenceIndex = linkElement.data('occurrenceIndex');
+        if (typeof occurrenceIndex === 'undefined') {
+            occurrenceIndex = '';
+        }
+        var nonce = linkElement.data('nonce');
+
+        var recheckMessage = messages.recheckModalMessage || '';
+        if (urlToRecheck) {
+            recheckMessage = recheckMessage ? recheckMessage + '\n' + urlToRecheck : urlToRecheck;
+        }
+
+        modal.open({
+            title: messages.recheckModalTitle,
+            message: recheckMessage,
+            showInput: false,
+            confirmText: messages.recheckModalConfirm,
+            cancelText: messages.cancelButton,
+            closeLabel: messages.closeLabel,
+            onConfirm: function(_value, helpers) {
+                helpers.setSubmitting(true);
+
+                var row = linkElement.closest('tr');
+                row.addClass('is-processing');
+                row.css('opacity', 0.5);
+
+                $.post(ajaxurl, {
+                    action: 'blc_recheck_link',
+                    post_id: postId,
+                    row_id: rowId,
+                    occurrence_index: occurrenceIndex,
+                    url_to_recheck: urlToRecheck,
+                    _ajax_nonce: nonce
+                }).done(function(response) {
+                    if (response && response.success) {
+                        helpers.close();
+                        row.css('opacity', 1);
+                        row.removeClass('is-processing');
+
+                        var statusCell = row.find('td.column-http_status');
+                        if (statusCell.length) {
+                            statusCell.text(messages.pendingStatus || '');
+                        }
+
+                        var lastCheckedCell = row.find('td.column-last_checked_at');
+                        if (lastCheckedCell.length) {
+                            lastCheckedCell.text('—');
+                        }
+
+                        row.attr('data-status', 'pending');
+                        announce(messages.recheckSuccess || '');
+                    } else {
+                        var errorMessage = response && response.data && response.data.message
+                            ? response.data.message
+                            : messages.genericError;
+                        helpers.setSubmitting(false);
+                        helpers.showError((messages.errorPrefix || '') + errorMessage);
+                        row.css('opacity', 1);
+                        row.removeClass('is-processing');
+                    }
+                }).fail(function() {
+                    helpers.setSubmitting(false);
+                    helpers.showError(messages.genericError);
+                    row.css('opacity', 1);
+                    row.removeClass('is-processing');
                 });
             }
         });

@@ -1379,6 +1379,22 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         );
     }
 
+    $ignored_link_urls   = blc_get_ignored_link_urls();
+    $ignored_link_lookup = blc_build_ignored_link_lookup($ignored_link_urls);
+    $link_recheck_queue  = blc_get_link_recheck_queue();
+    $link_recheck_post_ids = array_values(array_unique(array_filter(array_map(
+        static function ($entry) {
+            if (!is_array($entry)) {
+                return 0;
+            }
+
+            return isset($entry['post_id']) ? (int) $entry['post_id'] : 0;
+        },
+        $link_recheck_queue
+    ), static function ($value) {
+        return $value > 0;
+    })));
+
     $scan_cache_context = blc_get_scan_cache_context('link', (int) $batch);
     $scan_cache_data = isset($scan_cache_context['data']) && is_array($scan_cache_context['data'])
         ? $scan_cache_context['data']
@@ -1421,6 +1437,57 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
     $wp_query = new WP_Query($args);
     $posts = $wp_query->posts;
+
+    $posts_by_id = [];
+    if (is_array($posts)) {
+        foreach ($posts as $post_object) {
+            if (!is_object($post_object) || !isset($post_object->ID)) {
+                continue;
+            }
+
+            $posts_by_id[(int) $post_object->ID] = $post_object;
+        }
+    }
+
+    if ($link_recheck_post_ids !== []) {
+        $target_args = [
+            'post_type'      => $public_post_types,
+            'post_status'    => blc_get_scannable_post_statuses(),
+            'posts_per_page' => count($link_recheck_post_ids),
+            'post__in'       => $link_recheck_post_ids,
+            'orderby'        => 'post__in',
+        ];
+
+        $target_posts = [];
+        if (function_exists('get_posts')) {
+            $target_posts = get_posts($target_args);
+        }
+
+        if (!is_array($target_posts)) {
+            $target_query = new WP_Query($target_args);
+            $target_posts = is_array($target_query->posts) ? $target_query->posts : [];
+        }
+
+        $loaded_target_ids = [];
+
+        foreach ($target_posts as $target_post) {
+            if (!is_object($target_post) || !isset($target_post->ID)) {
+                continue;
+            }
+
+            $loaded_target_ids[] = (int) $target_post->ID;
+            $posts_by_id[(int) $target_post->ID] = $target_post;
+        }
+
+        $missing_target_ids = array_diff($link_recheck_post_ids, $loaded_target_ids);
+        if ($missing_target_ids !== []) {
+            blc_dequeue_link_recheck_requests($missing_target_ids);
+        }
+    }
+
+    if ($posts_by_id !== []) {
+        $posts = array_values($posts_by_id);
+    }
 
     $cleanup_size = 0;
     if (method_exists($wpdb, 'get_var')) {
@@ -1777,6 +1844,8 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         ];
     };
 
+    $processed_post_ids = [];
+
     try {
         foreach ($posts as $post) {
             blc_refresh_link_scan_lock($lock_token, $lock_timeout);
@@ -1792,6 +1861,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                 }
 
                 $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
+                $processed_post_ids[$post->ID] = true;
 
                 $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
                 if (!$dom instanceof DOMDocument) {
@@ -1813,6 +1883,9 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                 if ($anchor_text === '') { $anchor_text = sprintf('[%s]', __('Lien sans texte', 'liens-morts-detector-jlg')); }
 
                 $url_for_storage    = blc_prepare_url_for_storage($original_url);
+                if ($url_for_storage === '' || ($ignored_link_lookup !== [] && isset($ignored_link_lookup[$url_for_storage]))) {
+                    continue;
+                }
                 $anchor_for_storage = blc_prepare_text_field_for_storage($anchor_text);
 
                 $normalized_url = blc_normalize_link_url($original_url, $site_url, $site_scheme, $permalink);
@@ -2261,6 +2334,10 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
         if ($batch_wp_error instanceof \WP_Error) {
             return $batch_wp_error;
+        }
+
+        if ($processed_post_ids !== []) {
+            blc_dequeue_link_recheck_requests(array_keys($processed_post_ids));
         }
 
         // --- 5. Sauvegarde et planification ---
