@@ -52,3 +52,145 @@
     color: #1d2327; /* Couleur noire par défaut de l'admin WP */
     visibility: visible; /* S'assurer que le texte est toujours visible */
 }
+
+/* Styles pour la modale d'édition/suppression de liens */
+.blc-modal {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(29, 35, 39, 0.55);
+    z-index: 100000; /* Au-dessus de la barre d'admin WP */
+    padding: 20px;
+}
+
+.blc-modal.is-open {
+    display: flex;
+}
+
+.blc-modal__dialog {
+    position: relative;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+    padding: 24px;
+    width: 100%;
+    max-width: 480px;
+}
+
+.blc-modal__title {
+    margin-top: 0;
+    margin-bottom: 12px;
+}
+
+.blc-modal__message {
+    margin-bottom: 16px;
+    color: #1d2327;
+    white-space: pre-line;
+}
+
+.blc-modal__error {
+    display: none;
+    margin-bottom: 16px;
+    padding: 10px 12px;
+    border-radius: 4px;
+    background-color: #fef2f2;
+    color: #b32d2e;
+    border: 1px solid #f0c9c9;
+}
+
+.blc-modal__error.is-visible {
+    display: block;
+}
+
+.blc-modal__field {
+    margin-bottom: 20px;
+}
+
+.blc-modal__field.is-hidden {
+    display: none;
+}
+
+.blc-modal__label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+
+.blc-modal__input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #c3c4c7;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.blc-modal__actions {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+}
+
+.blc-modal__actions .button {
+    min-width: 120px;
+}
+
+.blc-modal__close {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    border: none;
+    background: transparent;
+    color: #1d2327;
+    font-size: 24px;
+    cursor: pointer;
+}
+
+.blc-modal__close:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.blc-modal.is-submitting .button,
+.blc-modal.is-submitting .blc-modal__close {
+    cursor: progress;
+}
+
+body.blc-modal-open {
+    overflow: hidden;
+}
+
+@media (max-width: 782px) {
+    .blc-modal {
+        padding: 0;
+    }
+
+    .blc-modal__dialog {
+        height: 100%;
+        max-width: none;
+        border-radius: 0;
+        padding: 24px 20px 28px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+
+    .blc-modal__actions {
+        flex-direction: column-reverse;
+        gap: 10px;
+    }
+
+    .blc-modal__actions .button {
+        width: 100%;
+        min-width: 0;
+        padding: 12px;
+        text-align: center;
+        font-size: 16px;
+    }
+
+    .blc-modal__close {
+        top: 14px;
+        right: 14px;
+    }
+}
