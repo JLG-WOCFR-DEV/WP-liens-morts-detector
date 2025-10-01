@@ -12,6 +12,7 @@
 .blc-stats-box {
     display: flex;
     gap: 20px;
+    flex-wrap: wrap;
     background-color: #fff;
     border: 1px solid #c3c4c7;
     padding: 20px;
@@ -35,6 +36,19 @@
 .blc-stat-label {
     font-size: 1em;
     color: #50575e;
+}
+
+@media (max-width: 782px) {
+    .blc-stats-box {
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .blc-stat {
+        width: 100%;
+        flex: 1 1 100%;
+        padding: 12px 0;
+    }
 }
 
 /* Style pour les icônes dans le tableau */
