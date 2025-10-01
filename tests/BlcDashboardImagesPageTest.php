@@ -39,6 +39,11 @@ class BlcDashboardImagesPageTest extends TestCase
      */
     public array $wpdbGetResultsQueries = [];
 
+    /**
+     * @var array<int, array<string, mixed>>
+     */
+    public array $wpdbResults = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -68,7 +73,7 @@ class BlcDashboardImagesPageTest extends TestCase
         $this->wpdbPrepareCalls = [];
         $this->wpdbGetVarQueries = [];
         $this->wpdbGetResultsQueries = [];
-
+        $this->wpdbResults = [];
         $GLOBALS['wpdb'] = new class($this) {
             /** @var string */
             public $prefix = 'wp_';
@@ -98,7 +103,7 @@ class BlcDashboardImagesPageTest extends TestCase
             {
                 $this->test_case->wpdbGetResultsQueries[] = $query;
 
-                return [];
+                return $this->test_case->getWpdbResults();
             }
         };
 
@@ -123,8 +128,21 @@ class BlcDashboardImagesPageTest extends TestCase
         Functions\when('number_format_i18n')->alias(static function ($number, $decimals = 0) {
             return number_format((float) $number, (int) $decimals);
         });
+        Functions\when('wp_date')->alias(static function ($format, $timestamp = null, $timezone = null) {
+            $timestamp = $timestamp ?? time();
+
+            if ($timezone instanceof \DateTimeZone) {
+                $date = new \DateTimeImmutable('@' . (int) $timestamp);
+                $date = $date->setTimezone($timezone);
+
+                return $date->format($format);
+            }
+
+            return gmdate($format, (int) $timestamp);
+        });
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-admin-pages.php';
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/class-blc-images-list-table.php';
     }
 
     protected function tearDown(): void
@@ -208,6 +226,44 @@ class BlcDashboardImagesPageTest extends TestCase
         $this->assertStringContainsString("Le déclenchement immédiat du cron a échoué", $output);
     }
 
+    public function test_dashboard_images_page_displays_thumbnail_preview_when_available(): void
+    {
+        Functions\when('attachment_url_to_postid')->alias(static function ($url) {
+            return 321;
+        });
+        Functions\when('wp_get_attachment_image')->alias(static function ($attachment_id, $size = 'thumbnail', $icon = false, $attr = array()) {
+            $attributes = '';
+
+            if (is_array($attr)) {
+                foreach ($attr as $name => $value) {
+                    $name = is_string($name) ? $name : (string) $name;
+                    $value = is_scalar($value) ? (string) $value : '';
+                    $attributes .= sprintf(' %s="%s"', esc_attr($name), esc_attr($value));
+                }
+            }
+
+            return sprintf('<img src="https://example.com/uploads/thumb-%d.jpg"%s />', (int) $attachment_id, $attributes);
+        });
+        $list_table = new \BLC_Images_List_Table();
+        $reflection = new \ReflectionMethod(\BLC_Images_List_Table::class, 'column_image_details');
+        $reflection->setAccessible(true);
+
+        $item = [
+            'url'             => 'https://example.com/uploads/broken-image.jpg',
+            'anchor'          => 'broken-image.jpg',
+            'post_id'         => 42,
+            'post_title'      => 'Sample Post',
+            'http_status'     => 404,
+            'last_checked_at' => '2024-01-10 12:34:56',
+        ];
+
+        $output = (string) $reflection->invoke($list_table, $item);
+
+        $this->assertStringContainsString('class="blc-image-preview"', $output);
+        $this->assertStringContainsString('<img src="https://example.com/uploads/thumb-321.jpg"', $output);
+        $this->assertStringContainsString('aria-hidden="false"', $output);
+    }
+
     public function test_dashboard_images_page_handles_empty_dataset_row_types(): void
     {
         $registered_filters = [];
@@ -273,6 +329,14 @@ class BlcDashboardImagesPageTest extends TestCase
         $this->assertStringContainsString('<span class="blc-stat-value">0</span>', $output);
         $this->assertStringContainsString('0.00', $output);
         $this->assertStringContainsString('Jamais', $output);
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function getWpdbResults(): array
+    {
+        return $this->wpdbResults;
     }
 
     /**
