@@ -71,6 +71,8 @@ class BLC_Links_List_Table extends WP_List_Table {
         $internal_condition = $this->build_internal_url_condition();
         $legacy_case        = $internal_condition['case_template'];
         $legacy_params      = $internal_condition['case_params'];
+        $needs_recheck_clause = '(last_checked_at IS NULL OR last_checked_at = %s OR last_checked_at <= %s)';
+        $needs_recheck_params = [$this->get_unchecked_sentinel_value(), $this->get_recheck_threshold_gmt()];
 
         $counts_query = $wpdb->prepare(
             "SELECT
@@ -80,19 +82,27 @@ class BLC_Links_List_Table extends WP_List_Table {
                         WHEN is_internal IS NOT NULL THEN is_internal
                         ELSE $legacy_case
                     END
-                ) AS internal_count
+                ) AS internal_count,
+                SUM(CASE WHEN http_status IN (404, 410) THEN 1 ELSE 0 END) AS not_found_count,
+                SUM(CASE WHEN http_status BETWEEN 500 AND 599 THEN 1 ELSE 0 END) AS server_error_count,
+                SUM(CASE WHEN http_status BETWEEN 300 AND 399 THEN 1 ELSE 0 END) AS redirect_count,
+                SUM(CASE WHEN $needs_recheck_clause THEN 1 ELSE 0 END) AS needs_recheck_count
              FROM $table_name
              WHERE type = %s",
-            array_merge($legacy_params, ['link'])
+            array_merge($legacy_params, $needs_recheck_params, ['link'])
         );
 
         $counts = $wpdb->get_row($counts_query, ARRAY_A);
 
-        $total_count    = isset($counts['total']) ? (int) $counts['total'] : 0;
-        $internal_count = isset($counts['internal_count']) ? (int) $counts['internal_count'] : 0;
-        $external_count = max(0, $total_count - $internal_count);
+        $total_count        = isset($counts['total']) ? (int) $counts['total'] : 0;
+        $internal_count     = isset($counts['internal_count']) ? (int) $counts['internal_count'] : 0;
+        $external_count     = max(0, $total_count - $internal_count);
+        $not_found_count    = isset($counts['not_found_count']) ? (int) $counts['not_found_count'] : 0;
+        $server_error_count = isset($counts['server_error_count']) ? (int) $counts['server_error_count'] : 0;
+        $redirect_count     = isset($counts['redirect_count']) ? (int) $counts['redirect_count'] : 0;
+        $needs_recheck_count = isset($counts['needs_recheck_count']) ? (int) $counts['needs_recheck_count'] : 0;
 
-        $all_class = ($current == 'all' ? 'current' : '');
+        $all_class = ($current === 'all' ? 'current' : '');
         $views['all'] = sprintf(
             "<a href='%s' class='%s'>%s <span class='count'>(%d)</span></a>",
             esc_url(remove_query_arg('link_type')),
@@ -101,7 +111,7 @@ class BLC_Links_List_Table extends WP_List_Table {
             $total_count
         );
 
-        $internal_class = ($current == 'internal' ? 'current' : '');
+        $internal_class = ($current === 'internal' ? 'current' : '');
         $views['internal'] = sprintf(
             "<a href='%s' class='%s'>%s <span class='count'>(%d)</span></a>",
             esc_url(add_query_arg('link_type', 'internal')),
@@ -110,13 +120,49 @@ class BLC_Links_List_Table extends WP_List_Table {
             $internal_count
         );
 
-        $external_class = ($current == 'external' ? 'current' : '');
+        $external_class = ($current === 'external' ? 'current' : '');
         $views['external'] = sprintf(
             "<a href='%s' class='%s'>%s <span class='count'>(%d)</span></a>",
             esc_url(add_query_arg('link_type', 'external')),
             esc_attr($external_class),
             esc_html__('Externes', 'liens-morts-detector-jlg'),
             $external_count
+        );
+
+        $not_found_class = ($current === 'status_404_410' ? 'current' : '');
+        $views['status_404_410'] = sprintf(
+            "<a href='%s' class='%s'>%s <span class='count'>(%d)</span></a>",
+            esc_url(add_query_arg('link_type', 'status_404_410')),
+            esc_attr($not_found_class),
+            esc_html__('404 / 410', 'liens-morts-detector-jlg'),
+            $not_found_count
+        );
+
+        $server_error_class = ($current === 'status_5xx' ? 'current' : '');
+        $views['status_5xx'] = sprintf(
+            "<a href='%s' class='%s'>%s <span class='count'>(%d)</span></a>",
+            esc_url(add_query_arg('link_type', 'status_5xx')),
+            esc_attr($server_error_class),
+            esc_html__('5xx', 'liens-morts-detector-jlg'),
+            $server_error_count
+        );
+
+        $redirect_class = ($current === 'status_redirects' ? 'current' : '');
+        $views['status_redirects'] = sprintf(
+            "<a href='%s' class='%s'>%s <span class='count'>(%d)</span></a>",
+            esc_url(add_query_arg('link_type', 'status_redirects')),
+            esc_attr($redirect_class),
+            esc_html__('Redirections', 'liens-morts-detector-jlg'),
+            $redirect_count
+        );
+
+        $needs_recheck_class = ($current === 'needs_recheck' ? 'current' : '');
+        $views['needs_recheck'] = sprintf(
+            "<a href='%s' class='%s'>%s <span class='count'>(%d)</span></a>",
+            esc_url(add_query_arg('link_type', 'needs_recheck')),
+            esc_attr($needs_recheck_class),
+            esc_html__('À revérifier', 'liens-morts-detector-jlg'),
+            $needs_recheck_count
         );
 
         return $views;
@@ -336,6 +382,19 @@ class BLC_Links_List_Table extends WP_List_Table {
             $params  = array_merge($params, $external_params);
         }
 
+        $needs_recheck_clause = '(last_checked_at IS NULL OR last_checked_at = %s OR last_checked_at <= %s)';
+
+        if ($current_view === 'status_404_410') {
+            $where[] = 'http_status IN (404, 410)';
+        } elseif ($current_view === 'status_5xx') {
+            $where[] = '(http_status BETWEEN 500 AND 599)';
+        } elseif ($current_view === 'status_redirects') {
+            $where[] = '(http_status BETWEEN 300 AND 399)';
+        } elseif ($current_view === 'needs_recheck') {
+            $where[] = $needs_recheck_clause;
+            $params = array_merge($params, [$this->get_unchecked_sentinel_value(), $this->get_recheck_threshold_gmt()]);
+        }
+
         $where_clause = implode(' AND ', $where);
 
         $total_query = $wpdb->prepare(
@@ -474,6 +533,39 @@ class BLC_Links_List_Table extends WP_List_Table {
         $this->search_term = $raw;
 
         return $this->search_term;
+    }
+
+    private function get_unchecked_sentinel_value() {
+        return '0000-00-00 00:00:00';
+    }
+
+    private function get_recheck_threshold_gmt() {
+        $interval = $this->get_recheck_interval_seconds();
+        $current_time = $this->get_current_time_gmt();
+        $threshold_timestamp = max(0, $current_time - $interval);
+
+        return gmdate('Y-m-d H:i:s', $threshold_timestamp);
+    }
+
+    private function get_recheck_interval_seconds() {
+        if (defined('WEEK_IN_SECONDS')) {
+            return (int) WEEK_IN_SECONDS;
+        }
+
+        $day_in_seconds = defined('DAY_IN_SECONDS') ? (int) DAY_IN_SECONDS : 86400;
+
+        return 7 * $day_in_seconds;
+    }
+
+    private function get_current_time_gmt() {
+        if (function_exists('current_time')) {
+            $timestamp = current_time('timestamp', true);
+            if (is_numeric($timestamp)) {
+                return (int) $timestamp;
+            }
+        }
+
+        return time();
     }
 
     private function build_internal_url_condition() {

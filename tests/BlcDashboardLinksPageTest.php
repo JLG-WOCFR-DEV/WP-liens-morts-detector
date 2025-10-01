@@ -41,9 +41,19 @@ class BlcDashboardLinksPageTest extends TestCase
             define('ARRAY_A', 'ARRAY_A');
         }
 
+        if (!defined('DAY_IN_SECONDS')) {
+            define('DAY_IN_SECONDS', 86400);
+        }
+
+        if (!defined('WEEK_IN_SECONDS')) {
+            define('WEEK_IN_SECONDS', 7 * DAY_IN_SECONDS);
+        }
+
         if (!class_exists('WP_List_Table')) {
             require_once __DIR__ . '/stubs/WP_List_Table.php';
         }
+
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/class-blc-links-list-table.php';
 
         $this->options = [
             'blc_last_check_time' => 0,
@@ -55,24 +65,76 @@ class BlcDashboardLinksPageTest extends TestCase
             /** @var string */
             public $prefix = 'wp_';
 
+            /** @var array<int, array<string, mixed>> */
+            public $prepared_calls = [];
+
+            /** @var int */
+            public $mock_total = 0;
+
+            /** @var array<string, int>|null */
+            public $mock_counts_row = null;
+
+            /** @var array<int, array<string, mixed>> */
+            public $mock_results = [];
+
+            /** @var string|null */
+            public $last_get_var_query = null;
+
+            /** @var string|null */
+            public $last_get_row_query = null;
+
+            /** @var string|null */
+            public $last_get_results_query = null;
+
             public function prepare($query, ...$args)
             {
+                $params = [];
+                if (!empty($args)) {
+                    if (is_array($args[0])) {
+                        $params = $args[0];
+                    } else {
+                        $params = $args;
+                    }
+                }
+
+                $this->prepared_calls[] = [
+                    'query'  => $query,
+                    'params' => $params,
+                ];
+
                 return $query;
             }
 
             public function get_var($query)
             {
-                return 0;
+                $this->last_get_var_query = $query;
+
+                return $this->mock_total;
             }
 
             public function get_row($query, $output = ARRAY_A)
             {
-                return ['total' => 0, 'internal_count' => 0, 'external_count' => 0];
+                $this->last_get_row_query = $query;
+
+                if (is_array($this->mock_counts_row)) {
+                    return $this->mock_counts_row;
+                }
+
+                return [
+                    'total'               => 0,
+                    'internal_count'      => 0,
+                    'not_found_count'     => 0,
+                    'server_error_count'  => 0,
+                    'redirect_count'      => 0,
+                    'needs_recheck_count' => 0,
+                ];
             }
 
             public function get_results($query, $output = ARRAY_A)
             {
-                return [];
+                $this->last_get_results_query = $query;
+
+                return $this->mock_results;
             }
 
             public function esc_like($text)
@@ -108,6 +170,17 @@ class BlcDashboardLinksPageTest extends TestCase
         Functions\when('sanitize_text_field')->alias(static fn($value) => is_scalar($value) ? (string) $value : '');
         Functions\when('number_format_i18n')->alias(static function ($number, $decimals = 0) {
             return number_format((float) $number, (int) $decimals);
+        });
+        Functions\when('current_time')->alias(static function ($type, $gmt = 0) {
+            if ($type === 'timestamp') {
+                return 1700000000;
+            }
+
+            if ($type === 'mysql') {
+                return gmdate('Y-m-d H:i:s', 1700000000);
+            }
+
+            return 1700000000;
         });
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-admin-pages.php';
@@ -220,6 +293,92 @@ class BlcDashboardLinksPageTest extends TestCase
         $this->assertSame(1, $calls);
         $this->assertStringContainsString("La vérification des liens a été programmée", $output);
         $this->assertStringContainsString("Le déclenchement immédiat du cron a échoué", $output);
+    }
+
+    public function test_views_include_additional_filters(): void
+    {
+        $GLOBALS['wpdb']->mock_total = 5;
+        $GLOBALS['wpdb']->mock_counts_row = [
+            'total'               => 5,
+            'internal_count'      => 2,
+            'not_found_count'     => 1,
+            'server_error_count'  => 1,
+            'redirect_count'      => 1,
+            'needs_recheck_count' => 2,
+        ];
+
+        ob_start();
+        blc_dashboard_links_page();
+        $output = (string) ob_get_clean();
+
+        $this->assertStringContainsString("404 / 410", $output);
+        $this->assertStringContainsString("5xx", $output);
+        $this->assertStringContainsString("Redirections", $output);
+        $this->assertStringContainsString("À revérifier", $output);
+        $this->assertStringContainsString("404 / 410 <span class='count'>(1)</span>", $output);
+        $this->assertStringContainsString("5xx <span class='count'>(1)</span>", $output);
+        $this->assertStringContainsString("Redirections <span class='count'>(1)</span>", $output);
+        $this->assertStringContainsString("À revérifier <span class='count'>(2)</span>", $output);
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: string}>
+     */
+    public function statusViewProvider(): array
+    {
+        return [
+            'not_found'  => ['status_404_410', 'http_status IN (404, 410)'],
+            'server'     => ['status_5xx', '(http_status BETWEEN 500 AND 599)'],
+            'redirects'  => ['status_redirects', '(http_status BETWEEN 300 AND 399)'],
+        ];
+    }
+
+    /**
+     * @dataProvider statusViewProvider
+     */
+    public function test_prepare_items_applies_http_status_filters(string $view, string $expectedSql): void
+    {
+        $_GET['link_type'] = $view;
+        $list_table = new \BLC_Links_List_Table();
+
+        $list_table->prepare_items();
+
+        unset($_GET['link_type']);
+
+        $this->assertNotEmpty($GLOBALS['wpdb']->prepared_calls);
+
+        $matching_calls = array_filter(
+            $GLOBALS['wpdb']->prepared_calls,
+            static fn(array $call): bool => isset($call['query']) && is_string($call['query']) && str_contains($call['query'], $expectedSql)
+        );
+
+        $this->assertNotEmpty($matching_calls);
+    }
+
+    public function test_prepare_items_applies_needs_recheck_filter(): void
+    {
+        $_GET['link_type'] = 'needs_recheck';
+        $list_table = new \BLC_Links_List_Table();
+
+        $list_table->prepare_items();
+
+        unset($_GET['link_type']);
+
+        $needs_recheck_snippet = 'last_checked_at IS NULL OR last_checked_at = %s OR last_checked_at <= %s';
+        $expected_threshold = gmdate('Y-m-d H:i:s', 1700000000 - (int) WEEK_IN_SECONDS);
+
+        $matching_calls = array_filter(
+            $GLOBALS['wpdb']->prepared_calls,
+            static fn(array $call): bool => isset($call['query']) && is_string($call['query']) && str_contains($call['query'], $needs_recheck_snippet)
+        );
+
+        $this->assertNotEmpty($matching_calls);
+
+        foreach ($matching_calls as $call) {
+            $this->assertContains('link', $call['params']);
+            $this->assertContains('0000-00-00 00:00:00', $call['params']);
+            $this->assertContains($expected_threshold, $call['params']);
+        }
     }
 
     /**
