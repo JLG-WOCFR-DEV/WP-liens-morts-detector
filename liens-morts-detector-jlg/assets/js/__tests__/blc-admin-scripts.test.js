@@ -211,7 +211,13 @@ describe('blc-admin-scripts modal interactions', () => {
     ajax.triggerSuccess({ success: true });
 
     expect(modal.hasClass('is-open')).toBe(false);
-    expect($('#the-list tr').length).toBe(0);
+    const rows = $('#the-list tr');
+    expect(rows.length).toBe(1);
+
+    const noItemsRow = rows.filter('.no-items');
+    expect(noItemsRow.length).toBe(1);
+    expect(noItemsRow.find('td').attr('colspan')).toBe('1');
+    expect(noItemsRow.text()).toBe('Aucun élément à afficher.');
     expect(document.body.classList.contains('blc-modal-open')).toBe(false);
   });
 

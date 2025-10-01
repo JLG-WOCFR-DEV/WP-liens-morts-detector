@@ -17,7 +17,8 @@ jQuery(document).ready(function($) {
         invalidUrlMessage: 'Veuillez saisir une URL valide.',
         sameUrlMessage: "La nouvelle URL doit être différente de l'URL actuelle.",
         genericError: 'Une erreur est survenue. Veuillez réessayer.',
-        successAnnouncement: 'La ligne a été mise à jour avec succès.'
+        successAnnouncement: 'La ligne a été mise à jour avec succès.',
+        noItemsMessage: 'Aucun élément à afficher.'
     };
 
     var messages = $.extend({}, defaultMessages, window.blcAdminMessages || {});
@@ -396,6 +397,38 @@ jQuery(document).ready(function($) {
         return $candidate.length ? $candidate[0] : null;
     }
 
+    function determineColumnCount($tbody, $row) {
+        var columnCount = 0;
+        var $normalizedTbody = $tbody && $tbody.jquery ? $tbody : $();
+        var $table = $normalizedTbody.length ? $normalizedTbody.closest('table') : $();
+
+        if ($table.length) {
+            var $headerCells = $table.find('thead tr:first').children('th:visible, td:visible');
+            columnCount = $headerCells.length;
+
+            if (!columnCount) {
+                $headerCells = $table.find('thead tr:first').children('th, td');
+                columnCount = $headerCells.length;
+            }
+        }
+
+        var $normalizedRow = $row && $row.jquery ? $row : $();
+
+        if (!columnCount && $normalizedRow.length) {
+            columnCount = $normalizedRow.children('td, th').length;
+        }
+
+        if (!columnCount && $table.length) {
+            columnCount = $table.find('tr').first().children('td, th').length;
+        }
+
+        if (!columnCount) {
+            columnCount = 1;
+        }
+
+        return columnCount;
+    }
+
     function handleSuccessfulResponse(response, row, helpers) {
         var $row = row && row.jquery ? row : $(row);
 
@@ -409,7 +442,50 @@ jQuery(document).ready(function($) {
 
         if ($row && $row.length) {
             $row.fadeOut(300, function() {
-                $(this).remove();
+                var $currentRow = $(this);
+                var $tbody = $currentRow.closest('tbody');
+                $currentRow.remove();
+
+                if (!$tbody.length) {
+                    $tbody = $('#the-list');
+                }
+
+                var $remainingRows = $tbody.children('tr').filter(function() {
+                    var $candidate = $(this);
+                    return !$candidate.hasClass('no-items') && !$candidate.hasClass('inline-edit-row');
+                });
+
+                var messageRow = null;
+
+                if (!$remainingRows.length) {
+                    var messageText = messages.noItemsMessage || '';
+
+                    if (messageText) {
+                        var colspan = determineColumnCount($tbody, $currentRow);
+                        var $existingNoItems = $tbody.children('tr.no-items');
+                        if ($existingNoItems.length) {
+                            $existingNoItems.remove();
+                        }
+
+                        messageRow = $('<tr>', { class: 'no-items' });
+                        $('<td>', { colspan: colspan }).text(messageText).appendTo(messageRow);
+                        $tbody.append(messageRow);
+                    }
+                }
+
+                $(document).trigger('blcAdmin:listUpdated', {
+                    response: response,
+                    tbody: $tbody,
+                    table: $tbody.closest('table'),
+                    messageRow: messageRow
+                });
+            });
+        } else {
+            $(document).trigger('blcAdmin:listUpdated', {
+                response: response,
+                tbody: $('#the-list'),
+                table: $('#the-list').closest('table'),
+                messageRow: null
             });
         }
     }
