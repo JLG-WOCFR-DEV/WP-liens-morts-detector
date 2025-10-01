@@ -49,19 +49,82 @@ class BLC_Images_List_Table extends WP_List_Table {
      * Gère le rendu de la colonne "Image Cassée".
      */
     protected function column_image_details($item) {
-        // L'URL de l'image est maintenant un lien cliquable
-        $output = sprintf(
-            '<strong><a href="%s" target="_blank" rel="noopener noreferrer" title="%s">%s</a></strong>',
-            esc_url($item['url']),
-            esc_attr__('Vérifier cette image (nouvel onglet)', 'liens-morts-detector-jlg'),
-            esc_html($item['url'])
-        );
-        $output .= sprintf(
+        $image_url = isset($item['url']) && is_string($item['url']) ? trim($item['url']) : '';
+        $anchor_text = isset($item['anchor']) && is_string($item['anchor']) ? trim($item['anchor']) : '';
+        $alt_text = $anchor_text !== ''
+            ? $anchor_text
+            : esc_html__("Aperçu de l'image cassée", 'liens-morts-detector-jlg');
+
+        $attachment_id = 0;
+        if (isset($item['attachment_id']) && is_numeric($item['attachment_id'])) {
+            $attachment_id = (int) $item['attachment_id'];
+        }
+
+        if ($attachment_id === 0 && $image_url !== '' && function_exists('attachment_url_to_postid')) {
+            $maybe_id = attachment_url_to_postid($image_url);
+            if (is_numeric($maybe_id)) {
+                $attachment_id = (int) $maybe_id;
+            }
+        }
+
+        $thumbnail_html = '';
+        if ($attachment_id > 0 && function_exists('wp_get_attachment_image')) {
+            $thumbnail_html = wp_get_attachment_image(
+                $attachment_id,
+                'thumbnail',
+                false,
+                [
+                    'class'        => 'blc-image-preview__img',
+                    'alt'          => $alt_text,
+                    'aria-hidden'  => 'false',
+                    'loading'      => 'lazy',
+                    'decoding'     => 'async',
+                ]
+            );
+            if (!is_string($thumbnail_html)) {
+                $thumbnail_html = '';
+            }
+        }
+
+        if ($thumbnail_html === '' && $image_url !== '') {
+            $thumbnail_html = sprintf(
+                '<img src="%s" alt="%s" aria-hidden="false" loading="lazy" decoding="async" class="blc-image-preview__img" />',
+                esc_url($image_url),
+                esc_attr($alt_text)
+            );
+        }
+
+        $preview_markup = '';
+        if ($thumbnail_html !== '') {
+            $preview_markup = sprintf('<div class="blc-image-preview">%s</div>', $thumbnail_html);
+        }
+
+        $link_markup = '';
+        if ($image_url !== '') {
+            $link_markup = sprintf(
+                '<strong><a href="%s" target="_blank" rel="noopener noreferrer" title="%s">%s</a></strong>',
+                esc_url($image_url),
+                esc_attr__('Vérifier cette image (nouvel onglet)', 'liens-morts-detector-jlg'),
+                esc_html($image_url)
+            );
+        }
+
+        $details_markup = $link_markup;
+        $details_markup .= sprintf(
             '<div class="row-actions"><span>%s <em>%s</em></span></div>',
             esc_html__('Nom du fichier :', 'liens-morts-detector-jlg'),
-            esc_html($item['anchor'])
+            esc_html($anchor_text)
         );
-        return $output;
+
+        if ($preview_markup === '') {
+            return $details_markup;
+        }
+
+        return sprintf(
+            '<div class="blc-image-details">%s<div class="blc-image-details__content">%s</div></div>',
+            $preview_markup,
+            $details_markup
+        );
     }
 
     /**
