@@ -93,6 +93,15 @@
     max-width: 480px;
 }
 
+.blc-modal__dialog:focus {
+    outline: none;
+}
+
+.blc-modal__dialog:focus-visible {
+    outline: 3px solid #72aee6;
+    outline-offset: 4px;
+}
+
 .blc-modal__title {
     margin-top: 0;
     margin-bottom: 12px;

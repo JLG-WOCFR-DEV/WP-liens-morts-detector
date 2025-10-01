@@ -35,6 +35,7 @@ jQuery(document).ready(function($) {
             };
         }
 
+        var $dialog = $modal.find('.blc-modal__dialog');
         var $title = $modal.find('.blc-modal__title');
         var $message = $modal.find('.blc-modal__message');
         var $error = $modal.find('.blc-modal__error');
@@ -45,12 +46,24 @@ jQuery(document).ready(function($) {
         var $cancel = $modal.find('.blc-modal__cancel');
         var $close = $modal.find('.blc-modal__close');
 
+        var focusableSelector = 'a[href], area[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+        var firstFocusable = null;
+        var lastFocusable = null;
+
         var state = {
             isOpen: false,
             onConfirm: null,
             showInput: true,
-            isSubmitting: false
+            isSubmitting: false,
+            focusableElements: $(),
+            triggerElement: null
         };
+
+        function refreshFocusableElements() {
+            state.focusableElements = $dialog.find(focusableSelector).filter(':visible');
+            firstFocusable = state.focusableElements[0] || null;
+            lastFocusable = state.focusableElements[state.focusableElements.length - 1] || null;
+        }
 
         function clearError() {
             $error.removeClass('is-visible').text('');
@@ -70,6 +83,7 @@ jQuery(document).ready(function($) {
             $cancel.prop('disabled', isSubmitting);
             $close.prop('disabled', isSubmitting);
             $modal.toggleClass('is-submitting', isSubmitting);
+            refreshFocusableElements();
         }
 
         function close() {
@@ -80,6 +94,11 @@ jQuery(document).ready(function($) {
             state.isOpen = false;
             state.onConfirm = null;
             state.showInput = true;
+
+            if (state.triggerElement && $.contains(document, state.triggerElement)) {
+                $(state.triggerElement).trigger('focus');
+            }
+            state.triggerElement = null;
 
             $modal.removeClass('is-open').attr('aria-hidden', 'true');
             $('body').removeClass('blc-modal-open');
@@ -92,6 +111,7 @@ jQuery(document).ready(function($) {
             $label.text('');
             $input.val('').attr('type', 'url');
             $field.removeClass('is-hidden');
+            state.focusableElements = $();
         }
 
         function open(options) {
@@ -103,6 +123,11 @@ jQuery(document).ready(function($) {
 
             state.onConfirm = typeof options.onConfirm === 'function' ? options.onConfirm : null;
             state.showInput = options.showInput !== false;
+
+            var activeElement = document.activeElement;
+            state.triggerElement = activeElement && activeElement.nodeType === 1 && typeof activeElement.focus === 'function'
+                ? activeElement
+                : null;
 
             $title.text(options.title || '');
             $message.text(options.message || '');
@@ -135,13 +160,18 @@ jQuery(document).ready(function($) {
 
             $modal.addClass('is-open').attr('aria-hidden', 'false');
             $('body').addClass('blc-modal-open');
+            refreshFocusableElements();
             state.isOpen = true;
 
             window.setTimeout(function() {
                 if (state.showInput) {
                     $input.trigger('focus').select();
                 } else {
-                    $confirm.trigger('focus');
+                    if (firstFocusable) {
+                        $(firstFocusable).trigger('focus');
+                    } else {
+                        $dialog.trigger('focus');
+                    }
                 }
             }, 10);
         }
@@ -150,8 +180,51 @@ jQuery(document).ready(function($) {
             showError: showError,
             clearError: clearError,
             setSubmitting: setSubmitting,
+            refreshFocus: refreshFocusableElements,
             close: close
         };
+
+        function handleKeydown(event) {
+            if (!state.isOpen || event.key !== 'Tab') {
+                return;
+            }
+
+            refreshFocusableElements();
+
+            if (!state.focusableElements.length) {
+                event.preventDefault();
+                $dialog.trigger('focus');
+                return;
+            }
+
+            var active = document.activeElement;
+
+            if (event.shiftKey) {
+                if (active === firstFocusable || !$.contains($dialog[0], active)) {
+                    event.preventDefault();
+                    $(lastFocusable).trigger('focus');
+                }
+            } else if (active === lastFocusable) {
+                event.preventDefault();
+                $(firstFocusable).trigger('focus');
+            }
+        }
+
+        function handleFocusIn(event) {
+            if (!state.isOpen) {
+                return;
+            }
+
+            if (!$dialog[0].contains(event.target)) {
+                refreshFocusableElements();
+
+                if (firstFocusable) {
+                    $(firstFocusable).trigger('focus');
+                } else {
+                    $dialog.trigger('focus');
+                }
+            }
+        }
 
         $confirm.on('click', function() {
             if (!state.isOpen || state.isSubmitting) {
@@ -182,6 +255,9 @@ jQuery(document).ready(function($) {
                 close();
             }
         });
+
+        $modal.on('keydown', handleKeydown);
+        $(document).on('focusin', handleFocusIn);
 
         $(document).on('keydown', function(event) {
             if (event.key === 'Escape' && state.isOpen && !state.isSubmitting) {

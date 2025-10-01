@@ -108,13 +108,20 @@ function blc_dashboard_links_page() {
     $list_table->prepare_items();
     ?>
     <div id="blc-modal" class="blc-modal" role="presentation" aria-hidden="true">
-        <div class="blc-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="blc-modal-title">
+        <div
+            class="blc-modal__dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="blc-modal-title"
+            aria-describedby="blc-modal-message blc-modal-error"
+            tabindex="-1"
+        >
             <button type="button" class="blc-modal__close" aria-label="<?php echo esc_attr__('Fermer la fenêtre modale', 'liens-morts-detector-jlg'); ?>">
                 <span aria-hidden="true">&times;</span>
             </button>
             <h2 id="blc-modal-title" class="blc-modal__title"></h2>
-            <p class="blc-modal__message"></p>
-            <div class="blc-modal__error" role="alert" aria-live="assertive"></div>
+            <p id="blc-modal-message" class="blc-modal__message"></p>
+            <div id="blc-modal-error" class="blc-modal__error" role="alert" aria-live="assertive"></div>
             <div class="blc-modal__field">
                 <label for="blc-modal-url" class="blc-modal__label"></label>
                 <input type="url" id="blc-modal-url" class="blc-modal__input" placeholder="<?php echo esc_attr__('https://', 'liens-morts-detector-jlg'); ?>">
