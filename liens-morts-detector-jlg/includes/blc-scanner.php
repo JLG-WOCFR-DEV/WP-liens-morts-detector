@@ -62,11 +62,25 @@ function blc_maybe_send_scan_summary($dataset_type) {
 
     $table_name = $wpdb->prefix . 'blc_broken_links';
     $broken_count = 0;
+    $row_types = blc_get_dataset_row_types($dataset_type);
+    if ($row_types === []) {
+        return;
+    }
+
     if (method_exists($wpdb, 'prepare') && method_exists($wpdb, 'get_var')) {
-        $query = $wpdb->prepare(
-            "SELECT COUNT(*) FROM $table_name WHERE type = %s",
-            $dataset_type
-        );
+        if (count($row_types) === 1) {
+            $query = $wpdb->prepare(
+                "SELECT COUNT(*) FROM $table_name WHERE type = %s",
+                reset($row_types)
+            );
+        } else {
+            $placeholders = implode(',', array_fill(0, count($row_types), '%s'));
+            $query = $wpdb->prepare(
+                "SELECT COUNT(*) FROM $table_name WHERE type IN ($placeholders)",
+                $row_types
+            );
+        }
+
         if (is_string($query)) {
             $broken_count = (int) $wpdb->get_var($query);
         }
@@ -947,15 +961,36 @@ function blc_generate_scan_run_token() {
  *
  * @return int|\WP_Error Number of rows marked or WP_Error on failure.
  */
-function blc_stage_dataset_refresh($table_name, $type, $scan_run_id, ?array $post_ids = null) {
+function blc_stage_dataset_refresh($table_name, $types, $scan_run_id, ?array $post_ids = null) {
     if (is_array($post_ids) && count($post_ids) === 0) {
+        return 0;
+    }
+
+    if (!is_array($types)) {
+        $types = [$types];
+    }
+
+    $types = array_values(array_filter(array_map('strval', $types), static function ($value) {
+        return $value !== '';
+    }));
+
+    if ($types === []) {
         return 0;
     }
 
     global $wpdb;
 
-    $clauses = ['type = %s'];
-    $args    = [$scan_run_id, $type];
+    $clauses = [];
+    $args    = [$scan_run_id];
+
+    if (count($types) === 1) {
+        $clauses[] = 'type = %s';
+        $args[]    = $types[0];
+    } else {
+        $type_placeholders = implode(',', array_fill(0, count($types), '%s'));
+        $clauses[] = "type IN ($type_placeholders)";
+        $args      = array_merge($args, $types);
+    }
 
     if (is_array($post_ids)) {
         $post_ids = array_values(array_unique(array_map('intval', $post_ids)));
@@ -998,15 +1033,36 @@ function blc_stage_dataset_refresh($table_name, $type, $scan_run_id, ?array $pos
  *
  * @return int|\WP_Error Number of rows deleted or WP_Error on failure.
  */
-function blc_commit_dataset_refresh($table_name, $type, $scan_run_id, $dataset_type, ?array $post_ids = null) {
+function blc_commit_dataset_refresh($table_name, $types, $scan_run_id, $dataset_type, ?array $post_ids = null) {
     if (is_array($post_ids) && count($post_ids) === 0) {
+        return 0;
+    }
+
+    if (!is_array($types)) {
+        $types = [$types];
+    }
+
+    $types = array_values(array_filter(array_map('strval', $types), static function ($value) {
+        return $value !== '';
+    }));
+
+    if ($types === []) {
         return 0;
     }
 
     global $wpdb;
 
-    $clauses = ['scan_run_id = %s', 'type = %s'];
-    $args    = [$scan_run_id, $type];
+    $clauses = ['scan_run_id = %s'];
+    $args    = [$scan_run_id];
+
+    if (count($types) === 1) {
+        $clauses[] = 'type = %s';
+        $args[]    = $types[0];
+    } else {
+        $type_placeholders = implode(',', array_fill(0, count($types), '%s'));
+        $clauses[] = "type IN ($type_placeholders)";
+        $args      = array_merge($args, $types);
+    }
 
     if (is_array($post_ids)) {
         $post_ids = array_values(array_unique(array_map('intval', $post_ids)));
@@ -1056,20 +1112,41 @@ function blc_commit_dataset_refresh($table_name, $type, $scan_run_id, $dataset_t
 /**
  * Clear staging markers so the previous dataset remains available.
  *
- * @param string         $table_name  Fully qualified table name.
- * @param string         $type        Dataset type stored in the table.
- * @param string         $scan_run_id Marker assigned during staging.
- * @param array<int>|null $post_ids   Optional subset of posts to restore.
+ * @param string          $table_name  Fully qualified table name.
+ * @param string|string[] $types       Dataset type(s) stored in the table.
+ * @param string          $scan_run_id Marker assigned during staging.
+ * @param array<int>|null $post_ids    Optional subset of posts to restore.
  */
-function blc_restore_dataset_refresh($table_name, $type, $scan_run_id, ?array $post_ids = null) {
+function blc_restore_dataset_refresh($table_name, $types, $scan_run_id, ?array $post_ids = null) {
     if (is_array($post_ids) && count($post_ids) === 0) {
+        return;
+    }
+
+    if (!is_array($types)) {
+        $types = [$types];
+    }
+
+    $types = array_values(array_filter(array_map('strval', $types), static function ($value) {
+        return $value !== '';
+    }));
+
+    if ($types === []) {
         return;
     }
 
     global $wpdb;
 
-    $clauses = ['scan_run_id = %s', 'type = %s'];
-    $args    = [$scan_run_id, $type];
+    $clauses = ['scan_run_id = %s'];
+    $args    = [$scan_run_id];
+
+    if (count($types) === 1) {
+        $clauses[] = 'type = %s';
+        $args[]    = $types[0];
+    } else {
+        $type_placeholders = implode(',', array_fill(0, count($types), '%s'));
+        $clauses[] = "type IN ($type_placeholders)";
+        $args      = array_merge($args, $types);
+    }
 
     if (is_array($post_ids)) {
         $post_ids = array_values(array_unique(array_map('intval', $post_ids)));
@@ -2307,6 +2384,8 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     if ($debug_mode) { error_log("--- Début du scan IMAGES (Lot #$batch) ---"); }
 
     $table_name = $wpdb->prefix . 'blc_broken_links';
+    $remote_image_scan_enabled = (bool) get_option('blc_remote_image_scan_enabled', false);
+    $image_dataset_row_types = blc_get_dataset_row_types('image');
     $batch_delay_s = max(0, (int) get_option('blc_batch_delay', 60));
     $default_lock_timeout = defined('MINUTE_IN_SECONDS') ? 15 * MINUTE_IN_SECONDS : 900;
     $lock_timeout = apply_filters('blc_image_scan_lock_timeout', $default_lock_timeout);
@@ -2417,7 +2496,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
     $scan_run_token = '';
     if (!empty($post_ids_in_batch)) {
         $scan_run_token = blc_generate_scan_run_token();
-        $stage_result = blc_stage_dataset_refresh($table_name, 'image', $scan_run_token, $post_ids_in_batch);
+        $stage_result = blc_stage_dataset_refresh($table_name, $image_dataset_row_types, $scan_run_token, $post_ids_in_batch);
         if (is_wp_error($stage_result)) {
             if ($lock_token !== '') {
                 blc_release_image_scan_lock($lock_token);
@@ -2509,7 +2588,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                 if (!$dom instanceof DOMDocument) {
                     error_log(sprintf('BLC: DOM creation failed during image scan for post ID %d; restoring staged entries.', $post->ID));
                     if ($scan_run_token !== '') {
-                        blc_restore_dataset_refresh($table_name, 'image', $scan_run_token, [$post->ID]);
+                        blc_restore_dataset_refresh($table_name, $image_dataset_row_types, $scan_run_token, [$post->ID]);
                     }
                     continue;
                 }
@@ -2533,7 +2612,8 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                     $wpdb,
                     $post_title_for_storage,
                     $register_pending_image_insert,
-                    $site_host_for_metadata
+                    $site_host_for_metadata,
+                    $remote_image_scan_enabled
                 ) {
                     $candidate_url = trim((string) $candidate_url);
                     if ($candidate_url === '') {
@@ -2559,10 +2639,26 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
 
                     $hosts_match_site = ($image_host !== '' && $normalized_site_host !== '' && $image_host === $normalized_site_host);
                     $hosts_match_upload = ($image_host !== '' && $upload_baseurl_host !== '' && $image_host === $upload_baseurl_host);
+                    $is_remote_upload_candidate = false;
+
                     if (!$hosts_match_site && !$hosts_match_upload) {
-                        return;
-                    }
-                    if (!$hosts_match_site && $hosts_match_upload) {
+                        if (!$remote_image_scan_enabled) {
+                            if ($debug_mode) {
+                                error_log("  -> Image distante ignorée (analyse désactivée) : " . $normalized_image_url);
+                            }
+                            return;
+                        }
+
+                        $is_safe_remote_host = blc_is_safe_remote_host($image_host);
+                        if (!$is_safe_remote_host) {
+                            if ($debug_mode) {
+                                error_log("  -> Image ignorée (IP non autorisée) : " . $normalized_image_url);
+                            }
+                            return;
+                        }
+
+                        $is_remote_upload_candidate = true;
+                    } elseif (!$hosts_match_site && $hosts_match_upload) {
                         $is_safe_remote_host = blc_is_safe_remote_host($image_host);
                         if (!$is_safe_remote_host) {
                             if ($debug_mode) {
@@ -2582,8 +2678,11 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                     }
 
                     $normalized_upload_baseurl_length = strlen($normalized_upload_baseurl);
+                    if ($normalized_upload_baseurl_length === 0) {
+                        return;
+                    }
                     if (
-                        $normalized_upload_baseurl_length === 0 ||
+                        !$is_remote_upload_candidate &&
                         strncasecmp($normalized_image_url, $normalized_upload_baseurl, $normalized_upload_baseurl_length) !== 0
                     ) {
                         return;
@@ -2663,6 +2762,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                     $metadata  = blc_get_url_metadata_for_storage($candidate_url, $normalized_image_url, $site_host_for_metadata);
                     $row_bytes = blc_calculate_row_storage_footprint_bytes($url_for_storage, $anchor_for_storage, $post_title_for_storage);
                     $checked_at_gmt = current_time('mysql', true);
+                    $row_type = $is_remote_upload_candidate ? 'remote-image' : 'image';
                     $inserted = $wpdb->insert(
                         $table_name,
                         [
@@ -2670,7 +2770,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
                             'anchor'          => $anchor_for_storage,
                             'post_id'         => $post->ID,
                             'post_title'      => $post_title_for_storage,
-                            'type'            => 'image',
+                            'type'            => $row_type,
                             'url_host'        => $metadata['host'],
                             'is_internal'     => $metadata['is_internal'],
                             'http_status'     => null,
@@ -2727,7 +2827,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
             }
 
             if ($scan_run_token !== '') {
-                $commit_result = blc_commit_dataset_refresh($table_name, 'image', $scan_run_token, 'image', [$post->ID]);
+                $commit_result = blc_commit_dataset_refresh($table_name, $image_dataset_row_types, $scan_run_token, 'image', [$post->ID]);
                 if (is_wp_error($commit_result)) {
                     $batch_wp_error = $commit_result;
                     break;
@@ -2760,7 +2860,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
         }
 
         if ($scan_run_token !== '' && $should_cleanup_pending_images) {
-            blc_restore_dataset_refresh($table_name, 'image', $scan_run_token);
+            blc_restore_dataset_refresh($table_name, $image_dataset_row_types, $scan_run_token);
         }
 
         if ($batch_exception instanceof \Throwable) {

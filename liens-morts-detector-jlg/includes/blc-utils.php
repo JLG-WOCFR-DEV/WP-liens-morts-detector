@@ -747,14 +747,30 @@ function blc_get_dataset_storage_footprint_bytes($type) {
     global $wpdb;
     $table_name = $wpdb->prefix . 'blc_broken_links';
 
-    $size = (int) $wpdb->get_var(
-        $wpdb->prepare(
+    $row_types = blc_get_dataset_row_types($type);
+    if ($row_types === []) {
+        return 0;
+    }
+
+    if (count($row_types) === 1) {
+        $size = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0))
+                 FROM $table_name
+                 WHERE type = %s",
+                reset($row_types)
+            )
+        );
+    } else {
+        $placeholders = implode(',', array_fill(0, count($row_types), '%s'));
+        $query = $wpdb->prepare(
             "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0))
              FROM $table_name
-             WHERE type = %s",
-            $type
-        )
-    );
+             WHERE type IN ($placeholders)",
+            $row_types
+        );
+        $size = (int) $wpdb->get_var($query);
+    }
 
     blc_set_dataset_storage_footprint($type, $size);
 
@@ -1262,10 +1278,30 @@ function blc_normalize_remote_host($host) {
  *         storing safe remote host results via wp_cache_set(). The default of 0 keeps entries
  *         in memory for the duration of the request only.
  */
-function blc_is_safe_remote_host($host) {
+function blc_is_safe_remote_host($host, $allowed_hosts = null) {
     $normalized_host = blc_normalize_remote_host($host);
     if ($normalized_host === '') {
         return false;
+    }
+
+    $allowed_lookup = [];
+    if ($allowed_hosts !== null) {
+        if (!is_array($allowed_hosts)) {
+            $allowed_hosts = [$allowed_hosts];
+        }
+
+        foreach ($allowed_hosts as $candidate_host) {
+            $normalized_candidate = blc_normalize_remote_host($candidate_host);
+            if ($normalized_candidate === '') {
+                continue;
+            }
+
+            $allowed_lookup[$normalized_candidate] = true;
+        }
+
+        if ($allowed_lookup !== [] && !isset($allowed_lookup[$normalized_host])) {
+            return false;
+        }
     }
 
     static $in_process_cache = [];
@@ -1419,6 +1455,44 @@ function blc_is_safe_remote_host($host) {
     }
 
     return $store_cache(true);
+}
+
+/**
+ * Map a logical dataset type to the stored row types.
+ *
+ * @param string $dataset_type Dataset identifier (e.g. 'link', 'image').
+ * @return string[]
+ */
+function blc_get_dataset_row_types($dataset_type) {
+    $normalized = strtolower((string) $dataset_type);
+
+    if ($normalized === 'image') {
+        $types = ['image', 'remote-image'];
+    } elseif ($normalized === 'link') {
+        $types = ['link'];
+    } elseif ($normalized === '') {
+        $types = [];
+    } else {
+        $types = [$normalized];
+    }
+
+    if (function_exists('apply_filters')) {
+        $types = apply_filters('blc_dataset_row_types', $types, $normalized);
+    }
+
+    $types = array_filter(
+        array_map(
+            static function ($type) {
+                return is_string($type) ? trim($type) : '';
+            },
+            (array) $types
+        ),
+        static function ($value) {
+            return $value !== '';
+        }
+    );
+
+    return array_values(array_unique($types));
 }
 
 /**

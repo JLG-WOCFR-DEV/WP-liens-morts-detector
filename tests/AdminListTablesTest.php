@@ -428,7 +428,7 @@ class AdminListTablesTest extends TestCase
 
         $this->assertCount(20, $table->items);
         $this->assertSame($expected_items, $table->items);
-        $this->assertStringContainsString("WHERE type = 'image'", $wpdb->last_get_results_query);
+        $this->assertStringContainsString("WHERE type IN ('image','remote-image')", $wpdb->last_get_results_query);
         $this->assertStringContainsString('LIMIT 20', $wpdb->last_get_results_query);
         $this->assertStringContainsString('OFFSET 0', $wpdb->last_get_results_query);
     }

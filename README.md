@@ -4,10 +4,11 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 
 ## Fonctionnalités
 - Vérification automatique des liens `<a>` grâce à WP‑Cron, et déclenchement manuel des images `<img>` (traitées ensuite en arrière-plan)
-- Planification quotidienne, hebdomadaire ou mensuelle  
-- Tableau de bord listant les liens et images cassés avec statistiques  
-- Actions rapides pour modifier une URL ou retirer un lien directement depuis la liste  
+- Planification quotidienne, hebdomadaire ou mensuelle
+- Tableau de bord listant les liens et images cassés avec statistiques
+- Actions rapides pour modifier une URL ou retirer un lien directement depuis la liste
 - Options avancées : exclusion de domaines, plages horaires de repos, mode debug
+- Option dédiée pour analyser les images servies depuis un CDN ou un domaine externe sécurisé
 
 ## Installation
 1. Copier le dossier `liens-morts-detector-jlg` dans `wp-content/plugins/`.
@@ -18,6 +19,7 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 - Les liens sont vérifiés automatiquement selon la fréquence choisie, tandis que les images nécessitent de lancer un scan manuel depuis le rapport (le traitement se poursuit ensuite en arrière-plan).
 - Les liens ou images détectés comme cassés apparaissent dans une table permettant la modification rapide de l’URL ou la suppression du lien.
 - Des réglages avancés permettent d’exclure certains domaines, de limiter l’analyse à des plages horaires et d’activer un mode debug pour le suivi.
+- L’analyse des images distantes (CDN, sous-domaines médias) peut être activée dans les réglages. Cette vérification reste basée sur les fichiers présents dans `wp-content/uploads` et peut rallonger la durée du scan ou consommer davantage de quotas côté CDN.
 
 ## Hooks disponibles
 ### `blc_max_load_threshold`
