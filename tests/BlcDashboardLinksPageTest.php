@@ -74,6 +74,9 @@ class BlcDashboardLinksPageTest extends TestCase
             /** @var string */
             public $prefix = 'wp_';
 
+            /** @var string */
+            public $posts = 'wp_posts';
+
             /** @var array<int, array<string, mixed>> */
             public $prepared_calls = [];
 
@@ -361,6 +364,36 @@ class BlcDashboardLinksPageTest extends TestCase
 
         $this->assertSame([], $errors);
         $this->assertStringNotContainsString('<input type="hidden" name="page"', $output);
+    }
+
+    public function test_prepare_items_filters_by_post_type_joins_posts_table(): void
+    {
+        $_GET['post_type'] = 'page';
+        $list_table = new \BLC_Links_List_Table();
+
+        $list_table->prepare_items();
+
+        unset($_GET['post_type']);
+
+        $this->assertNotNull($GLOBALS['wpdb']->last_get_var_query);
+        $this->assertNotNull($GLOBALS['wpdb']->last_get_results_query);
+        $this->assertStringContainsString('LEFT JOIN wp_posts AS posts', $GLOBALS['wpdb']->last_get_var_query);
+        $this->assertStringContainsString('LEFT JOIN wp_posts AS posts', $GLOBALS['wpdb']->last_get_results_query);
+        $this->assertStringContainsString('posts.post_type = %s', $GLOBALS['wpdb']->last_get_var_query);
+        $this->assertStringContainsString('posts.post_type = %s', $GLOBALS['wpdb']->last_get_results_query);
+
+        $matching_calls = array_filter(
+            $GLOBALS['wpdb']->prepared_calls,
+            static fn(array $call): bool => isset($call['query'], $call['params'])
+                && is_string($call['query'])
+                && str_contains($call['query'], 'posts.post_type = %s')
+        );
+
+        $this->assertNotEmpty($matching_calls);
+
+        foreach ($matching_calls as $call) {
+            $this->assertContains('page', $call['params']);
+        }
     }
 
     /**
