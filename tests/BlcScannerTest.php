@@ -72,6 +72,7 @@ namespace {
         }
     }
 
+
     if (!class_exists('WP_Query')) {
         class WP_Query
         {
@@ -251,6 +252,8 @@ class BlcScannerTest extends TestCase
         $testCase = $this;
 
         Functions\when('get_option')->alias(fn(string $name, $default = false) => $this->options[$name] ?? $default);
+        Functions\when('get_comments')->justReturn([]);
+        Functions\when('get_post_meta')->justReturn([]);
         Functions\when('get_transient')->alias(fn(string $key) => $this->transients[$key] ?? false);
         Functions\when('set_transient')->alias(function (string $key, $value, $expiration) {
             $this->transients[$key] = $value;
@@ -969,6 +972,149 @@ class BlcScannerTest extends TestCase
 
         $this->assertNotEmpty($this->httpRequests, 'Relative links should trigger an HTTP request with the resolved URL.');
         $this->assertSame('https://example.com/post-321/section/page.html', $this->httpRequests[0]['url']);
+    }
+
+    public function test_blc_perform_check_scans_comment_links(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 42,
+            'post_title' => 'Article avec commentaires',
+            'post_content' => '<p>Aucun lien dans le contenu</p>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 0,
+        ];
+
+        $commentCallCount = 0;
+        Functions\when('get_comments')->alias(function ($args = []) use (&$commentCallCount) {
+            $commentCallCount++;
+
+            return [
+                (object) [
+                    'comment_ID' => 7,
+                    'comment_content' => '<a href="http://comment.test/broken">Broken Comment</a>',
+                ],
+            ];
+        });
+
+        $metaCallCount = 0;
+        Functions\when('get_post_meta')->alias(function ($post_id, $key = '', $single = false) use (&$metaCallCount) {
+            $metaCallCount++;
+
+            return [];
+        });
+
+        $this->setHttpResponse('HEAD', 'http://comment.test/broken', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertSame(1, $commentCallCount, 'Comments should be fetched for the scanned post.');
+        $this->assertSame(1, $metaCallCount, 'Post meta should still be retrieved once per post.');
+        $this->assertCount(1, $wpdb->inserted, 'Comment links should be analysed when scanning posts.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('http://comment.test/broken', $insert['data']['url']);
+        $this->assertSame('Commentaire #7 — Article avec commentaires', $insert['data']['post_title']);
+        $this->assertSame(42, $insert['data']['post_id']);
+    }
+
+    public function test_blc_perform_check_scans_post_meta_links(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 105,
+            'post_title' => 'Article avec méta',
+            'post_content' => '<div>Pas de lien ici</div>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 0,
+        ];
+
+        $commentCallCount = 0;
+        Functions\when('get_comments')->alias(function ($args = []) use (&$commentCallCount) {
+            $commentCallCount++;
+
+            return [];
+        });
+
+        $metaCallCount = 0;
+        Functions\when('get_post_meta')->alias(function ($post_id, $key = '', $single = false) use (&$metaCallCount) {
+            $metaCallCount++;
+
+            return [
+                'champ_personnalise' => ['<p><a href="http://meta.test/broken">Broken Meta</a></p>'],
+            ];
+        });
+
+        $this->setHttpResponse('HEAD', 'http://meta.test/broken', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertSame(1, $commentCallCount, 'Comment retrieval should still occur even when empty.');
+        $this->assertSame(1, $metaCallCount, 'Post meta must be fetched for the post.');
+        $this->assertCount(1, $wpdb->inserted, 'Links inside post meta should be scanned.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('http://meta.test/broken', $insert['data']['url']);
+        $this->assertSame('Méta « champ_personnalise » — Article avec méta', $insert['data']['post_title']);
+        $this->assertSame(105, $insert['data']['post_id']);
+    }
+
+    public function test_blc_perform_check_scans_widget_links(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $post = (object) [
+            'ID' => 501,
+            'post_title' => 'Article sans liens',
+            'post_content' => '<div>Contenu sans lien</div>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 0,
+        ];
+
+        $this->options['widget_text'] = [
+            2 => [
+                'title' => 'Pied de page',
+                'text'  => '<a href="http://widget.test/broken">Broken Widget</a>',
+            ],
+        ];
+
+        $commentCallCount = 0;
+        Functions\when('get_comments')->alias(function ($args = []) use (&$commentCallCount) {
+            $commentCallCount++;
+
+            return [];
+        });
+
+        $metaCallCount = 0;
+        Functions\when('get_post_meta')->alias(function ($post_id, $key = '', $single = false) use (&$metaCallCount) {
+            $metaCallCount++;
+
+            return [];
+        });
+
+        $this->setHttpResponse('HEAD', 'http://widget.test/broken', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertSame(1, $commentCallCount, 'Comment lookup should run even when no comments are returned.');
+        $this->assertSame(1, $metaCallCount, 'Post meta lookup should run even when empty.');
+        $this->assertCount(1, $wpdb->inserted, 'Widget links should be checked during scans.');
+        $insert = $wpdb->inserted[0];
+        $this->assertSame('http://widget.test/broken', $insert['data']['url']);
+        $this->assertSame('Widget texte « Pied de page »', $insert['data']['post_title']);
+        $this->assertSame(0, $insert['data']['post_id']);
     }
 
     public function test_blc_perform_check_delays_during_rest_period(): void

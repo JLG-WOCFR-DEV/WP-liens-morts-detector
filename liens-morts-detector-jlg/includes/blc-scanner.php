@@ -934,6 +934,40 @@ function blc_create_dom_from_content($content, $charset = 'UTF-8') {
 }
 
 /**
+ * Iterate over every <a> element present in a raw HTML snippet.
+ *
+ * @param string   $html     Raw HTML content.
+ * @param string   $charset  Charset used to decode the snippet before DOM parsing.
+ * @param callable $callback Callback receiving the original href and the normalized anchor text.
+ *                           Signature: function (string $href, string $anchor_text): void.
+ *
+ * @return bool Whether the DOM could be created successfully.
+ */
+function blc_process_link_nodes_from_html($html, $charset, callable $callback) {
+    $dom = blc_create_dom_from_content($html, $charset);
+    if (!$dom instanceof DOMDocument) {
+        return false;
+    }
+
+    foreach ($dom->getElementsByTagName('a') as $link_node) {
+        $original_url = trim(wp_kses_decode_entities($link_node->getAttribute('href')));
+        if ($original_url === '') {
+            continue;
+        }
+
+        $anchor_text = wp_strip_all_tags($link_node->textContent);
+        $anchor_text = trim(preg_replace('/\s+/u', ' ', $anchor_text));
+        if ($anchor_text === '') {
+            $anchor_text = sprintf('[%s]', __('Lien sans texte', 'liens-morts-detector-jlg'));
+        }
+
+        $callback($original_url, $anchor_text);
+    }
+
+    return true;
+}
+
+/**
  * Generate a unique token used to mark dataset rows while refreshing them.
  *
  * @return string
@@ -1535,6 +1569,60 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         }
     }
 
+    $widget_sources = [];
+    if (function_exists('get_option')) {
+        $raw_widgets = get_option('widget_text', []);
+        if (is_array($raw_widgets)) {
+            foreach ($raw_widgets as $widget_id => $widget_data) {
+                if (!is_array($widget_data)) {
+                    continue;
+                }
+
+                $widget_text = isset($widget_data['text']) ? (string) $widget_data['text'] : '';
+                if (trim($widget_text) === '' || stripos($widget_text, '<a') === false) {
+                    continue;
+                }
+
+                $widget_title = '';
+                if (isset($widget_data['title'])) {
+                    $widget_title = (string) $widget_data['title'];
+                }
+                if ($widget_title === '' && isset($widget_data['name'])) {
+                    $widget_title = (string) $widget_data['name'];
+                }
+
+                if ($widget_title === '') {
+                    $label = sprintf(__('Widget texte #%s', 'liens-morts-detector-jlg'), $widget_id);
+                } else {
+                    $label = sprintf(__('Widget texte « %s »', 'liens-morts-detector-jlg'), $widget_title);
+                }
+
+                $widget_sources[] = [
+                    'html'          => $widget_text,
+                    'post_id'       => 0,
+                    'permalink'     => '',
+                    'storage_title' => blc_prepare_text_field_for_storage($label),
+                    'debug_label'   => $label,
+                ];
+            }
+        }
+    }
+
+    if (!empty($widget_sources)) {
+        if ($scan_run_token === '') {
+            $scan_run_token = blc_generate_scan_run_token();
+        }
+
+        $stage_result = blc_stage_dataset_refresh($table_name, 'link', $scan_run_token, [0]);
+        if (is_wp_error($stage_result)) {
+            if ($lock_token !== '') {
+                blc_release_link_scan_lock($lock_token);
+                $lock_token = '';
+            }
+            return $stage_result;
+        }
+    }
+
     // --- 4. Boucle d'analyse des LIENS <a> ---
     $upload_dir_info = wp_upload_dir();
     $missing_upload_pieces = [];
@@ -1835,7 +1923,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     $pending_link_inserts = [];
     $register_pending_link_insert = static function ($post_id, $row_bytes) use (&$pending_link_inserts, $wpdb) {
         $post_id = (int) $post_id;
-        if ($post_id <= 0) {
+        if ($post_id < 0) {
             return;
         }
 
@@ -1854,160 +1942,140 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         ];
     };
 
-    try {
-        foreach ($posts as $post) {
-            blc_refresh_link_scan_lock($lock_token, $lock_timeout);
-            try {
-                if ($debug_mode) { error_log("Analyse LIENS pour : '" . $post->post_title . "'"); }
+    $link_occurrence_counters = [];
 
-                $permalink = '';
-                if (function_exists('get_permalink')) {
-                    $maybe_permalink = get_permalink($post);
-                    if (is_string($maybe_permalink)) {
-                        $permalink = $maybe_permalink;
+    $create_link_processor = static function (
+        int $source_post_id,
+        string $storage_title,
+        string $permalink_for_links
+    ) use (
+        &$link_occurrence_counters,
+        $site_url,
+        $site_scheme,
+        $site_host,
+        $register_pending_link_insert,
+        $wpdb,
+        $table_name,
+        $resolve_internal_target,
+        $upload_basedir,
+        $upload_base_host,
+        $upload_base_path,
+        $normalized_upload_basedir,
+        $excluded_domains,
+        $safe_internal_hosts,
+        &$temporary_retry_scheduled,
+        $temporary_http_statuses,
+        $batch_delay_s,
+        $wait_for_remote_slot,
+        $mark_remote_request_complete,
+        $head_request_timeout,
+        $get_request_timeout,
+        $scan_method,
+        &$scan_cache_data,
+        &$scan_cache_dirty,
+        $scan_cache_identifier,
+        $debug_mode,
+        $batch,
+        $is_full_scan,
+        $bypass_rest_window
+    ) {
+        return function (string $original_url, string $anchor_text) use (
+            &$link_occurrence_counters,
+            $source_post_id,
+            $storage_title,
+            $permalink_for_links,
+            $site_url,
+            $site_scheme,
+            $site_host,
+            $register_pending_link_insert,
+            $wpdb,
+            $table_name,
+            $resolve_internal_target,
+            $upload_basedir,
+            $upload_base_host,
+            $upload_base_path,
+            $normalized_upload_basedir,
+            $excluded_domains,
+            $safe_internal_hosts,
+            &$temporary_retry_scheduled,
+            $temporary_http_statuses,
+            $batch_delay_s,
+            $wait_for_remote_slot,
+            $mark_remote_request_complete,
+            $head_request_timeout,
+            $get_request_timeout,
+            $scan_method,
+            &$scan_cache_data,
+            &$scan_cache_dirty,
+            $scan_cache_identifier,
+            $debug_mode,
+            $batch,
+            $is_full_scan,
+            $bypass_rest_window
+        ) {
+            if (!isset($link_occurrence_counters[$source_post_id])) {
+                $link_occurrence_counters[$source_post_id] = [];
+            }
+            $post_counters = &$link_occurrence_counters[$source_post_id];
+
+            $url_for_storage    = blc_prepare_url_for_storage($original_url);
+            $anchor_for_storage = blc_prepare_text_field_for_storage($anchor_text);
+
+            $normalized_url = blc_normalize_link_url($original_url, $site_url, $site_scheme, $permalink_for_links);
+            if ($normalized_url === '') {
+                return;
+            }
+
+            $metadata  = blc_get_url_metadata_for_storage($original_url, $normalized_url, $site_host);
+            $row_bytes = blc_calculate_row_storage_footprint_bytes($url_for_storage, $anchor_for_storage, $storage_title);
+            $checked_at_gmt = current_time('mysql', true);
+
+            $parsed_url = parse_url($normalized_url);
+            if ($parsed_url === false) {
+                return;
+            }
+
+            if (empty($parsed_url['scheme']) || !in_array($parsed_url['scheme'], ['http', 'https'], true)) {
+                return;
+            }
+
+            $counter_key = $url_for_storage;
+            if (!isset($post_counters[$counter_key])) {
+                $post_counters[$counter_key] = 0;
+            }
+            $occurrence_index = $post_counters[$counter_key];
+            $post_counters[$counter_key]++;
+
+            if ($upload_basedir && $upload_base_host && isset($parsed_url['host']) && isset($parsed_url['path'])) {
+                if (strcasecmp($upload_base_host, $parsed_url['host']) === 0 && $upload_base_path !== '' && strpos($parsed_url['path'], $upload_base_path) === 0) {
+                    $relative_path = ltrim(substr($parsed_url['path'], strlen($upload_base_path)), '/');
+                    if ($relative_path === '') {
+                        return;
                     }
-                }
-
-                $post_title_for_storage = blc_prepare_text_field_for_storage($post->post_title);
-
-                $dom = blc_create_dom_from_content($post->post_content, $blog_charset);
-                if (!$dom instanceof DOMDocument) {
-                    error_log(sprintf('BLC: DOM creation failed during link scan for post ID %d; restoring staged entries.', $post->ID));
-                    if ($scan_run_token !== '') {
-                        blc_restore_dataset_refresh($table_name, 'link', $scan_run_token, [$post->ID]);
+                    $decoded_relative_path = rawurldecode($relative_path);
+                    $decoded_relative_path = ltrim($decoded_relative_path, '/\\');
+                    if ($decoded_relative_path === '') {
+                        return;
                     }
-                    continue;
-                }
 
-            $occurrence_counters = [];
-
-            foreach ($dom->getElementsByTagName('a') as $link_node) {
-                $original_url = trim(wp_kses_decode_entities($link_node->getAttribute('href')));
-                if ($original_url === '') { continue; }
-
-                $anchor_text = wp_strip_all_tags($link_node->textContent);
-                $anchor_text = trim(preg_replace('/\s+/u', ' ', $anchor_text));
-                if ($anchor_text === '') { $anchor_text = sprintf('[%s]', __('Lien sans texte', 'liens-morts-detector-jlg')); }
-
-                $url_for_storage    = blc_prepare_url_for_storage($original_url);
-                $anchor_for_storage = blc_prepare_text_field_for_storage($anchor_text);
-
-                $normalized_url = blc_normalize_link_url($original_url, $site_url, $site_scheme, $permalink);
-                if ($normalized_url === '') {
-                    continue;
-                }
-
-                $metadata  = blc_get_url_metadata_for_storage($original_url, $normalized_url, $site_host);
-                $row_bytes = blc_calculate_row_storage_footprint_bytes($url_for_storage, $anchor_for_storage, $post_title_for_storage);
-                $checked_at_gmt = current_time('mysql', true);
-
-                $parsed_url = parse_url($normalized_url);
-                if ($parsed_url === false) {
-                    continue;
-                }
-
-                if (empty($parsed_url['scheme']) || !in_array($parsed_url['scheme'], ['http', 'https'], true)) { continue; }
-
-                $counter_key = $url_for_storage;
-                if (!isset($occurrence_counters[$counter_key])) {
-                    $occurrence_counters[$counter_key] = 0;
-                }
-                $occurrence_index = $occurrence_counters[$counter_key];
-                $occurrence_counters[$counter_key]++;
-
-                if ($upload_basedir && $upload_base_host && isset($parsed_url['host']) && isset($parsed_url['path'])) {
-                    if (strcasecmp($upload_base_host, $parsed_url['host']) === 0 && $upload_base_path !== '' && strpos($parsed_url['path'], $upload_base_path) === 0) {
-                        $relative_path = ltrim(substr($parsed_url['path'], strlen($upload_base_path)), '/');
-                        if ($relative_path === '') {
-                            continue;
-                        }
-                        $decoded_relative_path = rawurldecode($relative_path);
-                        $decoded_relative_path = ltrim($decoded_relative_path, '/\\');
-                        if ($decoded_relative_path === '') {
-                            continue;
-                        }
-
-                        if (preg_match('#(^|[\\\\/])\.\.([\\\\/]|$)#', $decoded_relative_path)) {
-                            continue;
-                        }
-
-                        $file_path = wp_normalize_path(trailingslashit($upload_basedir) . $decoded_relative_path);
-                        if ($normalized_upload_basedir !== '' && strpos($file_path, $normalized_upload_basedir) !== 0) {
-                            continue;
-                        }
-
-                        if (!file_exists($file_path)) {
-                            if ($debug_mode) { error_log("  -> Ressource locale introuvable : " . $normalized_url); }
-                            $inserted = $wpdb->insert(
-                                $table_name,
-                                [
-                                    'url'             => $url_for_storage,
-                                    'anchor'          => $anchor_for_storage,
-                                    'post_id'         => $post->ID,
-                                    'post_title'      => $post_title_for_storage,
-                                    'type'            => 'link',
-                                    'occurrence_index'=> $occurrence_index,
-                                    'url_host'        => $metadata['host'],
-                                    'is_internal'     => $metadata['is_internal'],
-                                    'http_status'     => null,
-                                    'last_checked_at' => $checked_at_gmt,
-                                ],
-                                ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d', '%d', '%s']
-                            );
-                            if ($inserted) {
-                                $register_pending_link_insert($post->ID, $row_bytes);
-                                blc_adjust_dataset_storage_footprint('link', $row_bytes);
-                            }
-                            continue;
-                        }
+                    if (preg_match('#(^|[\\/])\.\.([\\/]|$)#', $decoded_relative_path)) {
+                        return;
                     }
-                }
 
-                $host = parse_url($normalized_url, PHP_URL_HOST);
-                if (!is_string($host) || $host === '') {
-                    continue;
-                }
-                $normalized_host = blc_normalize_remote_host($host);
-                $is_excluded = false;
-                if (!empty($excluded_domains) && !empty($host)) {
-                    foreach ($excluded_domains as $domain_to_exclude) {
-                        if ($domain_to_exclude === '') {
-                            continue;
-                        }
-
-                        if ($normalized_host === $domain_to_exclude) {
-                            $is_excluded = true;
-                            break;
-                        }
-
-                        $suffix = '.' . $domain_to_exclude;
-                        $suffix_length = strlen($suffix);
-                        if (strlen($normalized_host) > $suffix_length && substr($normalized_host, -$suffix_length) === $suffix) {
-                            $is_excluded = true;
-                            break;
-                        }
+                    $file_path = wp_normalize_path(trailingslashit($upload_basedir) . $decoded_relative_path);
+                    if ($normalized_upload_basedir !== '' && strpos($file_path, $normalized_upload_basedir) !== 0) {
+                        return;
                     }
-                }
 
-                if ($is_excluded) { continue; }
-
-                $is_internal_safe_host = ($normalized_host !== '' && isset($safe_internal_hosts[$normalized_host]));
-                $is_safe_remote_host   = true;
-                $should_skip_remote_request = false;
-
-                if (!$is_internal_safe_host) {
-                    $host_to_check = $normalized_host !== '' ? $normalized_host : $host;
-                    $is_safe_remote_host = blc_is_safe_remote_host($host_to_check);
-
-                    if (!$is_safe_remote_host) {
-                        if ($debug_mode) { error_log("  -> Lien ignoré (IP non autorisée) : " . $normalized_url); }
+                    if (!file_exists($file_path)) {
+                        if ($debug_mode) { error_log("  -> Ressource locale introuvable : " . $normalized_url); }
                         $inserted = $wpdb->insert(
                             $table_name,
                             [
                                 'url'             => $url_for_storage,
                                 'anchor'          => $anchor_for_storage,
-                                'post_id'         => $post->ID,
-                                'post_title'      => $post_title_for_storage,
+                                'post_id'         => $source_post_id,
+                                'post_title'      => $storage_title,
                                 'type'            => 'link',
                                 'occurrence_index'=> $occurrence_index,
                                 'url_host'        => $metadata['host'],
@@ -2018,277 +2086,467 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                             ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d', '%d', '%s']
                         );
                         if ($inserted) {
-                            $register_pending_link_insert($post->ID, $row_bytes);
+                            $register_pending_link_insert($source_post_id, $row_bytes);
                             blc_adjust_dataset_storage_footprint('link', $row_bytes);
                         }
-                        $should_skip_remote_request = true;
+                        return;
                     }
                 }
+            }
 
-                if ($should_skip_remote_request) {
-                    continue;
-                }
+            $host = parse_url($normalized_url, PHP_URL_HOST);
+            if (!is_string($host) || $host === '') {
+                return;
+            }
+            $normalized_host = blc_normalize_remote_host($host);
+            $is_excluded = false;
+            if (!empty($excluded_domains) && !empty($host)) {
+                foreach ($excluded_domains as $domain_to_exclude) {
+                    if ($domain_to_exclude === '') {
+                        continue;
+                    }
 
-                $should_insert_broken_link = false;
-                $should_retry_later = false;
-                $response_code = null;
-                $cache_entry_key = '';
-                $cache_entry = null;
-                $should_use_cache = false;
-                $skip_remote_check = false;
+                    if ($normalized_host === $domain_to_exclude) {
+                        $is_excluded = true;
+                        break;
+                    }
 
-                if ($scan_cache_identifier !== '') {
-                    $cache_entry_key = md5($normalized_url);
-                    if (isset($scan_cache_data[$cache_entry_key]) && is_array($scan_cache_data[$cache_entry_key])) {
-                        $cache_entry = $scan_cache_data[$cache_entry_key];
+                    $suffix = '.' . $domain_to_exclude;
+                    $suffix_length = strlen($suffix);
+                    if (strlen($normalized_host) > $suffix_length && substr($normalized_host, -$suffix_length) === $suffix) {
+                        $is_excluded = true;
+                        break;
                     }
                 }
+            }
 
-                if (is_array($cache_entry) && isset($cache_entry['action'])) {
-                    $cache_action = (string) $cache_entry['action'];
-                    if ($cache_action === 'retry') {
-                        $checked_at = isset($cache_entry['checked_at']) ? (int) $cache_entry['checked_at'] : 0;
-                        $retry_ttl = apply_filters('blc_retry_cache_ttl', 300, $normalized_url, $cache_entry);
-                        if (!is_int($retry_ttl)) {
-                            $retry_ttl = 300;
-                        }
+            if ($is_excluded) {
+                return;
+            }
 
-                        if ($retry_ttl <= 0 || ($checked_at > 0 && (time() - $checked_at) <= $retry_ttl)) {
-                            $should_retry_later = true;
-                            $should_use_cache = true;
-                        }
-                    } elseif ($cache_action === 'broken') {
-                        $should_insert_broken_link = true;
-                        $should_use_cache = true;
-                    } elseif ($cache_action === 'ok') {
-                        $should_use_cache = true;
-                    }
+            $is_internal_safe_host = ($normalized_host !== '' && isset($safe_internal_hosts[$normalized_host]));
+            $is_safe_remote_host   = true;
+            $should_skip_remote_request = false;
 
-                    if ($should_use_cache && isset($cache_entry['response_code'])) {
-                        $response_code = (int) $cache_entry['response_code'];
-                    }
-                }
+            if (!$is_internal_safe_host) {
+                $host_to_check = $normalized_host !== '' ? $normalized_host : $host;
+                $is_safe_remote_host = blc_is_safe_remote_host($host_to_check);
 
-                if ($is_internal_safe_host) {
-                    $internal_resolution = $resolve_internal_target($normalized_url);
-                    if (is_array($internal_resolution)) {
-                        if (isset($internal_resolution['response_code'])) {
-                            $response_code = (int) $internal_resolution['response_code'];
-                        }
-
-                        $resolution_status = isset($internal_resolution['status'])
-                            ? (string) $internal_resolution['status']
-                            : 'unknown';
-
-                        if ($resolution_status === 'ok') {
-                            $should_insert_broken_link = false;
-                            $should_retry_later = false;
-                            $skip_remote_check = true;
-                        } elseif ($resolution_status === 'missing') {
-                            $should_insert_broken_link = true;
-                            $should_retry_later = false;
-                            $skip_remote_check = true;
-                        }
-                    }
-                }
-
-                $fallback_due_to_temporary_status = false;
-                $head_request_disallowed = false;
-                if (!$should_use_cache && !$skip_remote_check) {
-                    $head_request_args = [
-                        'user-agent'          => blc_get_http_user_agent(),
-                        'timeout'             => $head_request_timeout,
-                        'limit_response_size' => 1024,
-                        'redirection'         => 5,
-                    ];
-
-                    $get_request_args = [
-                        'timeout'             => $get_request_timeout,
-                        'user-agent'          => blc_get_http_user_agent(),
-                        'method'              => 'GET',
-                        'limit_response_size' => 131072,
-                    ];
-
-                    if ($scan_method === 'precise') {
-                        $response = null;
-                        $wait_for_remote_slot();
-                        $head_response = wp_safe_remote_head($normalized_url, $head_request_args);
-                        $mark_remote_request_complete();
-                        $needs_get_fallback = false;
-
-                        if (is_wp_error($head_response)) {
-                            $needs_get_fallback = true;
-                        } else {
-                            $head_status = (int) wp_remote_retrieve_response_code($head_response);
-                            if (in_array($head_status, $temporary_http_statuses, true)) {
-                                $needs_get_fallback = true;
-                                $fallback_due_to_temporary_status = true;
-                            } elseif ($head_status === 403) {
-                                $needs_get_fallback = true;
-                            } elseif ($head_status === 405 || $head_status === 501) {
-                                $needs_get_fallback = true;
-                            } else {
-                                $response = $head_response;
-                            }
-                        }
-
-                        if ($needs_get_fallback) {
-                            $wait_for_remote_slot();
-                            $response = wp_safe_remote_get($normalized_url, $get_request_args);
-                            $mark_remote_request_complete();
-                        }
-                    } else {
-                        $wait_for_remote_slot();
-                        $response = wp_safe_remote_head($normalized_url, $head_request_args);
-                        $mark_remote_request_complete();
-
-                        if (!is_wp_error($response)) {
-                            $head_status = (int) wp_remote_retrieve_response_code($response);
-                            if (in_array($head_status, [403, 405, 501], true)) {
-                                $head_request_disallowed = true;
-                                $wait_for_remote_slot();
-                                $response = wp_safe_remote_get($normalized_url, $get_request_args);
-                                $mark_remote_request_complete();
-                            }
-                        }
-                    }
-
-                    if (is_wp_error($response)) {
-                        if ($head_request_disallowed) {
-                            $should_retry_later = true;
-                        } elseif ($fallback_due_to_temporary_status) {
-                            $should_retry_later = true;
-                        } else {
-                            $temporary_wp_error_codes = apply_filters(
-                                'blc_temporary_wp_error_codes',
-                                ['request_timed_out', 'connect_timeout', 'could_not_resolve_host', 'dns_unresolved_hostname', 'timeout']
-                            );
-                            if (!is_array($temporary_wp_error_codes)) {
-                                $temporary_wp_error_codes = [];
-                            }
-                            $temporary_wp_error_codes = array_values(array_unique(array_filter(array_map('strval', $temporary_wp_error_codes))));
-
-                            $error_code = method_exists($response, 'get_error_code') ? (string) $response->get_error_code() : '';
-                            if ($error_code !== '' && in_array($error_code, $temporary_wp_error_codes, true)) {
-                                $should_retry_later = true;
-                            } else {
-                                $temporary_wp_error_indicators = apply_filters(
-                                    'blc_temporary_wp_error_indicators',
-                                    ['timed out', 'timeout', 'temporarily unavailable', 'temporary failure', 'could not resolve host']
-                                );
-                                if (!is_array($temporary_wp_error_indicators)) {
-                                    $temporary_wp_error_indicators = [];
-                                }
-
-                                $error_message = method_exists($response, 'get_error_message') ? (string) $response->get_error_message() : '';
-                                foreach ($temporary_wp_error_indicators as $indicator) {
-                                    $indicator = (string) $indicator;
-                                    if ($indicator === '') {
-                                        continue;
-                                    }
-
-                                    if ($error_message !== '' && stripos($error_message, $indicator) !== false) {
-                                        $should_retry_later = true;
-                                        break;
-                                    }
-                                }
-
-                                if (!$should_retry_later && method_exists($response, 'get_error_data')) {
-                                    $error_data = $response->get_error_data();
-                                    if (is_array($error_data) && isset($error_data['status'])) {
-                                        $maybe_status = (int) $error_data['status'];
-                                        if (in_array($maybe_status, $temporary_http_statuses, true)) {
-                                            $should_retry_later = true;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if (!$should_retry_later) {
-                                $should_insert_broken_link = true;
-                            }
-                        }
-                    } else {
-                        $response_code = (int) wp_remote_retrieve_response_code($response);
-                        if ($response_code >= 400) {
-                            if (in_array($response_code, $temporary_http_statuses, true)) {
-                                $should_retry_later = true;
-                            } else {
-                                $should_insert_broken_link = true;
-                            }
-                        }
-                    }
-                }
-
-                if ($should_retry_later) {
-                    if (!$temporary_retry_scheduled) {
-                        $retry_delay = (int) apply_filters(
-                            'blc_temporary_retry_delay',
-                            max(60, $batch_delay_s),
-                            $normalized_url,
-                            $response_code
-                        );
-                        if ($retry_delay < 0) {
-                            $retry_delay = 0;
-                        }
-
-                        $scheduled = wp_schedule_single_event(
-                            time() + $retry_delay,
-                            'blc_check_batch',
-                            array($batch, $is_full_scan, $bypass_rest_window)
-                        );
-                        if (false === $scheduled) {
-                            error_log(sprintf('BLC: Failed to schedule temporary retry for link batch #%d.', $batch));
-                            do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'temporary_retry');
-                        } else {
-                            $temporary_retry_scheduled = true;
-                        }
-                    }
-                } elseif ($should_insert_broken_link) {
-                    $inserted = $wpdb->insert(
-                        $table_name,
-                        [
+                if (!$is_safe_remote_host) {
+                    if ($debug_mode) { error_log("  -> Lien ignoré (IP non autorisée) : " . $normalized_url); }
+                        $inserted = $wpdb->insert(
+                            $table_name,
+                            [
                             'url'             => $url_for_storage,
                             'anchor'          => $anchor_for_storage,
-                            'post_id'         => $post->ID,
-                            'post_title'      => $post_title_for_storage,
+                            'post_id'         => $source_post_id,
+                            'post_title'      => $storage_title,
                             'type'            => 'link',
                             'occurrence_index'=> $occurrence_index,
                             'url_host'        => $metadata['host'],
                             'is_internal'     => $metadata['is_internal'],
-                            'http_status'     => ($response_code !== null) ? (int) $response_code : null,
+                            'http_status'     => null,
                             'last_checked_at' => $checked_at_gmt,
                         ],
                         ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d', '%d', '%s']
                     );
-                    if ($inserted) {
-                        $register_pending_link_insert($post->ID, $row_bytes);
-                        blc_adjust_dataset_storage_footprint('link', $row_bytes);
-                    }
-                }
-
-                if (!$should_use_cache && $cache_entry_key !== '') {
-                    $cache_timestamp = time();
-                    $cache_action = 'ok';
-                    if ($should_retry_later) {
-                        $cache_action = 'retry';
-                    } elseif ($should_insert_broken_link) {
-                        $cache_action = 'broken';
-                    }
-
-                    $new_cache_entry = [
-                        'action'     => $cache_action,
-                        'checked_at' => $cache_timestamp,
-                    ];
-
-                    if ($response_code !== null) {
-                        $new_cache_entry['response_code'] = $response_code;
-                    }
-
-                    $scan_cache_data[$cache_entry_key] = $new_cache_entry;
-                    $scan_cache_dirty = true;
+                        if ($inserted) {
+                            $register_pending_link_insert($source_post_id, $row_bytes);
+                            blc_adjust_dataset_storage_footprint('link', $row_bytes);
+                        }
+                    $should_skip_remote_request = true;
                 }
             }
+
+            if ($should_skip_remote_request) {
+                return;
+            }
+
+            $should_insert_broken_link = false;
+            $should_retry_later = false;
+            $response_code = null;
+            $cache_entry_key = '';
+            $cache_entry = null;
+            $should_use_cache = false;
+            $skip_remote_check = false;
+
+            if ($scan_cache_identifier !== '') {
+                $cache_entry_key = md5($normalized_url);
+                if (isset($scan_cache_data[$cache_entry_key]) && is_array($scan_cache_data[$cache_entry_key])) {
+                    $cache_entry = $scan_cache_data[$cache_entry_key];
+                }
+            }
+
+            if (is_array($cache_entry) && isset($cache_entry['action'])) {
+                $cache_action = (string) $cache_entry['action'];
+                if ($cache_action === 'retry') {
+                    $checked_at = isset($cache_entry['checked_at']) ? (int) $cache_entry['checked_at'] : 0;
+                    $retry_ttl = apply_filters('blc_retry_cache_ttl', 300, $normalized_url, $cache_entry);
+                    if (!is_int($retry_ttl)) {
+                        $retry_ttl = 300;
+                    }
+
+                    if ($retry_ttl <= 0 || ($checked_at > 0 && (time() - $checked_at) <= $retry_ttl)) {
+                        $should_retry_later = true;
+                        $should_use_cache = true;
+                    }
+                } elseif ($cache_action === 'broken') {
+                    $should_insert_broken_link = true;
+                    $should_use_cache = true;
+                } elseif ($cache_action === 'ok') {
+                    $should_use_cache = true;
+                }
+
+                if ($should_use_cache && isset($cache_entry['response_code'])) {
+                    $response_code = (int) $cache_entry['response_code'];
+                }
+            }
+
+            if ($is_internal_safe_host) {
+                $internal_resolution = $resolve_internal_target($normalized_url);
+                if (is_array($internal_resolution)) {
+                    if (isset($internal_resolution['response_code'])) {
+                        $response_code = (int) $internal_resolution['response_code'];
+                    }
+
+                    $resolution_status = isset($internal_resolution['status'])
+                        ? (string) $internal_resolution['status']
+                        : 'unknown';
+
+                    if ($resolution_status === 'ok') {
+                        $should_insert_broken_link = false;
+                        $should_retry_later = false;
+                        $skip_remote_check = true;
+                    } elseif ($resolution_status === 'missing') {
+                        $should_insert_broken_link = true;
+                        $should_retry_later = false;
+                        $skip_remote_check = true;
+                    }
+                }
+            }
+
+            $fallback_due_to_temporary_status = false;
+            $head_request_disallowed = false;
+            if (!$should_use_cache && !$skip_remote_check) {
+                $head_request_args = [
+                    'user-agent'          => blc_get_http_user_agent(),
+                    'timeout'             => $head_request_timeout,
+                    'limit_response_size' => 1024,
+                    'redirection'         => 5,
+                ];
+
+                $get_request_args = [
+                    'timeout'             => $get_request_timeout,
+                    'user-agent'          => blc_get_http_user_agent(),
+                    'method'              => 'GET',
+                    'limit_response_size' => 131072,
+                ];
+
+                if ($scan_method === 'precise') {
+                    $response = null;
+                    $wait_for_remote_slot();
+                    $head_response = wp_safe_remote_head($normalized_url, $head_request_args);
+                    $mark_remote_request_complete();
+                    $needs_get_fallback = false;
+
+                    if (is_wp_error($head_response)) {
+                        $needs_get_fallback = true;
+                    } else {
+                        $head_status = (int) wp_remote_retrieve_response_code($head_response);
+                        if (in_array($head_status, $temporary_http_statuses, true)) {
+                            $needs_get_fallback = true;
+                            $fallback_due_to_temporary_status = true;
+                        } elseif ($head_status === 403) {
+                            $needs_get_fallback = true;
+                        } elseif ($head_status === 405 || $head_status === 501) {
+                            $needs_get_fallback = true;
+                        } else {
+                            $response = $head_response;
+                        }
+                    }
+
+                    if ($needs_get_fallback) {
+                        $wait_for_remote_slot();
+                        $response = wp_safe_remote_get($normalized_url, $get_request_args);
+                        $mark_remote_request_complete();
+                    }
+                } else {
+                    $wait_for_remote_slot();
+                    $response = wp_safe_remote_head($normalized_url, $head_request_args);
+                    $mark_remote_request_complete();
+
+                    if (!is_wp_error($response)) {
+                        $head_status = (int) wp_remote_retrieve_response_code($response);
+                        if (in_array($head_status, [403, 405, 501], true)) {
+                            $head_request_disallowed = true;
+                            $wait_for_remote_slot();
+                            $response = wp_safe_remote_get($normalized_url, $get_request_args);
+                            $mark_remote_request_complete();
+                        }
+                    }
+                }
+
+                if (is_wp_error($response)) {
+                    if ($head_request_disallowed) {
+                        $should_retry_later = true;
+                    } elseif ($fallback_due_to_temporary_status) {
+                        $should_retry_later = true;
+                    } else {
+                        $temporary_wp_error_codes = apply_filters(
+                            'blc_temporary_wp_error_codes',
+                            ['request_timed_out', 'connect_timeout', 'could_not_resolve_host', 'dns_unresolved_hostname', 'timeout']
+                        );
+                        if (!is_array($temporary_wp_error_codes)) {
+                            $temporary_wp_error_codes = [];
+                        }
+                        $temporary_wp_error_codes = array_values(array_unique(array_filter(array_map('strval', $temporary_wp_error_codes))));
+
+                        $error_code = method_exists($response, 'get_error_code') ? (string) $response->get_error_code() : '';
+                        if ($error_code !== '' && in_array($error_code, $temporary_wp_error_codes, true)) {
+                            $should_retry_later = true;
+                        } else {
+                            $temporary_wp_error_indicators = apply_filters(
+                                'blc_temporary_wp_error_indicators',
+                                ['timed out', 'timeout', 'temporarily unavailable', 'temporary failure', 'could not resolve host']
+                            );
+                            if (!is_array($temporary_wp_error_indicators)) {
+                                $temporary_wp_error_indicators = [];
+                            }
+
+                            $error_message = method_exists($response, 'get_error_message') ? (string) $response->get_error_message() : '';
+                            foreach ($temporary_wp_error_indicators as $indicator) {
+                                $indicator = (string) $indicator;
+                                if ($indicator === '') {
+                                    continue;
+                                }
+
+                                if ($error_message !== '' && stripos($error_message, $indicator) !== false) {
+                                    $should_retry_later = true;
+                                    break;
+                                }
+                            }
+
+                            if (!$should_retry_later && method_exists($response, 'get_error_data')) {
+                                $error_data = $response->get_error_data();
+                                if (is_array($error_data) && isset($error_data['status'])) {
+                                    $maybe_status = (int) $error_data['status'];
+                                    if (in_array($maybe_status, $temporary_http_statuses, true)) {
+                                        $should_retry_later = true;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!$should_retry_later) {
+                            $should_insert_broken_link = true;
+                        }
+                    }
+                } else {
+                    $response_code = (int) wp_remote_retrieve_response_code($response);
+                    if ($response_code >= 400) {
+                        if (in_array($response_code, $temporary_http_statuses, true)) {
+                            $should_retry_later = true;
+                        } else {
+                            $should_insert_broken_link = true;
+                        }
+                    }
+                }
+            }
+
+            if ($should_retry_later) {
+                if (!$temporary_retry_scheduled) {
+                    $retry_delay = (int) apply_filters(
+                        'blc_temporary_retry_delay',
+                        max(60, $batch_delay_s),
+                        $normalized_url,
+                        $response_code
+                    );
+                    if ($retry_delay < 0) {
+                        $retry_delay = 0;
+                    }
+
+                    $scheduled = wp_schedule_single_event(
+                        time() + $retry_delay,
+                        'blc_check_batch',
+                        array($batch, $is_full_scan, $bypass_rest_window)
+                    );
+                    if (false === $scheduled) {
+                        error_log(sprintf('BLC: Failed to schedule temporary retry for link batch #%d.', $batch));
+                        do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'temporary_retry');
+                    } else {
+                        $temporary_retry_scheduled = true;
+                    }
+                }
+            } elseif ($should_insert_broken_link) {
+                $inserted = $wpdb->insert(
+                    $table_name,
+                    [
+                        'url'             => $url_for_storage,
+                        'anchor'          => $anchor_for_storage,
+                        'post_id'         => $source_post_id,
+                        'post_title'      => $storage_title,
+                        'type'            => 'link',
+                        'occurrence_index'=> $occurrence_index,
+                        'url_host'        => $metadata['host'],
+                        'is_internal'     => $metadata['is_internal'],
+                        'http_status'     => ($response_code !== null) ? (int) $response_code : null,
+                        'last_checked_at' => $checked_at_gmt,
+                    ],
+                    ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d', '%d', '%s']
+                );
+                if ($inserted) {
+                    $register_pending_link_insert($source_post_id, $row_bytes);
+                    blc_adjust_dataset_storage_footprint('link', $row_bytes);
+                }
+            }
+
+            if (!$should_use_cache && $cache_entry_key !== '') {
+                $cache_timestamp = time();
+                $cache_action = 'ok';
+                if ($should_retry_later) {
+                    $cache_action = 'retry';
+                } elseif ($should_insert_broken_link) {
+                    $cache_action = 'broken';
+                }
+
+                $new_cache_entry = [
+                    'action'     => $cache_action,
+                    'checked_at' => $cache_timestamp,
+                ];
+
+                if ($response_code !== null) {
+                    $new_cache_entry['response_code'] = $response_code;
+                }
+
+                $scan_cache_data[$cache_entry_key] = $new_cache_entry;
+                $scan_cache_dirty = true;
+            }
+        };
+    };
+
+    try {
+        foreach ($posts as $post) {
+            blc_refresh_link_scan_lock($lock_token, $lock_timeout);
+            try {
+                $permalink = '';
+                if (function_exists('get_permalink')) {
+                    $maybe_permalink = get_permalink($post);
+                    if (is_string($maybe_permalink)) {
+                        $permalink = $maybe_permalink;
+                    }
+                }
+
+                $primary_storage_title = blc_prepare_text_field_for_storage($post->post_title);
+                $link_occurrence_counters[(int) $post->ID] = [];
+
+                $link_sources = [[
+                    'html'              => (string) $post->post_content,
+                    'post_id'           => (int) $post->ID,
+                    'permalink'         => $permalink,
+                    'storage_title'     => $primary_storage_title,
+                    'debug_label'       => (string) $post->post_title,
+                    'restore_on_failure'=> true,
+                ]];
+
+                $comment_items = get_comments([
+                    'post_id' => $post->ID,
+                    'status'  => 'approve',
+                    'type'    => 'comment',
+                ]);
+                if (!is_array($comment_items)) {
+                    $comment_items = [];
+                }
+
+                foreach ($comment_items as $comment_item) {
+                    $comment_content = '';
+                    $comment_id = 0;
+                    if (is_object($comment_item)) {
+                        $comment_content = isset($comment_item->comment_content) ? (string) $comment_item->comment_content : '';
+                        $comment_id = isset($comment_item->comment_ID) ? (int) $comment_item->comment_ID : 0;
+                    } elseif (is_array($comment_item)) {
+                        $comment_content = isset($comment_item['comment_content']) ? (string) $comment_item['comment_content'] : '';
+                        $comment_id = isset($comment_item['comment_ID']) ? (int) $comment_item['comment_ID'] : 0;
+                    }
+
+                    if (trim($comment_content) === '' || stripos($comment_content, '<a') === false) {
+                        continue;
+                    }
+
+                    $label = $comment_id > 0
+                        ? sprintf(__('Commentaire #%1$d — %2$s', 'liens-morts-detector-jlg'), $comment_id, $post->post_title)
+                        : sprintf(__('Commentaire — %s', 'liens-morts-detector-jlg'), $post->post_title);
+
+                    $link_sources[] = [
+                        'html'          => $comment_content,
+                        'post_id'       => (int) $post->ID,
+                        'permalink'     => $permalink,
+                        'storage_title' => blc_prepare_text_field_for_storage($label),
+                        'debug_label'   => $label,
+                    ];
+                }
+
+                $meta_values = get_post_meta($post->ID);
+                if (!is_array($meta_values)) {
+                    $meta_values = [];
+                }
+
+                foreach ($meta_values as $meta_key => $meta_entries) {
+                    if (!is_array($meta_entries)) {
+                        $meta_entries = [$meta_entries];
+                    }
+
+                    foreach ($meta_entries as $meta_entry) {
+                        if (!is_scalar($meta_entry)) {
+                            continue;
+                        }
+
+                        $meta_content = (string) $meta_entry;
+                        if (trim($meta_content) === '' || stripos($meta_content, '<a') === false) {
+                            continue;
+                        }
+
+                        $meta_label = sprintf(__('Méta « %1$s » — %2$s', 'liens-morts-detector-jlg'), (string) $meta_key, $post->post_title);
+
+                        $link_sources[] = [
+                            'html'          => $meta_content,
+                            'post_id'       => (int) $post->ID,
+                            'permalink'     => $permalink,
+                            'storage_title' => blc_prepare_text_field_for_storage($meta_label),
+                            'debug_label'   => $meta_label,
+                        ];
+                    }
+                }
+
+                foreach ($link_sources as $source) {
+                    $html = isset($source['html']) ? (string) $source['html'] : '';
+                    if (trim($html) === '' || stripos($html, '<a') === false) {
+                        continue;
+                    }
+
+                    $label = isset($source['debug_label']) ? (string) $source['debug_label'] : (string) $post->post_title;
+                    if ($debug_mode) {
+                        error_log("Analyse LIENS pour : '" . $label . "'");
+                    }
+
+                    $source_post_id = isset($source['post_id']) ? (int) $source['post_id'] : (int) $post->ID;
+                    $permalink_for_links = isset($source['permalink']) ? (string) $source['permalink'] : '';
+                    if ($permalink_for_links === '') {
+                        $permalink_for_links = $site_url;
+                    }
+
+                    $storage_title = isset($source['storage_title']) ? (string) $source['storage_title'] : $primary_storage_title;
+
+                    $processor = $create_link_processor($source_post_id, $storage_title, $permalink_for_links);
+                    $dom_processed = blc_process_link_nodes_from_html($html, $blog_charset, $processor);
+
+                    if (!$dom_processed) {
+                        if (!empty($source['restore_on_failure']) && $scan_run_token !== '') {
+                            error_log(sprintf('BLC: DOM creation failed during link scan for post ID %d; restoring staged entries.', $post->ID));
+                            blc_restore_dataset_refresh($table_name, 'link', $scan_run_token, [$post->ID]);
+                            continue 2;
+                        }
+                    }
+                }
 
             } catch (\Throwable $caught_exception) {
                 $batch_exception = $caught_exception;
@@ -2304,6 +2562,53 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
                 if (isset($pending_link_inserts[$post->ID])) {
                     unset($pending_link_inserts[$post->ID]);
+                }
+            }
+        }
+
+        if ($batch_exception === null && !($batch_wp_error instanceof \WP_Error) && !empty($widget_sources)) {
+            if (!isset($link_occurrence_counters[0])) {
+                $link_occurrence_counters[0] = [];
+            }
+
+            foreach ($widget_sources as $widget_source) {
+                $html = isset($widget_source['html']) ? (string) $widget_source['html'] : '';
+                if (trim($html) === '' || stripos($html, '<a') === false) {
+                    continue;
+                }
+
+                $label = isset($widget_source['debug_label']) ? (string) $widget_source['debug_label'] : '';
+                if ($label === '') {
+                    $label = __('Widget texte', 'liens-morts-detector-jlg');
+                }
+
+                if ($debug_mode) {
+                    error_log("Analyse LIENS pour : '" . $label . "'");
+                }
+
+                $storage_title = isset($widget_source['storage_title']) ? (string) $widget_source['storage_title'] : blc_prepare_text_field_for_storage($label);
+                $permalink_for_links = isset($widget_source['permalink']) ? (string) $widget_source['permalink'] : '';
+                if ($permalink_for_links === '') {
+                    $permalink_for_links = $site_url;
+                }
+
+                $source_post_id = isset($widget_source['post_id']) ? (int) $widget_source['post_id'] : 0;
+                if (!isset($link_occurrence_counters[$source_post_id])) {
+                    $link_occurrence_counters[$source_post_id] = [];
+                }
+
+                $processor = $create_link_processor($source_post_id, $storage_title, $permalink_for_links);
+                blc_process_link_nodes_from_html($html, $blog_charset, $processor);
+            }
+
+            if ($scan_run_token !== '') {
+                $commit_result = blc_commit_dataset_refresh($table_name, 'link', $scan_run_token, 'link', [0]);
+                if (is_wp_error($commit_result)) {
+                    $batch_wp_error = $commit_result;
+                }
+
+                if (isset($pending_link_inserts[0])) {
+                    unset($pending_link_inserts[0]);
                 }
             }
         }
