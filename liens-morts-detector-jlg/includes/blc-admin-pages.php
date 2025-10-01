@@ -107,6 +107,24 @@ function blc_dashboard_links_page() {
     $list_table = new BLC_Links_List_Table();
     $list_table->prepare_items();
     ?>
+    <div id="blc-modal" class="blc-modal" role="presentation" aria-hidden="true">
+        <div class="blc-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="blc-modal-title">
+            <button type="button" class="blc-modal__close" aria-label="<?php echo esc_attr__('Fermer la fenêtre modale', 'liens-morts-detector-jlg'); ?>">
+                <span aria-hidden="true">&times;</span>
+            </button>
+            <h2 id="blc-modal-title" class="blc-modal__title"></h2>
+            <p class="blc-modal__message"></p>
+            <div class="blc-modal__error" role="alert" aria-live="assertive"></div>
+            <div class="blc-modal__field">
+                <label for="blc-modal-url" class="blc-modal__label"></label>
+                <input type="url" id="blc-modal-url" class="blc-modal__input" placeholder="<?php echo esc_attr__('https://', 'liens-morts-detector-jlg'); ?>">
+            </div>
+            <div class="blc-modal__actions">
+                <button type="button" class="button button-secondary blc-modal__cancel"><?php esc_html_e('Annuler', 'liens-morts-detector-jlg'); ?></button>
+                <button type="button" class="button button-primary blc-modal__confirm"><?php esc_html_e('Confirmer', 'liens-morts-detector-jlg'); ?></button>
+            </div>
+        </div>
+    </div>
     <div class="wrap">
         <h1><?php esc_html_e('Rapport des Liens Cassés', 'liens-morts-detector-jlg'); ?></h1>
         <div class="blc-stats-box">

@@ -131,6 +131,17 @@ function blc_enqueue_admin_assets($hook) {
             'editPromptDefault'  => __('https://', 'liens-morts-detector-jlg'),
             'unlinkConfirmation' => __('Êtes-vous sûr de vouloir supprimer ce lien ? Le texte sera conservé.', 'liens-morts-detector-jlg'),
             'errorPrefix'        => __('Erreur : ', 'liens-morts-detector-jlg'),
+            'editModalTitle'     => __('Modifier le lien', 'liens-morts-detector-jlg'),
+            'editModalLabel'     => __('Nouvelle URL', 'liens-morts-detector-jlg'),
+            'editModalConfirm'   => __('Mettre à jour', 'liens-morts-detector-jlg'),
+            'unlinkModalTitle'   => __('Supprimer le lien', 'liens-morts-detector-jlg'),
+            'unlinkModalConfirm' => __('Supprimer', 'liens-morts-detector-jlg'),
+            'cancelButton'       => __('Annuler', 'liens-morts-detector-jlg'),
+            'closeLabel'         => __('Fermer la fenêtre modale', 'liens-morts-detector-jlg'),
+            'emptyUrlMessage'    => __('Veuillez saisir une URL.', 'liens-morts-detector-jlg'),
+            'invalidUrlMessage'  => __('Veuillez saisir une URL valide.', 'liens-morts-detector-jlg'),
+            'sameUrlMessage'     => __('La nouvelle URL doit être différente de l\'URL actuelle.', 'liens-morts-detector-jlg'),
+            'genericError'       => __('Une erreur est survenue. Veuillez réessayer.', 'liens-morts-detector-jlg'),
         )
     );
 }
