@@ -16,6 +16,10 @@ if (!defined('ABSPATH')) {
 // Définir les constantes utiles du plugin
 define('BLC_PLUGIN_PATH', plugin_dir_path(__FILE__));
 
+if (!defined('BLC_VIEW_COUNTS_DIRTY_COOKIE')) {
+    define('BLC_VIEW_COUNTS_DIRTY_COOKIE', 'blc_links_view_counts_mark_dirty');
+}
+
 if (!defined('BLC_HTTP_BAD_REQUEST')) {
     define('BLC_HTTP_BAD_REQUEST', 400);
 }
@@ -87,6 +91,45 @@ function blc_mark_link_view_counts_dirty() {
      * @param int $timestamp Unix timestamp saved alongside the dirty flag.
      */
     do_action('blc_links_view_counts_marked_dirty', $timestamp);
+}
+
+/**
+ * Retourne le chemin de cookie à utiliser pour marquer le recalcul des compteurs.
+ *
+ * @return string
+ */
+function blc_get_view_counts_cookie_path() {
+    if (defined('ADMIN_COOKIE_PATH') && ADMIN_COOKIE_PATH !== '') {
+        return ADMIN_COOKIE_PATH;
+    }
+
+    if (defined('COOKIEPATH') && COOKIEPATH !== '') {
+        return COOKIEPATH;
+    }
+
+    return '/';
+}
+
+add_action('admin_init', 'blc_maybe_mark_link_view_counts_dirty_from_cookie', 5);
+
+/**
+ * Marque les compteurs de vues comme périmés si le cookie correspondant est présent.
+ *
+ * @return void
+ */
+function blc_maybe_mark_link_view_counts_dirty_from_cookie() {
+    if (empty($_COOKIE[BLC_VIEW_COUNTS_DIRTY_COOKIE])) {
+        return;
+    }
+
+    blc_mark_link_view_counts_dirty();
+
+    unset($_COOKIE[BLC_VIEW_COUNTS_DIRTY_COOKIE]);
+
+    if (!headers_sent()) {
+        $expiration = time() - (defined('DAY_IN_SECONDS') ? DAY_IN_SECONDS : 86400);
+        setcookie(BLC_VIEW_COUNTS_DIRTY_COOKIE, '', $expiration, blc_get_view_counts_cookie_path());
+    }
 }
 
 // --- Hameçons (Hooks) d'Activation et de Désactivation ---
@@ -175,6 +218,8 @@ function blc_enqueue_admin_assets($hook) {
             'genericError'        => __('Une erreur est survenue. Veuillez réessayer.', 'liens-morts-detector-jlg'),
             'successAnnouncement' => __('Action effectuée avec succès. La ligne a été retirée de la liste.', 'liens-morts-detector-jlg'),
             'noItemsMessage'      => __('Aucun lien cassé à afficher.', 'liens-morts-detector-jlg'),
+            'viewCountsDirtyCookieName' => BLC_VIEW_COUNTS_DIRTY_COOKIE,
+            'viewCountsDirtyCookiePath' => blc_get_view_counts_cookie_path(),
         )
     );
 }

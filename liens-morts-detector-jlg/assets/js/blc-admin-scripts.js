@@ -18,7 +18,9 @@ jQuery(document).ready(function($) {
         sameUrlMessage: "La nouvelle URL doit être différente de l'URL actuelle.",
         genericError: 'Une erreur est survenue. Veuillez réessayer.',
         successAnnouncement: 'La ligne a été mise à jour avec succès.',
-        noItemsMessage: 'Aucun élément à afficher.'
+        noItemsMessage: 'No items to display.',
+        viewCountsDirtyCookieName: 'blc_links_view_counts_mark_dirty',
+        viewCountsDirtyCookiePath: '/'
     };
 
     var messages = $.extend({}, defaultMessages, window.blcAdminMessages || {});
@@ -429,6 +431,71 @@ jQuery(document).ready(function($) {
         return columnCount;
     }
 
+    function writeViewCountsDirtyCookie() {
+        var cookieName = messages.viewCountsDirtyCookieName || '';
+
+        if (!cookieName) {
+            return;
+        }
+
+        var cookiePath = messages.viewCountsDirtyCookiePath || '/';
+        var now = new Date();
+
+        now.setTime(now.getTime() + (24 * 60 * 60 * 1000));
+
+        var cookieValue = String(now.getTime());
+        var cookieParts = [cookieName + '=' + encodeURIComponent(cookieValue)];
+
+        if (cookiePath) {
+            cookieParts.push('path=' + cookiePath);
+        }
+
+        cookieParts.push('expires=' + now.toUTCString());
+
+        document.cookie = cookieParts.join('; ');
+
+        $(document).trigger('blcAdmin:viewCountsDirty', {
+            cookieName: cookieName,
+            cookieValue: cookieValue,
+            cookiePath: cookiePath
+        });
+    }
+
+    function ensureNoItemsRow($tbody, $referenceRow) {
+        var messageText = messages.noItemsMessage || defaultMessages.noItemsMessage || '';
+        var $container = $tbody && $tbody.length ? $tbody : $('#the-list');
+
+        if (!$container.length) {
+            return null;
+        }
+
+        var $dataRows = $container.children('tr').filter(function() {
+            var $candidate = $(this);
+            if ($candidate.hasClass('no-items') || $candidate.hasClass('inline-edit-row')) {
+                return false;
+            }
+
+            return true;
+        });
+
+        if ($dataRows.length) {
+            return null;
+        }
+
+        var colspan = determineColumnCount($container, $referenceRow);
+
+        var $existingNoItems = $container.children('tr.no-items');
+        if ($existingNoItems.length) {
+            $existingNoItems.remove();
+        }
+
+        var $row = $('<tr>', { class: 'no-items' });
+        $('<td>', { colspan: colspan }).text(messageText).appendTo($row);
+        $container.append($row);
+
+        return $row;
+    }
+
     function handleSuccessfulResponse(response, row, helpers) {
         var $row = row && row.jquery ? row : $(row);
 
@@ -450,29 +517,9 @@ jQuery(document).ready(function($) {
                     $tbody = $('#the-list');
                 }
 
-                var $remainingRows = $tbody.children('tr').filter(function() {
-                    var $candidate = $(this);
-                    return !$candidate.hasClass('no-items') && !$candidate.hasClass('inline-edit-row');
-                });
+                var messageRow = ensureNoItemsRow($tbody, $currentRow);
 
-                var messageRow = null;
-
-                if (!$remainingRows.length) {
-                    var messageText = messages.noItemsMessage || '';
-
-                    if (messageText) {
-                        var colspan = determineColumnCount($tbody, $currentRow);
-                        var $existingNoItems = $tbody.children('tr.no-items');
-                        if ($existingNoItems.length) {
-                            $existingNoItems.remove();
-                        }
-
-                        messageRow = $('<tr>', { class: 'no-items' });
-                        $('<td>', { colspan: colspan }).text(messageText).appendTo(messageRow);
-                        $tbody.append(messageRow);
-                    }
-                }
-
+                writeViewCountsDirtyCookie();
                 $(document).trigger('blcAdmin:listUpdated', {
                     response: response,
                     tbody: $tbody,
@@ -481,11 +528,15 @@ jQuery(document).ready(function($) {
                 });
             });
         } else {
+            var $defaultTbody = $('#the-list');
+            var fallbackRow = ensureNoItemsRow($defaultTbody, null);
+
+            writeViewCountsDirtyCookie();
             $(document).trigger('blcAdmin:listUpdated', {
                 response: response,
-                tbody: $('#the-list'),
-                table: $('#the-list').closest('table'),
-                messageRow: null
+                tbody: $defaultTbody,
+                table: $defaultTbody.closest('table'),
+                messageRow: fallbackRow
             });
         }
     }
