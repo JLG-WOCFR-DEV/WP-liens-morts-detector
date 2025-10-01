@@ -86,6 +86,94 @@ function blc_render_action_modal() {
 }
 
 /**
+ * Renders notices after processing bulk actions on list tables.
+ *
+ * @param array  $result  Bulk action processing result array.
+ * @param string $context Context identifier (`link` or `image`).
+ */
+function blc_render_bulk_action_notice($result, $context) {
+    if (!is_array($result)) {
+        return;
+    }
+
+    $action = isset($result['action']) ? (string) $result['action'] : '';
+    $error  = isset($result['error']) ? (string) $result['error'] : '';
+
+    if ($action === '' && $error === '') {
+        return;
+    }
+
+    $count = isset($result['count']) ? (int) $result['count'] : 0;
+    $count_display = function_exists('number_format_i18n')
+        ? number_format_i18n($count)
+        : (string) $count;
+
+    $message = '';
+    $class   = 'notice notice-success is-dismissible';
+
+    if ($error !== '') {
+        $class = 'notice notice-error is-dismissible';
+
+        switch ($error) {
+            case 'invalid_nonce':
+                $message = esc_html__("La sécurité de la requête n'a pas pu être vérifiée. Merci de réessayer.", 'liens-morts-detector-jlg');
+                break;
+            case 'no_ids':
+                $class   = 'notice notice-warning is-dismissible';
+                $message = esc_html__('Veuillez sélectionner au moins un élément avant d\'appliquer une action groupée.', 'liens-morts-detector-jlg');
+                break;
+            case 'db_error':
+                $message = esc_html__("L'action groupée a échoué suite à une erreur de base de données.", 'liens-morts-detector-jlg');
+                break;
+            case 'missing_db':
+                $message = esc_html__("La base de données est indisponible pour exécuter cette action.", 'liens-morts-detector-jlg');
+                break;
+            case 'unknown_action':
+            default:
+                $message = esc_html__("L'action groupée demandée est inconnue.", 'liens-morts-detector-jlg');
+                break;
+        }
+    } else {
+        if ($count <= 0) {
+            $class   = 'notice notice-warning is-dismissible';
+            $message = esc_html__("Aucun élément n'a été modifié.", 'liens-morts-detector-jlg');
+        } elseif ($action === 'blc_mark_for_recheck') {
+            $message = sprintf(
+                esc_html__('La vérification sera relancée pour %s élément(s) sélectionné(s).', 'liens-morts-detector-jlg'),
+                $count_display
+            );
+        } elseif ($action === 'blc_delete_entries') {
+            if ($context === 'image') {
+                $message = sprintf(
+                    esc_html__('%s élément(s) ont été retirés de la liste des images cassées.', 'liens-morts-detector-jlg'),
+                    $count_display
+                );
+            } else {
+                $message = sprintf(
+                    esc_html__('%s élément(s) ont été retirés de la liste des liens cassés.', 'liens-morts-detector-jlg'),
+                    $count_display
+                );
+            }
+        } else {
+            $message = sprintf(
+                esc_html__('Action groupée appliquée avec succès (%s élément(s)).', 'liens-morts-detector-jlg'),
+                $count_display
+            );
+        }
+    }
+
+    if ($message === '') {
+        return;
+    }
+
+    printf(
+        '<div class="%1$s"><p>%2$s</p></div>',
+        esc_attr($class),
+        $message
+    );
+}
+
+/**
  * Affiche la page du rapport des LIENS cassés.
  */
 function blc_dashboard_links_page() {
@@ -158,6 +246,9 @@ function blc_dashboard_links_page() {
         }
     }
 
+    $list_table = new BLC_Links_List_Table();
+    $bulk_action_result = $list_table->process_bulk_action();
+
     // Préparation des données et des statistiques pour les liens
     global $wpdb;
     $table_name = $wpdb->prefix . 'blc_broken_links';
@@ -177,7 +268,6 @@ function blc_dashboard_links_page() {
         ? wp_date('j M Y', $last_check_time)
         : __('Jamais', 'liens-morts-detector-jlg');
 
-    $list_table = new BLC_Links_List_Table();
     $list_table->prepare_items();
     blc_render_action_modal();
 
@@ -198,6 +288,7 @@ function blc_dashboard_links_page() {
                 <span class="blc-stat-label"><?php esc_html_e('Dernière analyse', 'liens-morts-detector-jlg'); ?></span>
             </div>
         </div>
+        <?php blc_render_bulk_action_notice($bulk_action_result, 'link'); ?>
         <form method="post" style="margin-bottom: 20px;">
             <?php wp_nonce_field('blc_manual_check_nonce'); ?>
             <input type="hidden" name="blc_manual_check" value="1">
@@ -226,7 +317,14 @@ function blc_dashboard_links_page() {
              <p><?php esc_html_e('✅ Aucun lien mort trouvé. Bravo !', 'liens-morts-detector-jlg'); ?></p>
         <?php else: ?>
             <form method="post">
-                <?php $list_table->views(); $list_table->display(); ?>
+                <?php
+                wp_nonce_field(
+                    $list_table->get_bulk_action_nonce_action(),
+                    $list_table->get_bulk_action_nonce_field_name()
+                );
+                $list_table->views();
+                $list_table->display();
+                ?>
             </form>
         <?php endif; ?>
     </div>
@@ -301,6 +399,8 @@ function blc_dashboard_images_page() {
     }
 
     global $wpdb;
+    $list_table = new BLC_Images_List_Table();
+    $bulk_action_result = $list_table->process_bulk_action();
     $table_name = $wpdb->prefix . 'blc_broken_links';
     $broken_images_count = (int) $wpdb->get_var(
         $wpdb->prepare(
@@ -318,7 +418,6 @@ function blc_dashboard_images_page() {
         ? wp_date('j M Y', $last_image_check_time)
         : __('Jamais', 'liens-morts-detector-jlg');
 
-    $list_table = new BLC_Images_List_Table();
     $list_table->prepare_items();
     ?>
     <div class="wrap">
@@ -337,6 +436,7 @@ function blc_dashboard_images_page() {
                  <span class="blc-stat-label"><?php esc_html_e('Dernière analyse d\'images', 'liens-morts-detector-jlg'); ?></span>
              </div>
         </div>
+        <?php blc_render_bulk_action_notice($bulk_action_result, 'image'); ?>
         <form method="post" style="margin-bottom: 20px;">
             <?php wp_nonce_field('blc_manual_image_check_nonce'); ?>
             <input type="hidden" name="blc_manual_image_check" value="1">
@@ -347,7 +447,13 @@ function blc_dashboard_images_page() {
              <p><?php esc_html_e('✅ Aucune image cassée trouvée. Bravo !', 'liens-morts-detector-jlg'); ?></p>
         <?php else: ?>
             <form method="post">
-                <?php $list_table->display(); ?>
+                <?php
+                wp_nonce_field(
+                    $list_table->get_bulk_action_nonce_action(),
+                    $list_table->get_bulk_action_nonce_field_name()
+                );
+                $list_table->display();
+                ?>
             </form>
         <?php endif; ?>
     </div>

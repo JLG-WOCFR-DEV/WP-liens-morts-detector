@@ -2,6 +2,7 @@
 
 namespace {
     require_once __DIR__ . '/translation-stubs.php';
+    require_once __DIR__ . '/stubs/cron-stubs.php';
 }
 
 namespace Tests {
@@ -59,10 +60,24 @@ class AdminListTablesTest extends TestCase
         });
         Functions\when('wp_timezone')->alias(static fn() => new \DateTimeZone('UTC'));
         Functions\when('wp_timezone_string')->alias(static fn() => 'UTC');
+        Functions\when('absint')->alias(static fn($value) => (int) max(0, (int) $value));
+        Functions\when('wp_verify_nonce')->alias(static fn($nonce, $action) => true);
+        Functions\when('wp_nonce_field')->alias(static function ($action, $name = '_wpnonce') {
+            printf('<input type="hidden" name="%s" value="nonce-%s" />', $name, $action);
+        });
+        Functions\when('number_format_i18n')->alias(static fn($number, $decimals = 0) => number_format((float) $number, $decimals));
+        Functions\when('wp_date')->alias(static fn($format, $timestamp) => gmdate($format, $timestamp));
+        Functions\when('current_user_can')->justReturn(true);
+        Functions\when('wp_clear_scheduled_hook')->justReturn(true);
+        Functions\when('wp_schedule_single_event')->justReturn(true);
+        Functions\when('do_action')->justReturn(null);
+        Functions\when('wp_create_nonce')->alias(static fn($action) => 'nonce-' . $action);
+        Functions\when('wp_kses')->alias(static fn($string) => $string);
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-scanner.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/class-blc-links-list-table.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/class-blc-images-list-table.php';
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-admin-pages.php';
     }
 
     protected function tearDown(): void
@@ -81,6 +96,7 @@ class AdminListTablesTest extends TestCase
         $items = [];
         for ($i = 0; $i < $count; $i++) {
             $items[] = [
+                'id'         => $i + 1,
                 'url'        => sprintf('https://example.com/%s-%d', $prefix, $i),
                 'anchor'     => sprintf('%s-%d', $prefix, $i),
                 'post_id'    => $i + 1,
@@ -205,6 +221,52 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString('OFFSET 0', $wpdb->last_get_results_query);
     }
 
+    public function test_links_list_table_defines_bulk_actions_and_checkbox(): void
+    {
+        $table = new class() extends \BLC_Links_List_Table {
+            public function renderCheckbox(array $item)
+            {
+                return parent::column_cb($item);
+            }
+        };
+
+        $columns = $table->get_columns();
+        $this->assertArrayHasKey('cb', $columns);
+
+        $checkbox = $table->renderCheckbox(['id' => 42]);
+        $this->assertStringContainsString('name="blc_link_ids[]"', $checkbox);
+        $this->assertStringContainsString('value="42"', $checkbox);
+
+        $actions = $table->get_bulk_actions();
+        $this->assertArrayHasKey('blc_mark_for_recheck', $actions);
+        $this->assertArrayHasKey('blc_delete_entries', $actions);
+    }
+
+    public function test_links_process_bulk_recheck_updates_entries(): void
+    {
+        global $wpdb;
+        $wpdb = new DummyWpdb();
+        $wpdb->query_return_value = 2;
+
+        $table = new \BLC_Links_List_Table();
+
+        $_POST = [
+            'action'                         => 'blc_mark_for_recheck',
+            'blc_link_ids'                   => ['1', '2', 'foo'],
+            'blc_links_bulk_action_nonce'    => 'nonce',
+        ];
+
+        $result = $table->process_bulk_action();
+
+        $this->assertTrue($result['processed']);
+        $this->assertSame('blc_mark_for_recheck', $result['action']);
+        $this->assertSame(2, $result['count']);
+        $this->assertStringContainsString('UPDATE wp_blc_broken_links SET last_checked_at', $wpdb->last_query);
+        $this->assertStringContainsString("WHERE type = 'link' AND id IN (1,2)", $wpdb->last_query);
+
+        $_POST = [];
+    }
+
     public function test_images_columns_display_status_and_timestamp(): void
     {
         $table = new class() extends \BLC_Images_List_Table {
@@ -246,6 +308,27 @@ class AdminListTablesTest extends TestCase
 
         $this->assertSame('—', $table->renderHttpStatus($missing));
         $this->assertSame('—', $table->renderLastChecked($missing));
+    }
+
+    public function test_images_list_table_defines_bulk_actions_and_checkbox(): void
+    {
+        $table = new class() extends \BLC_Images_List_Table {
+            public function renderCheckbox(array $item)
+            {
+                return parent::column_cb($item);
+            }
+        };
+
+        $columns = $table->get_columns();
+        $this->assertArrayHasKey('cb', $columns);
+
+        $checkbox = $table->renderCheckbox(['id' => 7]);
+        $this->assertStringContainsString('name="blc_image_ids[]"', $checkbox);
+        $this->assertStringContainsString('value="7"', $checkbox);
+
+        $actions = $table->get_bulk_actions();
+        $this->assertArrayHasKey('blc_mark_for_recheck', $actions);
+        $this->assertArrayHasKey('blc_delete_entries', $actions);
     }
 
     public function test_links_prepare_items_adds_search_term_conditions(): void
@@ -327,6 +410,7 @@ class AdminListTablesTest extends TestCase
         $evil_url = 'https://example.com.evil.com/page';
         $wpdb->results_to_return = [
             [
+                'id'          => 1,
                 'url'        => $evil_url,
                 'anchor'     => 'Evil link',
                 'post_id'    => 42,
@@ -432,6 +516,60 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString('LIMIT 20', $wpdb->last_get_results_query);
         $this->assertStringContainsString('OFFSET 0', $wpdb->last_get_results_query);
     }
+
+    public function test_dashboard_links_page_outputs_bulk_action_notice(): void
+    {
+        global $wpdb;
+        $wpdb = new DummyWpdb();
+        $wpdb->get_var_return_values = [5, 4096, 5];
+        $wpdb->results_to_return = [
+            [
+                'id'              => 1,
+                'occurrence_index'=> 0,
+                'url'             => 'https://example.com/broken-1',
+                'anchor'          => 'broken-1',
+                'post_id'         => 1,
+                'post_title'      => 'Post 1',
+                'http_status'     => 404,
+                'last_checked_at' => '1970-01-01 00:00:00',
+            ],
+            [
+                'id'              => 2,
+                'occurrence_index'=> 1,
+                'url'             => 'https://example.com/broken-2',
+                'anchor'          => 'broken-2',
+                'post_id'         => 2,
+                'post_title'      => 'Post 2',
+                'http_status'     => 500,
+                'last_checked_at' => '1970-01-01 00:00:00',
+            ],
+        ];
+        $wpdb->query_return_value = 2;
+        $wpdb->get_row_return_value = [
+            'total'              => 5,
+            'internal_count'     => 3,
+            'not_found_count'    => 2,
+            'server_error_count' => 1,
+            'redirect_count'     => 0,
+            'needs_recheck_count'=> 0,
+        ];
+
+        $_POST = [
+            'action'                      => 'blc_delete_entries',
+            'blc_link_ids'                => ['1', '2'],
+            'blc_links_bulk_action_nonce' => 'nonce',
+        ];
+
+        ob_start();
+        blc_dashboard_links_page();
+        $output = ob_get_clean();
+
+        $this->assertStringContainsString('notice notice-success', $output);
+        $this->assertStringContainsString('2 élément(s) ont été retirés de la liste des liens cassés.', $output);
+        $this->assertStringContainsString("DELETE FROM wp_blc_broken_links WHERE type = 'link'", $wpdb->last_query);
+
+        $_POST = [];
+    }
 }
 class DummyWpdb
 {
@@ -443,6 +581,9 @@ class DummyWpdb
     public $get_row_return_value;
     public $last_get_row_query;
     public $prepare_calls = [];
+    public $last_query;
+    public $query_return_value = 0;
+    public $query_calls = [];
 
     public function esc_like(string $text): string
     {
@@ -495,6 +636,14 @@ class DummyWpdb
         }
 
         return $this->results_to_return;
+    }
+
+    public function query(string $query)
+    {
+        $this->last_query = $query;
+        $this->query_calls[] = $query;
+
+        return $this->query_return_value;
     }
 
     public function get_row(string $query, $output = ARRAY_A)

@@ -17,6 +17,10 @@ if (!class_exists('WP_List_Table')) {
 // CORRIGÉ : Le nom de la classe est maintenant BLC_Images_List_Table
 class BLC_Images_List_Table extends WP_List_Table {
 
+    private const CHECKBOX_FIELD_NAME = 'blc_image_ids';
+    private const BULK_NONCE_ACTION = 'blc_images_bulk_action';
+    private const BULK_NONCE_FIELD = 'blc_images_bulk_action_nonce';
+
     /**
      * Constructeur de la classe.
      */
@@ -33,11 +37,141 @@ class BLC_Images_List_Table extends WP_List_Table {
      */
     public function get_columns() {
         return [
+            'cb'             => '<input type="checkbox" />',
             'image_details' => __('Image Cassée', 'liens-morts-detector-jlg'),
             'http_status'   => __('Statut HTTP', 'liens-morts-detector-jlg'),
             'last_checked_at' => __('Dernier contrôle', 'liens-morts-detector-jlg'),
             'post_title'    => __('Trouvé dans l\'article/page', 'liens-morts-detector-jlg'),
             'actions'       => __('Actions', 'liens-morts-detector-jlg')
+        ];
+    }
+
+    /**
+     * Processes image bulk actions.
+     *
+     * @return array{processed:bool,action:string,count:int,ids:array,error:string}
+     */
+    public function process_bulk_action() {
+        $result = [
+            'processed' => false,
+            'action'    => '',
+            'count'     => 0,
+            'ids'       => [],
+            'error'     => '',
+        ];
+
+        if (empty($_POST)) {
+            return $result;
+        }
+
+        $action = $this->get_current_bulk_action();
+
+        if ($action === '') {
+            return $result;
+        }
+
+        $result['action'] = $action;
+
+        $ids = $this->get_requested_item_ids();
+        $result['ids'] = $ids;
+
+        if (empty($ids)) {
+            $result['error'] = 'no_ids';
+            return $result;
+        }
+
+        if (!$this->verify_bulk_action_nonce()) {
+            $result['error'] = 'invalid_nonce';
+            return $result;
+        }
+
+        global $wpdb;
+
+        if (!is_object($wpdb) || !method_exists($wpdb, 'prepare') || !method_exists($wpdb, 'query')) {
+            $result['error'] = 'missing_db';
+            return $result;
+        }
+
+        $table_name   = $wpdb->prefix . 'blc_broken_links';
+        $placeholders = implode(',', array_fill(0, count($ids), '%d'));
+        $query        = '';
+        $params       = [];
+
+        if ($action === 'blc_mark_for_recheck') {
+            $params = array_merge([$this->get_unchecked_sentinel_value(), 'image'], $ids);
+            $query  = $wpdb->prepare(
+                "UPDATE $table_name SET last_checked_at = %s WHERE type = %s AND id IN ($placeholders)",
+                $params
+            );
+        } elseif ($action === 'blc_delete_entries') {
+            $params = array_merge(['image'], $ids);
+            $query  = $wpdb->prepare(
+                "DELETE FROM $table_name WHERE type = %s AND id IN ($placeholders)",
+                $params
+            );
+        } else {
+            $result['error'] = 'unknown_action';
+            return $result;
+        }
+
+        $query_result = $wpdb->query($query);
+
+        if ($query_result === false) {
+            $result['error'] = 'db_error';
+            return $result;
+        }
+
+        $result['processed'] = true;
+        $result['count']     = (int) $query_result;
+
+        return $result;
+    }
+
+    /**
+     * Renders the checkbox column used for bulk actions.
+     */
+    protected function column_cb($item) {
+        $id = isset($item['id']) ? absint($item['id']) : 0;
+
+        if ($id <= 0) {
+            return '';
+        }
+
+        return sprintf(
+            '<input type="checkbox" name="%1$s[]" value="%2$d" />',
+            esc_attr($this->get_checkbox_field_name()),
+            $id
+        );
+    }
+
+    /**
+     * Returns the checkbox field name for tests and forms.
+     */
+    public function get_checkbox_field_name() {
+        return self::CHECKBOX_FIELD_NAME;
+    }
+
+    /**
+     * Returns the bulk action nonce field name.
+     */
+    public function get_bulk_action_nonce_field_name() {
+        return self::BULK_NONCE_FIELD;
+    }
+
+    /**
+     * Returns the bulk action nonce identifier.
+     */
+    public function get_bulk_action_nonce_action() {
+        return self::BULK_NONCE_ACTION;
+    }
+
+    /**
+     * Declares available bulk actions.
+     */
+    public function get_bulk_actions() {
+        return [
+            'blc_mark_for_recheck' => __('Planifier une nouvelle vérification', 'liens-morts-detector-jlg'),
+            'blc_delete_entries'   => __('Supprimer de la liste', 'liens-morts-detector-jlg'),
         ];
     }
 
@@ -138,7 +272,7 @@ class BLC_Images_List_Table extends WP_List_Table {
         $offset = ($current_page - 1) * $per_page;
 
         $data_query = $wpdb->prepare(
-            "SELECT url, anchor, post_id, post_title, http_status, last_checked_at
+            "SELECT id, url, anchor, post_id, post_title, http_status, last_checked_at
              FROM $table_name
              WHERE type = %s
              ORDER BY id DESC
@@ -236,5 +370,77 @@ class BLC_Images_List_Table extends WP_List_Table {
         }
 
         return trim($date_format . ' ' . $time_format);
+    }
+
+    private function get_requested_item_ids() {
+        $field = $this->get_checkbox_field_name();
+
+        if (!isset($_POST[$field])) {
+            return [];
+        }
+
+        $raw = wp_unslash($_POST[$field]);
+
+        if (!is_array($raw)) {
+            $raw = [$raw];
+        }
+
+        $ids = [];
+
+        foreach ($raw as $value) {
+            if (!is_scalar($value)) {
+                continue;
+            }
+
+            $id = absint($value);
+
+            if ($id > 0) {
+                $ids[$id] = $id;
+            }
+        }
+
+        return array_values($ids);
+    }
+
+    private function verify_bulk_action_nonce() {
+        $field = $this->get_bulk_action_nonce_field_name();
+
+        if (!isset($_POST[$field])) {
+            return false;
+        }
+
+        $nonce = $_POST[$field];
+
+        if (is_array($nonce)) {
+            return false;
+        }
+
+        $nonce = wp_unslash($nonce);
+
+        if (!function_exists('wp_verify_nonce')) {
+            return true;
+        }
+
+        return (bool) wp_verify_nonce($nonce, $this->get_bulk_action_nonce_action());
+    }
+
+    private function get_current_bulk_action() {
+        foreach (['action', 'action2'] as $candidate) {
+            if (!isset($_POST[$candidate])) {
+                continue;
+            }
+
+            $raw = sanitize_text_field(wp_unslash($_POST[$candidate]));
+
+            if ($raw !== '' && $raw !== '-1') {
+                return $raw;
+            }
+        }
+
+        return '';
+    }
+
+    private function get_unchecked_sentinel_value() {
+        return '0000-00-00 00:00:00';
     }
 }
