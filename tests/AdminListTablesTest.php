@@ -2,6 +2,15 @@
 
 namespace {
     require_once __DIR__ . '/translation-stubs.php';
+
+    if (!function_exists('sanitize_key')) {
+        function sanitize_key($key)
+        {
+            $key = strtolower((string) $key);
+
+            return preg_replace('/[^a-z0-9_\-]/', '', $key);
+        }
+    }
 }
 
 namespace Tests {
@@ -56,6 +65,17 @@ class AdminListTablesTest extends TestCase
         Functions\when('add_query_arg')->alias(function ($key, $value, $url = null) {
             $param = is_array($key) ? $key : [$key => $value];
             return 'admin.php?' . http_build_query($param);
+        });
+        Functions\when('get_post_types')->alias(static function ($args = [], $output = 'names') {
+            return ['post', 'page'];
+        });
+        Functions\when('get_post_type_object')->alias(static function ($post_type) {
+            return (object) [
+                'labels' => (object) [
+                    'singular_name' => ucfirst((string) $post_type),
+                ],
+                'label' => ucfirst((string) $post_type),
+            ];
         });
         Functions\when('wp_timezone')->alias(static fn() => new \DateTimeZone('UTC'));
         Functions\when('wp_timezone_string')->alias(static fn() => 'UTC');
@@ -203,6 +223,24 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString('COUNT(*)', $wpdb->last_get_var_query);
         $this->assertStringContainsString('LIMIT 20', $wpdb->last_get_results_query);
         $this->assertStringContainsString('OFFSET 0', $wpdb->last_get_results_query);
+    }
+
+    public function test_links_prepare_items_filters_by_selected_post_type(): void
+    {
+        global $wpdb;
+        $wpdb = new DummyWpdb();
+        $wpdb->get_var_return_values = [12];
+        $expected_items = $this->createItems(3, 'filtered');
+        $wpdb->results_to_return = $expected_items;
+
+        $_GET['post_type'] = 'page';
+
+        $table = new \BLC_Links_List_Table();
+        $table->prepare_items();
+
+        $this->assertSame($expected_items, $table->items);
+        $this->assertStringContainsString("post_type = 'page'", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("post_type = 'page'", $wpdb->last_get_results_query);
     }
 
     public function test_images_columns_display_status_and_timestamp(): void

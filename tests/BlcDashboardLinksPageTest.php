@@ -3,6 +3,15 @@
 namespace {
     require_once __DIR__ . '/translation-stubs.php';
     require_once __DIR__ . '/stubs/cron-stubs.php';
+
+    if (!function_exists('sanitize_key')) {
+        function sanitize_key($key)
+        {
+            $key = strtolower((string) $key);
+
+            return preg_replace('/[^a-z0-9_\-]/', '', $key);
+        }
+    }
 }
 
 namespace Tests {
@@ -170,6 +179,17 @@ class BlcDashboardLinksPageTest extends TestCase
         Functions\when('sanitize_text_field')->alias(static fn($value) => is_scalar($value) ? (string) $value : '');
         Functions\when('number_format_i18n')->alias(static function ($number, $decimals = 0) {
             return number_format((float) $number, (int) $decimals);
+        });
+        Functions\when('get_post_types')->alias(static function ($args = [], $output = 'names') {
+            return ['post', 'page'];
+        });
+        Functions\when('get_post_type_object')->alias(static function ($post_type) {
+            return (object) [
+                'labels' => (object) [
+                    'singular_name' => ucfirst((string) $post_type),
+                ],
+                'label' => ucfirst((string) $post_type),
+            ];
         });
         Functions\when('current_time')->alias(static function ($type, $gmt = 0) {
             if ($type === 'timestamp') {

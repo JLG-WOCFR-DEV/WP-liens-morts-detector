@@ -225,8 +225,37 @@ function blc_dashboard_links_page() {
         <?php if ($broken_links_count === 0): ?>
              <p><?php esc_html_e('✅ Aucun lien mort trouvé. Bravo !', 'liens-morts-detector-jlg'); ?></p>
         <?php else: ?>
-            <form method="post">
-                <?php $list_table->views(); $list_table->display(); ?>
+            <form method="get">
+                <?php
+                $current_get_params = [];
+                if (!empty($_GET) && is_array($_GET)) {
+                    $current_get_params = $_GET;
+                }
+
+                foreach ($current_get_params as $key => $value) {
+                    if (in_array($key, ['s', 'post_type', 'paged'], true)) {
+                        continue;
+                    }
+
+                    if (is_scalar($value)) {
+                        printf(
+                            '<input type="hidden" name="%1$s" value="%2$s" />',
+                            esc_attr($key),
+                            esc_attr((string) $value)
+                        );
+                    }
+                }
+
+                if (isset($_REQUEST['page']) && (!isset($current_get_params['page']) || !is_scalar($current_get_params['page']))) {
+                    printf(
+                        '<input type="hidden" name="page" value="%s" />',
+                        esc_attr((string) $_REQUEST['page'])
+                    );
+                }
+
+                $list_table->views();
+                $list_table->display();
+                ?>
             </form>
         <?php endif; ?>
     </div>
