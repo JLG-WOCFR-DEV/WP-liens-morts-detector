@@ -213,7 +213,7 @@ function blc_resolve_link_row($post_id, $row_id, $occurrence_value = null) {
 
     $row = $wpdb->get_row(
         $wpdb->prepare(
-            "SELECT id, post_id, url, anchor, post_title, occurrence_index FROM $table_name WHERE id = %d AND type = %s",
+            "SELECT id, post_id, url, anchor, post_title, occurrence_index, ignored_at FROM $table_name WHERE id = %d AND type = %s",
             $row_id,
             'link'
         ),
@@ -752,12 +752,15 @@ function blc_get_dataset_storage_footprint_bytes($type) {
         return 0;
     }
 
+    $dataset_type = strtolower((string) $type);
+    $ignored_filter = ($dataset_type === 'link') ? ' AND ignored_at IS NULL' : '';
+
     if (count($row_types) === 1) {
         $size = (int) $wpdb->get_var(
             $wpdb->prepare(
                 "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0))
                  FROM $table_name
-                 WHERE type = %s",
+                 WHERE type = %s" . $ignored_filter,
                 reset($row_types)
             )
         );
@@ -766,7 +769,7 @@ function blc_get_dataset_storage_footprint_bytes($type) {
         $query = $wpdb->prepare(
             "SELECT SUM(COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(anchor), 0) + COALESCE(LENGTH(post_title), 0))
              FROM $table_name
-             WHERE type IN ($placeholders)",
+             WHERE type IN ($placeholders)" . $ignored_filter,
             $row_types
         );
         $size = (int) $wpdb->get_var($query);

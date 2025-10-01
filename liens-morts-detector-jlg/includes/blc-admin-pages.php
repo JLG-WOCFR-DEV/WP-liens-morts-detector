@@ -163,7 +163,7 @@ function blc_dashboard_links_page() {
     $table_name = $wpdb->prefix . 'blc_broken_links';
     $broken_links_count = (int) $wpdb->get_var(
         $wpdb->prepare(
-            "SELECT COUNT(*) FROM $table_name WHERE type = %s",
+            "SELECT COUNT(*) FROM $table_name WHERE type = %s AND ignored_at IS NULL",
             'link'
         )
     );

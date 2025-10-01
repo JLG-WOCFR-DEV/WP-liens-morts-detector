@@ -119,17 +119,19 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         $counts_query = $wpdb->prepare(
             "SELECT
-                COUNT(*) AS total,
+                SUM(CASE WHEN ignored_at IS NULL THEN 1 ELSE 0 END) AS active_count,
+                SUM(CASE WHEN ignored_at IS NOT NULL THEN 1 ELSE 0 END) AS ignored_count,
                 SUM(
                     CASE
+                        WHEN ignored_at IS NOT NULL THEN 0
                         WHEN is_internal IS NOT NULL THEN is_internal
                         ELSE $legacy_case
                     END
                 ) AS internal_count,
-                SUM(CASE WHEN http_status IN (404, 410) THEN 1 ELSE 0 END) AS not_found_count,
-                SUM(CASE WHEN http_status BETWEEN 500 AND 599 THEN 1 ELSE 0 END) AS server_error_count,
-                SUM(CASE WHEN http_status BETWEEN 300 AND 399 THEN 1 ELSE 0 END) AS redirect_count,
-                SUM(CASE WHEN $needs_recheck_clause THEN 1 ELSE 0 END) AS needs_recheck_count
+                SUM(CASE WHEN ignored_at IS NULL AND http_status IN (404, 410) THEN 1 ELSE 0 END) AS not_found_count,
+                SUM(CASE WHEN ignored_at IS NULL AND http_status BETWEEN 500 AND 599 THEN 1 ELSE 0 END) AS server_error_count,
+                SUM(CASE WHEN ignored_at IS NULL AND http_status BETWEEN 300 AND 399 THEN 1 ELSE 0 END) AS redirect_count,
+                SUM(CASE WHEN ignored_at IS NULL AND $needs_recheck_clause THEN 1 ELSE 0 END) AS needs_recheck_count
              FROM $table_name
              WHERE type = %s",
             array_merge($legacy_params, $needs_recheck_params, ['link'])
@@ -137,14 +139,16 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         $counts = $wpdb->get_row($counts_query, ARRAY_A);
 
-        $total_count        = isset($counts['total']) ? (int) $counts['total'] : 0;
+        $active_count       = isset($counts['active_count']) ? (int) $counts['active_count'] : 0;
+        $ignored_count      = isset($counts['ignored_count']) ? (int) $counts['ignored_count'] : 0;
         $internal_count     = isset($counts['internal_count']) ? (int) $counts['internal_count'] : 0;
-        $external_count     = max(0, $total_count - $internal_count);
+        $external_count     = max(0, $active_count - $internal_count);
         $not_found_count    = isset($counts['not_found_count']) ? (int) $counts['not_found_count'] : 0;
         $server_error_count = isset($counts['server_error_count']) ? (int) $counts['server_error_count'] : 0;
         $redirect_count     = isset($counts['redirect_count']) ? (int) $counts['redirect_count'] : 0;
         $needs_recheck_count = isset($counts['needs_recheck_count']) ? (int) $counts['needs_recheck_count'] : 0;
 
+        $total_count = $active_count;
         $all_class = ($current === 'all' ? 'current' : '');
         $views['all'] = sprintf(
             "<a href='%s' class='%s'>%s <span class='count'>(%d)</span></a>",
@@ -206,6 +210,15 @@ class BLC_Links_List_Table extends WP_List_Table {
             esc_attr($needs_recheck_class),
             esc_html__('À revérifier', 'liens-morts-detector-jlg'),
             $needs_recheck_count
+        );
+
+        $ignored_class = ($current === 'ignored' ? 'current' : '');
+        $views['ignored'] = sprintf(
+            "<a href='%s' class='%s'>%s <span class='count'>(%d)</span></a>",
+            esc_url(add_query_arg('link_type', 'ignored')),
+            esc_attr($ignored_class),
+            esc_html__('Ignorés', 'liens-morts-detector-jlg'),
+            $ignored_count
         );
 
         return $views;
@@ -373,6 +386,28 @@ class BLC_Links_List_Table extends WP_List_Table {
             wp_create_nonce('blc_edit_link_nonce'),
             esc_html__('Modifier', 'liens-morts-detector-jlg')
         );
+
+        $ignored_raw = $item['ignored_at'] ?? null;
+        $is_ignored = false;
+        if (is_string($ignored_raw)) {
+            $normalized_ignored = trim($ignored_raw);
+            $is_ignored = ($normalized_ignored !== '' && $normalized_ignored !== '0000-00-00 00:00:00');
+        } elseif ($ignored_raw !== null) {
+            $is_ignored = true;
+        }
+
+        $ignore_mode = $is_ignored ? 'restore' : 'ignore';
+        $ignore_label = $is_ignored
+            ? esc_html__('Ne plus ignorer', 'liens-morts-detector-jlg')
+            : esc_html__('Ignorer', 'liens-morts-detector-jlg');
+
+        $actions['ignore'] = sprintf(
+            '<a href="#" class="blc-ignore" %s data-ignore-mode="%s" data-nonce="%s">%s</a>',
+            $data_attributes,
+            esc_attr($ignore_mode),
+            wp_create_nonce('blc_ignore_link_nonce'),
+            $ignore_label
+        );
         $actions['unlink'] = sprintf(
             '<a href="#" class="blc-unlink" %s data-nonce="%s" style="color:#a00;">%s</a>',
             $data_attributes,
@@ -410,6 +445,8 @@ class BLC_Links_List_Table extends WP_List_Table {
         $external_sql       = $internal_condition['not_sql'];
         $external_params    = $internal_condition['not_params'];
 
+        $is_ignored_view = ($current_view === 'ignored');
+
         $where  = ['type = %s'];
         $params = ['link'];
 
@@ -422,6 +459,12 @@ class BLC_Links_List_Table extends WP_List_Table {
         if ($selected_post_type !== '' && in_array($selected_post_type, $available_post_types, true)) {
             $where[] = 'post_type = %s';
             $params[] = $selected_post_type;
+        }
+
+        if ($is_ignored_view) {
+            $where[] = 'ignored_at IS NOT NULL';
+        } else {
+            $where[] = 'ignored_at IS NULL';
         }
 
         if ($current_view === 'internal') {
@@ -456,11 +499,13 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         $offset = ($current_page - 1) * $per_page;
 
+        $order_by = $is_ignored_view ? 'ignored_at DESC, id DESC' : 'id DESC';
+
         $data_query = $wpdb->prepare(
-            "SELECT id, occurrence_index, url, anchor, post_id, post_title, http_status, last_checked_at
+            "SELECT id, occurrence_index, url, anchor, post_id, post_title, http_status, last_checked_at, ignored_at
              FROM $table_name
              WHERE $where_clause
-             ORDER BY id DESC
+             ORDER BY $order_by
              LIMIT %d OFFSET %d",
             array_merge($params, [$per_page, $offset])
         );
