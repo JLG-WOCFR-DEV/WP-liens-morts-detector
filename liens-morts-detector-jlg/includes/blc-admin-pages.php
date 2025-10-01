@@ -757,16 +757,32 @@ function blc_settings_page() {
                         <th scope="row"><?php esc_html_e('Stratégie de vérification', 'liens-morts-detector-jlg'); ?></th>
                         <td>
                             <fieldset>
-                                <label>
-                                    <input type="radio" name="blc_scan_method" value="precise" <?php checked($scan_method, 'precise'); ?>>
-                                    <strong><?php esc_html_e('Précise (recommandé)', 'liens-morts-detector-jlg'); ?></strong>
-                                    <p class="description"><?php esc_html_e('Simule un navigateur. Réduit les faux positifs, mais est un peu plus lent.', 'liens-morts-detector-jlg'); ?></p>
-                                </label><br>
-                                <label>
-                                    <input type="radio" name="blc_scan_method" value="fast" <?php checked($scan_method, 'fast'); ?>>
-                                    <strong><?php esc_html_e('Rapide', 'liens-morts-detector-jlg'); ?></strong>
-                                    <p class="description"><?php esc_html_e('Vérification basique. Très léger, mais peut générer des faux positifs.', 'liens-morts-detector-jlg'); ?></p>
-                                </label>
+                                <div class="blc-scan-method-option">
+                                    <label>
+                                        <input
+                                            type="radio"
+                                            name="blc_scan_method"
+                                            value="precise"
+                                            <?php checked($scan_method, 'precise'); ?>
+                                            aria-describedby="blc-scan-method-precise-desc"
+                                        >
+                                        <strong><?php esc_html_e('Précise (recommandé)', 'liens-morts-detector-jlg'); ?></strong>
+                                    </label>
+                                    <p id="blc-scan-method-precise-desc" class="description"><?php esc_html_e('Simule un navigateur. Réduit les faux positifs, mais est un peu plus lent.', 'liens-morts-detector-jlg'); ?></p>
+                                </div>
+                                <div class="blc-scan-method-option">
+                                    <label>
+                                        <input
+                                            type="radio"
+                                            name="blc_scan_method"
+                                            value="fast"
+                                            <?php checked($scan_method, 'fast'); ?>
+                                            aria-describedby="blc-scan-method-fast-desc"
+                                        >
+                                        <strong><?php esc_html_e('Rapide', 'liens-morts-detector-jlg'); ?></strong>
+                                    </label>
+                                    <p id="blc-scan-method-fast-desc" class="description"><?php esc_html_e('Vérification basique. Très léger, mais peut générer des faux positifs.', 'liens-morts-detector-jlg'); ?></p>
+                                </div>
                             </fieldset>
                         </td>
                     </tr>
