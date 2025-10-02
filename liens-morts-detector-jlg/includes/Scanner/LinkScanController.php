@@ -1,0 +1,25 @@
+<?php
+
+namespace JLG\BrokenLinks\Scanner;
+
+class LinkScanController
+{
+    /** @var ScanQueue */
+    private $queue;
+
+    public function __construct(ScanQueue $queue)
+    {
+        $this->queue = $queue;
+    }
+
+    public function runBatch(int $batch = 0, bool $isFullScan = false, bool $bypassRestWindow = false)
+    {
+        return $this->queue->runBatch($batch, $isFullScan, $bypassRestWindow);
+    }
+
+    public function run($batch = 0, $is_full_scan = false, $bypass_rest_window = false)
+    {
+        return $this->runBatch((int) $batch, (bool) $is_full_scan, (bool) $bypass_rest_window);
+    }
+}
+

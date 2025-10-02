@@ -10,5 +10,10 @@
     },
     "scripts": {
         "test:js": "npm test"
+    },
+    "autoload": {
+        "psr-4": {
+            "JLG\\BrokenLinks\\": "liens-morts-detector-jlg/includes/"
+        }
     }
 }
