@@ -135,6 +135,9 @@ jQuery(document).ready(function($) {
         var $recipients = $('#blc_notification_recipients');
         var $linkToggle = $('#blc_notification_links_enabled');
         var $imageToggle = $('#blc_notification_images_enabled');
+        var $webhookUrl = $('#blc_notification_webhook_url');
+        var $webhookChannel = $('#blc_notification_webhook_channel');
+        var $messageTemplate = $('#blc_notification_message_template');
         var isSending = false;
 
         function ensureFeedbackContainer() {
@@ -201,7 +204,21 @@ jQuery(document).ready(function($) {
                 recipientsValue = $recipients.val();
             }
 
-            if (!recipientsValue || $.trim(String(recipientsValue)) === '') {
+            var hasRecipients = recipientsValue && $.trim(String(recipientsValue)) !== '';
+            var webhookUrlValue = '';
+            var webhookChannelValue = '';
+
+            if ($webhookUrl.length) {
+                webhookUrlValue = $.trim(String($webhookUrl.val()));
+            }
+
+            if ($webhookChannel.length) {
+                webhookChannelValue = String($webhookChannel.val());
+            }
+
+            var hasWebhook = webhookUrlValue !== '' && webhookChannelValue && webhookChannelValue !== 'disabled';
+
+            if (!hasRecipients && !hasWebhook) {
                 showFeedback('warning', config.missingRecipientsText || '');
                 return;
             }
@@ -234,7 +251,10 @@ jQuery(document).ready(function($) {
                 action: config.action,
                 _ajax_nonce: config.nonce,
                 recipients: recipientsValue,
-                dataset_types: datasetTypes
+                dataset_types: datasetTypes,
+                webhook_url: webhookUrlValue,
+                webhook_channel: webhookChannelValue,
+                message_template: $messageTemplate.length ? $messageTemplate.val() : ''
             }).done(function(response) {
                 if (response && response.success) {
                     var message = (response.data && response.data.message) ? response.data.message : (config.successText || '');
