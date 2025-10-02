@@ -419,7 +419,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         $data_attributes = implode(' ', $data_attributes);
 
         $actions['edit_link'] = sprintf(
-            '<a href="#" class="blc-edit-link" %s data-nonce="%s">%s</a>',
+            '<button type="button" class="button button-small button-link blc-edit-link" %s data-nonce="%s">%s</button>',
             $data_attributes,
             wp_create_nonce('blc_edit_link_nonce'),
             esc_html__('Modifier', 'liens-morts-detector-jlg')
@@ -440,14 +440,14 @@ class BLC_Links_List_Table extends WP_List_Table {
             : esc_html__('Ignorer', 'liens-morts-detector-jlg');
 
         $actions['ignore'] = sprintf(
-            '<a href="#" class="blc-ignore" %s data-ignore-mode="%s" data-nonce="%s">%s</a>',
+            '<button type="button" class="button button-small button-link blc-ignore" %s data-ignore-mode="%s" data-nonce="%s">%s</button>',
             $data_attributes,
             esc_attr($ignore_mode),
             wp_create_nonce('blc_ignore_link_nonce'),
             $ignore_label
         );
         $actions['unlink'] = sprintf(
-            '<a href="#" class="blc-unlink" %s data-nonce="%s" style="color:#a00;">%s</a>',
+            '<button type="button" class="button button-small button-link blc-unlink" %s data-nonce="%s" style="color:#a00;">%s</button>',
             $data_attributes,
             wp_create_nonce('blc_unlink_nonce'),
             esc_html__('Dissocier', 'liens-morts-detector-jlg')

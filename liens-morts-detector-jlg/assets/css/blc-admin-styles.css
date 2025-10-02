@@ -236,6 +236,7 @@
 
     .wp-list-table td .row-actions span {
         display: inline-flex;
+        align-items: center;
     }
 
     .wp-list-table td.column-image_details .blc-image-details {
@@ -250,6 +251,36 @@
 
     .blc-image-preview__img {
         max-height: 160px;
+    }
+}
+
+.wp-list-table td .row-actions button.button-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    line-height: 1.5;
+}
+
+.wp-list-table td .row-actions button.button-link:focus-visible {
+    outline: 2px solid #72aee6;
+    outline-offset: 1px;
+}
+
+@media (max-width: 782px) {
+    .wp-list-table td .row-actions {
+        gap: 10px;
+    }
+
+    .wp-list-table td .row-actions span {
+        width: 100%;
+    }
+
+    .wp-list-table td .row-actions button.button-link {
+        width: 100%;
+        justify-content: flex-start;
+        text-align: left;
     }
 }
 
