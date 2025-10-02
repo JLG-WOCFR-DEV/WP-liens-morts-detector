@@ -745,3 +745,69 @@ function blc_ajax_ignore_link_callback() {
         'ignored'      => $is_currently_ignored,
     ]);
 }
+
+if (!function_exists('blc_register_wp_cli_commands')) {
+    function blc_register_wp_cli_commands() {
+        if (!class_exists('WP_CLI')) {
+            return;
+        }
+
+        $blc_bool_parser = static function ($value) {
+            if (is_bool($value)) {
+                return $value;
+            }
+
+            if (is_string($value)) {
+                $normalized = strtolower(trim($value));
+                if (in_array($normalized, ['1', 'true', 'yes', 'on'], true)) {
+                    return true;
+                }
+
+                if (in_array($normalized, ['0', 'false', 'no', 'off'], true)) {
+                    return false;
+                }
+            }
+
+            return (bool) $value;
+        };
+
+        WP_CLI::add_command('blc scan', static function ($args, $assoc_args) use ($blc_bool_parser) {
+            $assoc_args = is_array($assoc_args) ? $assoc_args : [];
+
+            $batch = isset($assoc_args['batch']) ? (int) $assoc_args['batch'] : 0;
+            if ($batch < 0) {
+                $batch = 0;
+            }
+
+            $is_full_scan = isset($assoc_args['full']) ? $blc_bool_parser($assoc_args['full']) : false;
+            $bypass_rest_window = isset($assoc_args['bypass-rest']) ? $blc_bool_parser($assoc_args['bypass-rest']) : false;
+
+            blc_perform_check($batch, $is_full_scan, $bypass_rest_window);
+
+            if (method_exists('WP_CLI', 'success')) {
+                WP_CLI::success(sprintf('Scan des liens exécuté (lot #%d).', $batch));
+            }
+        });
+
+        WP_CLI::add_command('blc scan-images', static function ($args, $assoc_args) use ($blc_bool_parser) {
+            $assoc_args = is_array($assoc_args) ? $assoc_args : [];
+
+            $batch = isset($assoc_args['batch']) ? (int) $assoc_args['batch'] : 0;
+            if ($batch < 0) {
+                $batch = 0;
+            }
+
+            $is_full_scan = isset($assoc_args['full']) ? $blc_bool_parser($assoc_args['full']) : true;
+
+            blc_perform_image_check($batch, $is_full_scan);
+
+            if (method_exists('WP_CLI', 'success')) {
+                WP_CLI::success(sprintf('Scan des images exécuté (lot #%d).', $batch));
+            }
+        });
+    }
+}
+
+if (defined('WP_CLI') && WP_CLI) {
+    blc_register_wp_cli_commands();
+}

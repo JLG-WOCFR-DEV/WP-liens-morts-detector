@@ -6,6 +6,326 @@ if (!function_exists('blc_normalize_hour_option')) {
     require_once __DIR__ . '/blc-utils.php';
 }
 
+if (!defined('BLC_REST_FALLBACK_TOKEN_OPTION')) {
+    define('BLC_REST_FALLBACK_TOKEN_OPTION', 'blc_rest_fallback_token');
+}
+
+if (!defined('BLC_ACTION_SCHEDULER_GROUP')) {
+    define('BLC_ACTION_SCHEDULER_GROUP', 'liens-morts-detector');
+}
+
+if (function_exists('add_action')) {
+    add_action('rest_api_init', 'blc_register_rest_fallback_route');
+}
+
+/**
+ * Store the method used by the last scheduling attempt when a fallback is required.
+ *
+ * @param string $method Fallback identifier (empty string when none).
+ *
+ * @return void
+ */
+function blc_record_schedule_fallback_method($method) {
+    $GLOBALS['blc_last_schedule_fallback_method'] = (string) $method;
+}
+
+/**
+ * Retrieve the method used by the last scheduling attempt when a fallback was triggered.
+ *
+ * @return string Empty string if no fallback was used.
+ */
+function blc_last_schedule_used_fallback() {
+    return isset($GLOBALS['blc_last_schedule_fallback_method'])
+        ? (string) $GLOBALS['blc_last_schedule_fallback_method']
+        : '';
+}
+
+/**
+ * Determine if WP-Cron is effectively disabled for the current installation.
+ *
+ * @return bool
+ */
+function blc_is_wp_cron_disabled() {
+    $is_disabled = defined('DISABLE_WP_CRON') && DISABLE_WP_CRON;
+
+    if (function_exists('apply_filters')) {
+        $is_disabled = (bool) apply_filters('blc_is_wp_cron_disabled', $is_disabled);
+    }
+
+    return $is_disabled;
+}
+
+/**
+ * Retrieve or generate the token used to authenticate REST fallbacks.
+ *
+ * @return string
+ */
+function blc_get_rest_fallback_token() {
+    $token = get_option(BLC_REST_FALLBACK_TOKEN_OPTION, '');
+    if (!is_string($token)) {
+        $token = '';
+    }
+
+    if ($token === '') {
+        if (function_exists('wp_generate_password')) {
+            $token = wp_generate_password(64, false, false);
+        }
+
+        if (!is_string($token) || $token === '') {
+            try {
+                $token = bin2hex(random_bytes(32));
+            } catch (Exception $e) {
+                $token = base64_encode((string) microtime(true));
+            }
+        }
+
+        update_option(BLC_REST_FALLBACK_TOKEN_OPTION, $token, true);
+    }
+
+    return $token;
+}
+
+/**
+ * Register the REST endpoint used as the last fallback when scheduling fails.
+ *
+ * @return void
+ */
+function blc_register_rest_fallback_route() {
+    if (!function_exists('register_rest_route')) {
+        return;
+    }
+
+    register_rest_route(
+        'blc/v1',
+        '/queue',
+        [
+            'methods'             => 'POST',
+            'permission_callback' => 'blc_rest_fallback_permission_check',
+            'callback'            => 'blc_handle_rest_fallback_request',
+            'args'                => [
+                'hook' => [
+                    'type'     => 'string',
+                    'required' => true,
+                ],
+                'args' => [
+                    'type'     => 'array',
+                    'required' => false,
+                ],
+                'timestamp' => [
+                    'type'     => 'integer',
+                    'required' => false,
+                ],
+            ],
+        ]
+    );
+}
+
+/**
+ * Validate incoming REST fallback requests.
+ *
+ * @param WP_REST_Request $request Request instance.
+ * @return bool
+ */
+function blc_rest_fallback_permission_check($request) {
+    $expected = blc_get_rest_fallback_token();
+
+    $provided = '';
+    if (is_object($request) && method_exists($request, 'get_header')) {
+        $provided = (string) $request->get_header('x-blc-fallback-token');
+    }
+
+    if ($provided === '' && is_object($request) && method_exists($request, 'get_param')) {
+        $provided = (string) $request->get_param('token');
+    }
+
+    if ($expected === '' || $provided === '') {
+        return false;
+    }
+
+    if (function_exists('hash_equals')) {
+        return hash_equals($expected, $provided);
+    }
+
+    return $expected === $provided;
+}
+
+/**
+ * Execute the requested hook when the REST fallback is triggered.
+ *
+ * @param WP_REST_Request $request Request instance.
+ * @return WP_REST_Response|WP_Error
+ */
+function blc_handle_rest_fallback_request($request) {
+    $params = [];
+    if (is_object($request) && method_exists($request, 'get_json_params')) {
+        $params = (array) $request->get_json_params();
+    }
+
+    $hook = '';
+    if (isset($params['hook'])) {
+        $hook = (string) $params['hook'];
+    } elseif (is_object($request) && method_exists($request, 'get_param')) {
+        $hook = (string) $request->get_param('hook');
+    }
+
+    if ($hook === '') {
+        return new WP_Error('blc_invalid_hook', __('Hook REST manquant.', 'liens-morts-detector-jlg'), ['status' => 400]);
+    }
+
+    $allowed_hooks = blc_get_rest_fallback_allowed_hooks();
+    if (!in_array($hook, $allowed_hooks, true)) {
+        return new WP_Error('blc_forbidden_hook', __('Hook REST non autorisé.', 'liens-morts-detector-jlg'), ['status' => 403]);
+    }
+
+    $args = [];
+    if (isset($params['args']) && is_array($params['args'])) {
+        $args = $params['args'];
+    } elseif (is_object($request) && method_exists($request, 'get_param')) {
+        $maybe_args = $request->get_param('args');
+        if (is_array($maybe_args)) {
+            $args = $maybe_args;
+        }
+    }
+
+    if (!is_array($args)) {
+        $args = [];
+    }
+
+    do_action_ref_array($hook, $args);
+
+    return new WP_REST_Response([
+        'queued' => true,
+        'hook'   => $hook,
+    ]);
+}
+
+/**
+ * Return the list of hooks that can be executed through the REST fallback.
+ *
+ * @return string[]
+ */
+function blc_get_rest_fallback_allowed_hooks() {
+    $hooks = [
+        'blc_check_batch',
+        'blc_manual_check_batch',
+        'blc_check_image_batch',
+    ];
+
+    if (function_exists('apply_filters')) {
+        $hooks = (array) apply_filters('blc_rest_fallback_allowed_hooks', $hooks);
+    }
+
+    return array_values(array_unique(array_map('strval', $hooks)));
+}
+
+/**
+ * Attempt to schedule a batch using Action Scheduler or a REST fallback when needed.
+ *
+ * @param int    $timestamp Unix timestamp for the event.
+ * @param string $hook      Hook name.
+ * @param array  $args      Hook arguments.
+ *
+ * @return bool
+ */
+function blc_schedule_single_event($timestamp, $hook, array $args = []) {
+    blc_record_schedule_fallback_method('');
+
+    $timestamp = (int) $timestamp;
+    if ($timestamp <= 0) {
+        $timestamp = time();
+    }
+
+    $hook = (string) $hook;
+    if ($hook === '') {
+        return false;
+    }
+
+    $use_action_scheduler = blc_is_wp_cron_disabled();
+
+    if (!$use_action_scheduler) {
+        $scheduled = wp_schedule_single_event($timestamp, $hook, $args);
+        if ($scheduled !== false) {
+            return true;
+        }
+
+        $use_action_scheduler = true;
+    }
+
+    $fallback_method = '';
+
+    if ($use_action_scheduler && function_exists('as_schedule_single_action')) {
+        $action_id = as_schedule_single_action($timestamp, $hook, $args, BLC_ACTION_SCHEDULER_GROUP);
+        if (!is_wp_error($action_id)) {
+            $fallback_method = 'action_scheduler';
+        }
+    }
+
+    if ($fallback_method === '' && blc_schedule_via_rest_fallback($timestamp, $hook, $args)) {
+        $fallback_method = 'rest_api';
+    }
+
+    if ($fallback_method !== '') {
+        blc_record_schedule_fallback_method($fallback_method);
+    }
+
+    return false;
+}
+
+/**
+ * Trigger the REST fallback when no other scheduler is available.
+ *
+ * @param int    $timestamp Unix timestamp for context.
+ * @param string $hook      Hook name.
+ * @param array  $args      Hook arguments.
+ *
+ * @return bool
+ */
+function blc_schedule_via_rest_fallback($timestamp, $hook, array $args = []) {
+    if (!function_exists('rest_url') || !function_exists('wp_remote_post')) {
+        return false;
+    }
+
+    $endpoint = rest_url('blc/v1/queue');
+    if (!is_string($endpoint) || $endpoint === '') {
+        return false;
+    }
+
+    $token = blc_get_rest_fallback_token();
+    if ($token === '') {
+        return false;
+    }
+
+    $payload = [
+        'hook'      => (string) $hook,
+        'args'      => array_values($args),
+        'timestamp' => (int) $timestamp,
+    ];
+
+    $body = function_exists('wp_json_encode')
+        ? wp_json_encode($payload)
+        : json_encode($payload);
+
+    if (!is_string($body)) {
+        return false;
+    }
+
+    $response = wp_remote_post($endpoint, [
+        'timeout' => 5,
+        'blocking' => false,
+        'headers' => [
+            'Content-Type'        => 'application/json',
+            'X-BLC-Fallback-Token' => $token,
+        ],
+        'body'    => $body,
+    ]);
+
+    if (is_wp_error($response)) {
+        return false;
+    }
+
+    return true;
+}
+
 /**
  * Retrieve the configured notification recipients as a normalized list of emails.
  *
@@ -1241,7 +1561,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         if ($current_hook === 'blc_check_links') {
             if ($debug_mode) { error_log('Analyse de liens déjà en cours, reprogrammation du lot.'); }
             $retry_delay = max(60, $batch_delay_s);
-            $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
+            $scheduled = blc_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
             if (false === $scheduled) {
                 error_log(sprintf('BLC: Failed to reschedule link batch #%d while waiting for lock.', $batch));
                 do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'lock_unavailable');
@@ -1431,7 +1751,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             $next_timestamp = $current_gmt_timestamp + 60;
         }
 
-        $scheduled = wp_schedule_single_event($next_timestamp, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
+        $scheduled = blc_schedule_single_event($next_timestamp, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
         if (false === $scheduled) {
             error_log(sprintf('BLC: Failed to schedule link batch #%d during rest window.', $batch));
             do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'rest_window');
@@ -1458,7 +1778,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                     if ($retry_delay < 0) { $retry_delay = 0; }
 
                     if ($debug_mode) { error_log("Scan reporté : charge serveur trop élevée (" . $current_load . ")."); }
-                    $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
+                    $scheduled = blc_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
                     if (false === $scheduled) {
                         error_log(sprintf('BLC: Failed to schedule link batch #%d after high load.', $batch));
                         do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'server_load');
@@ -2365,7 +2685,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                         $retry_delay = 0;
                     }
 
-                    $scheduled = wp_schedule_single_event(
+                    $scheduled = blc_schedule_single_event(
                         time() + $retry_delay,
                         'blc_check_batch',
                         array($batch, $is_full_scan, $bypass_rest_window)
@@ -2373,6 +2693,9 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
                     if (false === $scheduled) {
                         error_log(sprintf('BLC: Failed to schedule temporary retry for link batch #%d.', $batch));
                         do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'temporary_retry');
+                        if (blc_last_schedule_used_fallback() !== '') {
+                            $temporary_retry_scheduled = true;
+                        }
                     } else {
                         $temporary_retry_scheduled = true;
                     }
@@ -2658,7 +2981,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         }
 
         if ($wp_query->max_num_pages > ($batch + 1)) {
-            $scheduled = wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan, $bypass_rest_window));
+            $scheduled = blc_schedule_single_event(time() + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan, $bypass_rest_window));
             if (false === $scheduled) {
                 error_log(sprintf('BLC: Failed to schedule next link batch #%d.', $batch + 1));
                 do_action('blc_check_batch_schedule_failed', $batch + 1, $is_full_scan, $bypass_rest_window, 'next_batch');
@@ -2707,7 +3030,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
         if ($lock_token === '') {
             if ($debug_mode) { error_log('Analyse d\'images déjà en cours, reprogrammation du lot initial.'); }
             $retry_delay = max(60, $batch_delay_s);
-            $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array(0, true));
+            $scheduled = blc_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array(0, true));
             if (false === $scheduled) {
                 error_log('BLC: Failed to schedule image batch #0 while waiting for lock.');
                 do_action('blc_check_image_batch_schedule_failed', 0, true, 'initial_lock_retry');
@@ -2728,7 +3051,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
             if ($lock_token === '') {
                 if ($debug_mode) { error_log('Impossible de reprendre le scan d\'images (verrou indisponible).'); }
                 $retry_delay = max(60, $batch_delay_s);
-                $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
+                $scheduled = blc_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
                 if (false === $scheduled) {
                     error_log(sprintf('BLC: Failed to reschedule image batch #%d due to missing lock token.', $batch));
                     do_action('blc_check_image_batch_schedule_failed', $batch, $is_full_scan, 'missing_lock_token');
@@ -2740,7 +3063,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
             if ($lock_token === '') {
                 if ($debug_mode) { error_log('Impossible de reprendre le scan d\'images (verrou expiré).'); }
                 $retry_delay = max(60, $batch_delay_s);
-                $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
+                $scheduled = blc_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
                 if (false === $scheduled) {
                     error_log(sprintf('BLC: Failed to reschedule image batch #%d after lock expiration.', $batch));
                     do_action('blc_check_image_batch_schedule_failed', $batch, $is_full_scan, 'expired_lock');
@@ -2757,7 +3080,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
             if ($lock_token === '') {
                 if ($debug_mode) { error_log('Impossible de rafraîchir le verrou du scan d\'images.'); }
                 $retry_delay = max(60, $batch_delay_s);
-                $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
+                $scheduled = blc_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
                 if (false === $scheduled) {
                     error_log(sprintf('BLC: Failed to reschedule image batch #%d after failing to refresh lock.', $batch));
                     do_action('blc_check_image_batch_schedule_failed', $batch, $is_full_scan, 'lock_refresh');
@@ -3185,7 +3508,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) { // Une anal
         if ($query->max_num_pages > ($batch + 1)) {
             // On utilise un hook de batch différent pour ne pas interférer
             blc_refresh_image_scan_lock($lock_token, $lock_timeout);
-            $scheduled = wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_image_batch', array($batch + 1, true));
+            $scheduled = blc_schedule_single_event(time() + $batch_delay_s, 'blc_check_image_batch', array($batch + 1, true));
             if (false === $scheduled) {
                 error_log(sprintf('BLC: Failed to schedule next image batch #%d.', $batch + 1));
                 do_action('blc_check_image_batch_schedule_failed', $batch + 1, true, 'next_batch');

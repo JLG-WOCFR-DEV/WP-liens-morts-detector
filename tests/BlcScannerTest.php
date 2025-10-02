@@ -98,6 +98,20 @@ namespace {
             }
         }
     }
+
+    if (!class_exists('WP_REST_Response')) {
+        class WP_REST_Response
+        {
+            public $data;
+            public $status;
+
+            public function __construct($data = null, $status = 200)
+            {
+                $this->data = $data;
+                $this->status = $status;
+            }
+        }
+    }
 }
 
 namespace Tests {
@@ -579,7 +593,44 @@ class BlcScannerTest extends TestCase
 
             return $result;
         });
+        Functions\when('as_schedule_single_action')->alias(function (int $timestamp, string $hook, array $args = [], string $group = '') {
+            $this->scheduledEvents[] = [
+                'timestamp' => $timestamp,
+                'hook'      => $hook,
+                'args'      => $args,
+                'group'     => $group,
+                'scheduler' => 'action_scheduler',
+            ];
+
+            return rand(1000, 9999);
+        });
+        Functions\when('rest_url')->alias(function ($path = '', $scheme = 'rest') {
+            $base = 'https://example.com/wp-json/';
+
+            if ($path === '' || $path === null) {
+                return $base;
+            }
+
+            return rtrim($base, '/') . '/' . ltrim($path, '/');
+        });
+        Functions\when('wp_remote_post')->alias(function ($url, array $args = []) {
+            $this->httpRequests[] = [
+                'method' => 'POST',
+                'url'    => $url,
+                'args'   => $args,
+            ];
+
+            return ['success' => true];
+        });
         Functions\when('do_action')->alias(function (string $hook, ...$args) {
+            $this->triggeredActions[] = [
+                'hook' => $hook,
+                'args' => $args,
+            ];
+
+            return null;
+        });
+        Functions\when('do_action_ref_array')->alias(function (string $hook, array $args) {
             $this->triggeredActions[] = [
                 'hook' => $hook,
                 'args' => $args,
@@ -1226,6 +1277,49 @@ class BlcScannerTest extends TestCase
         blc_perform_check(0, false);
 
         $this->assertNotSame([], $GLOBALS['wp_query_last_args'], 'A scan should start normally outside the rest window.');
+    }
+
+    public function test_blc_schedule_single_event_falls_back_to_action_scheduler_when_wp_cron_fails(): void
+    {
+        $this->scheduleSingleEventResults = [false];
+
+        $result = blc_schedule_single_event($this->utcNow + 30, 'blc_check_batch', [2, false, false]);
+
+        $this->assertFalse($result, 'Fallback scheduling should report the Cron failure while dispatching the batch.');
+        $this->assertCount(1, $this->failedScheduleAttempts, 'The WP-Cron failure should be recorded.');
+        $this->assertCount(1, $this->scheduledEvents, 'An Action Scheduler task should be enqueued.');
+
+        $event = $this->scheduledEvents[0];
+        $this->assertSame('blc_check_batch', $event['hook']);
+        $this->assertSame([2, false, false], $event['args']);
+        $this->assertSame('action_scheduler', $event['scheduler']);
+        $this->assertSame('action_scheduler', blc_last_schedule_used_fallback());
+        $this->assertSame([], $this->httpRequests, 'REST fallback must not run when Action Scheduler succeeds.');
+    }
+
+    public function test_blc_schedule_single_event_uses_rest_fallback_when_action_scheduler_fails(): void
+    {
+        $this->scheduleSingleEventResults = [false];
+        Functions\when('as_schedule_single_action')->alias(fn() => new \WP_Error('as_unavailable', 'Action Scheduler unavailable'));
+
+        $result = blc_schedule_single_event($this->utcNow + 45, 'blc_check_batch', [3, true, false]);
+
+        $this->assertFalse($result, 'REST fallback should still surface the Cron failure.');
+        $this->assertCount(1, $this->failedScheduleAttempts, 'WP-Cron failure should still be tracked.');
+        $this->assertSame([], $this->scheduledEvents, 'No Action Scheduler entry should be recorded when it fails.');
+        $this->assertCount(1, $this->httpRequests, 'REST fallback must trigger an HTTP request.');
+
+        $request = $this->httpRequests[0];
+        $this->assertSame('POST', $request['method']);
+        $this->assertStringContainsString('wp-json/blc/v1/queue', $request['url']);
+        $this->assertArrayHasKey('headers', $request['args']);
+        $this->assertArrayHasKey('X-BLC-Fallback-Token', $request['args']['headers']);
+
+        $body = json_decode((string) ($request['args']['body'] ?? ''), true);
+        $this->assertIsArray($body, 'REST payload should be JSON encoded.');
+        $this->assertSame('blc_check_batch', $body['hook']);
+        $this->assertSame([3, true, false], $body['args']);
+        $this->assertSame('rest_api', blc_last_schedule_used_fallback());
     }
 
     public function test_blc_perform_check_sends_summary_email_when_recipients_configured(): void
@@ -2853,12 +2947,16 @@ class BlcScannerTest extends TestCase
 
         blc_perform_check(0, false);
 
-        $this->assertCount(0, $this->scheduledEvents, 'No successful scheduling should be recorded when cron fails.');
+        $this->assertCount(1, $this->scheduledEvents, 'A fallback scheduler should queue the next batch.');
         $this->assertCount(1, $this->failedScheduleAttempts, 'The failed scheduling attempt should be tracked.');
 
         $attempt = $this->failedScheduleAttempts[0];
         $this->assertSame('blc_check_batch', $attempt['hook']);
         $this->assertSame([1, false, false], $attempt['args']);
+
+        $event = $this->scheduledEvents[0];
+        $this->assertSame('action_scheduler', $event['scheduler']);
+        $this->assertSame('action_scheduler', blc_last_schedule_used_fallback());
 
         $this->assertNotEmpty($this->errorLogs, 'An error log entry should be recorded for scheduling failures.');
         $this->assertStringContainsString('Failed to schedule next link batch #1', $this->errorLogs[0]);
@@ -3379,12 +3477,16 @@ class BlcScannerTest extends TestCase
         $this->assertStringContainsString('Failed to schedule next image batch #1', $result->get_error_message());
         $this->assertSame(1, $this->wpResetPostdataCalls, 'Postdata should be reset after a failed image scan.');
 
-        $this->assertCount(0, $this->scheduledEvents, 'No successful scheduling should be recorded when cron fails.');
+        $this->assertCount(1, $this->scheduledEvents, 'A fallback scheduler should queue the next image batch.');
         $this->assertCount(1, $this->failedScheduleAttempts, 'The failed scheduling attempt should be tracked.');
 
         $attempt = $this->failedScheduleAttempts[0];
         $this->assertSame('blc_check_image_batch', $attempt['hook']);
         $this->assertSame([1, true], $attempt['args']);
+
+        $event = $this->scheduledEvents[0];
+        $this->assertSame('action_scheduler', $event['scheduler']);
+        $this->assertSame('action_scheduler', blc_last_schedule_used_fallback());
 
         $this->assertArrayNotHasKey('blc_image_scan_lock', $this->options, 'The image scan lock should be released when scheduling fails.');
         $this->assertArrayNotHasKey('blc_image_scan_lock_token', $this->options, 'The helper lock token option should be cleared when scheduling fails.');

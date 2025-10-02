@@ -161,6 +161,9 @@ class BlcDashboardLinksPageTest extends TestCase
             return $test_case->getStoredOption((string) $name, $default);
         });
         Functions\when('home_url')->justReturn('https://example.com');
+        Functions\when('wp_parse_url')->alias(static function ($url, $component = -1) {
+            return parse_url((string) $url, $component);
+        });
         Functions\when('remove_query_arg')->alias(static fn($key, $url = null) => 'admin.php');
         Functions\when('add_query_arg')->alias(static function ($key, $value = null, $url = null) {
             $args = is_array($key) ? $key : [$key => $value];

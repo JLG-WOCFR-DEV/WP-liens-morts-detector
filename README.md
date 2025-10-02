@@ -22,6 +22,17 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 - Des réglages avancés permettent d’exclure certains domaines, de limiter l’analyse à des plages horaires et d’activer un mode debug pour le suivi.
 - L’analyse des images distantes (CDN, sous-domaines médias) peut être activée dans les réglages. Cette vérification reste basée sur les fichiers présents dans `wp-content/uploads` et peut rallonger la durée du scan ou consommer davantage de quotas côté CDN.
 
+### Exécution en ligne de commande (WP-CLI)
+- `wp blc scan` permet de lancer une analyse des liens cassés depuis le terminal. Options disponibles :
+  - `--batch=<n>` pour cibler un lot spécifique.
+  - `--full=<bool>` pour forcer une analyse complète.
+  - `--bypass-rest=<bool>` pour ignorer temporairement la fenêtre de repos configurée.
+- `wp blc scan-images` déclenche l’analyse des images avec les mêmes options de lot (`--batch`) et de scan complet (`--full`).
+
+### File d’attente résiliente
+- Lorsque `DISABLE_WP_CRON` est activé ou qu’un `wp_schedule_single_event()` échoue, chaque lot est replanifié via [Action Scheduler](https://actionscheduler.org/) si celui-ci est disponible.
+- En l’absence d’Action Scheduler, le plugin déclenche un endpoint REST interne sécurisé pour exécuter le lot immédiatement, garantissant que les scans ne restent pas bloqués.
+
 ## Hooks disponibles
 ### `blc_max_load_threshold`
 Permet d’ajuster le seuil de charge CPU au‑delà duquel l’analyse est reportée. La valeur par défaut est `2.0`.
