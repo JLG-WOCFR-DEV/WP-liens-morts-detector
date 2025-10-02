@@ -147,11 +147,49 @@ class BLC_Images_List_Table extends WP_List_Table {
             return esc_html__('—', 'liens-morts-detector-jlg');
         }
 
+        $classes = ['blc-status'];
+        $label = (string) $raw_status;
+
         if (is_numeric($raw_status)) {
-            $raw_status = (int) $raw_status;
+            $status_code = (int) $raw_status;
+            $label = (string) $status_code;
+
+            if ($status_code >= 200 && $status_code < 300) {
+                $classes[] = 'blc-status--2xx';
+            } elseif ($status_code >= 300 && $status_code < 400) {
+                $classes[] = 'blc-status--3xx';
+            } elseif ($status_code >= 400 && $status_code < 500) {
+                $classes[] = 'blc-status--4xx';
+            } elseif ($status_code >= 500 && $status_code < 600) {
+                $classes[] = 'blc-status--5xx';
+            } else {
+                $classes[] = 'blc-status--unknown';
+            }
+
+            $classes[] = 'blc-status--' . $status_code;
+        } else {
+            $classes[] = 'blc-status--unknown';
+            $classes[] = 'blc-status--' . strtolower((string) $raw_status);
         }
 
-        return esc_html((string) $raw_status);
+        $sanitized_classes = array_map(
+            static function ($class) {
+                if (function_exists('sanitize_html_class')) {
+                    return sanitize_html_class($class);
+                }
+
+                return preg_replace('/[^A-Za-z0-9_-]/', '', (string) $class);
+            },
+            $classes
+        );
+
+        $class_attribute = implode(' ', array_filter(array_unique($sanitized_classes)));
+
+        return sprintf(
+            '<span class="%s">%s</span>',
+            esc_attr($class_attribute),
+            esc_html($label)
+        );
     }
 
     protected function column_last_checked_at($item) {
