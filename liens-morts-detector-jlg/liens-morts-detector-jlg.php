@@ -207,13 +207,256 @@ function blc_enqueue_admin_assets($hook) {
             'nonce'                  => wp_create_nonce('blc_send_test_email'),
             'ajaxUrl'                => admin_url('admin-ajax.php'),
             'sendingText'            => __('Envoi du message de test…', 'liens-morts-detector-jlg'),
-            'successText'            => __('E-mail de test envoyé avec succès.', 'liens-morts-detector-jlg'),
-            'partialSuccessText'     => __('E-mail de test envoyé, mais certains canaux ont rencontré une erreur.', 'liens-morts-detector-jlg'),
-            'errorText'              => __('Échec de l’envoi de l’e-mail de test. Veuillez réessayer.', 'liens-morts-detector-jlg'),
-            'missingRecipientsText'  => __('Ajoutez au moins un destinataire avant d’envoyer un test.', 'liens-morts-detector-jlg'),
-            'missingChannelText'     => __('Activez au moins un canal de notification pour envoyer un test.', 'liens-morts-detector-jlg'),
+            'successText'            => __('Notifications de test envoyées avec succès.', 'liens-morts-detector-jlg'),
+            'partialSuccessText'     => __('Notifications de test envoyées avec des avertissements.', 'liens-morts-detector-jlg'),
+            'errorText'              => __('Échec de l’envoi de la notification de test. Veuillez vérifier vos réglages.', 'liens-morts-detector-jlg'),
+            'missingRecipientsText'  => __('Ajoutez un destinataire ou configurez un webhook avant d’envoyer un test.', 'liens-morts-detector-jlg'),
+            'missingChannelText'     => __('Sélectionnez au moins un type de résumé à tester.', 'liens-morts-detector-jlg'),
         )
     );
+}
+
+/**
+ * Retourne la configuration actuelle du webhook avec la possibilité de surcharger certaines valeurs.
+ *
+ * @param array<string, mixed> $overrides Valeurs de remplacement éventuelles.
+ *
+ * @return array<string, string>
+ */
+function blc_get_notification_webhook_settings($overrides = array()) {
+    $settings = array(
+        'url'              => blc_normalize_notification_webhook_url(get_option('blc_notification_webhook_url', '')),
+        'channel'          => blc_normalize_notification_webhook_channel(get_option('blc_notification_webhook_channel', 'disabled')),
+        'message_template' => blc_normalize_notification_message_template(get_option('blc_notification_message_template', "{{subject}}\n\n{{message}}")),
+    );
+
+    if (is_array($overrides)) {
+        if (array_key_exists('url', $overrides)) {
+            $settings['url'] = blc_normalize_notification_webhook_url($overrides['url']);
+        }
+
+        if (array_key_exists('channel', $overrides)) {
+            $settings['channel'] = blc_normalize_notification_webhook_channel($overrides['channel']);
+        }
+
+        if (array_key_exists('message_template', $overrides)) {
+            $settings['message_template'] = blc_normalize_notification_message_template($overrides['message_template']);
+        }
+    }
+
+    return $settings;
+}
+
+/**
+ * Indique si un webhook est correctement configuré.
+ *
+ * @param array<string, string>|null $settings Configuration existante.
+ *
+ * @return bool
+ */
+function blc_is_webhook_notification_configured($settings = null) {
+    if ($settings === null) {
+        $settings = blc_get_notification_webhook_settings();
+    }
+
+    if (!is_array($settings)) {
+        return false;
+    }
+
+    $channel = isset($settings['channel']) ? (string) $settings['channel'] : 'disabled';
+    $url     = isset($settings['url']) ? (string) $settings['url'] : '';
+
+    if ($channel === 'disabled') {
+        return false;
+    }
+
+    return $url !== '';
+}
+
+/**
+ * Remplace les placeholders du modèle de notification par les valeurs calculées.
+ *
+ * @param string               $template Modèle configuré.
+ * @param array<string, mixed> $summary  Résumé d'analyse.
+ *
+ * @return string
+ */
+function blc_render_notification_message_template($template, array $summary) {
+    $template = (string) $template;
+    if ($template === '') {
+        $template = "{{subject}}\n\n{{message}}";
+    }
+
+    $replacements = array(
+        '{{subject}}'       => isset($summary['subject']) ? (string) $summary['subject'] : '',
+        '{{message}}'       => isset($summary['message']) ? (string) $summary['message'] : '',
+        '{{dataset_type}}'  => isset($summary['dataset_type']) ? (string) $summary['dataset_type'] : '',
+        '{{dataset_label}}' => isset($summary['dataset_label']) ? (string) $summary['dataset_label'] : '',
+        '{{broken_count}}'  => isset($summary['broken_count']) ? (string) (int) $summary['broken_count'] : '0',
+        '{{report_url}}'    => isset($summary['report_url']) ? (string) $summary['report_url'] : '',
+        '{{site_name}}'     => isset($summary['site_name']) ? (string) $summary['site_name'] : '',
+    );
+
+    $rendered = strtr($template, $replacements);
+
+    return trim($rendered);
+}
+
+/**
+ * Prépare et envoie la notification webhook.
+ *
+ * @param string               $dataset_type Type d'analyse.
+ * @param array<string, mixed> $summary      Résumé d'analyse.
+ * @param array<string, mixed> $settings     Configuration du webhook.
+ *
+ * @return array<string, mixed>|WP_Error
+ */
+function blc_send_scan_summary_webhook($dataset_type, array $summary, array $settings) {
+    if (!blc_is_webhook_notification_configured($settings)) {
+        return new WP_Error('blc_webhook_not_configured', __('Aucun webhook configuré.', 'liens-morts-detector-jlg'));
+    }
+
+    $channel = isset($settings['channel']) ? (string) $settings['channel'] : 'generic';
+    $message = blc_render_notification_message_template(isset($settings['message_template']) ? $settings['message_template'] : '', $summary);
+    if ($message === '') {
+        $message = isset($summary['subject']) ? (string) $summary['subject'] : '';
+    }
+
+    $payload = array();
+    switch ($channel) {
+        case 'slack':
+        case 'teams':
+            $payload = array('text' => $message);
+            break;
+        case 'generic':
+        default:
+            $payload = array(
+                'message'      => $message,
+                'subject'      => isset($summary['subject']) ? (string) $summary['subject'] : '',
+                'dataset_type' => isset($summary['dataset_type']) ? (string) $summary['dataset_type'] : '',
+                'broken_count' => isset($summary['broken_count']) ? (int) $summary['broken_count'] : 0,
+                'report_url'   => isset($summary['report_url']) ? (string) $summary['report_url'] : '',
+                'site_name'    => isset($summary['site_name']) ? (string) $summary['site_name'] : '',
+            );
+            break;
+    }
+
+    /**
+     * Permet de personnaliser le contenu envoyé au webhook.
+     *
+     * @param array<string, mixed> $payload       Corps JSON.
+     * @param string               $dataset_type  Type d'analyse.
+     * @param array<string, mixed> $summary       Résumé d'analyse.
+     * @param array<string, mixed> $settings      Configuration du webhook.
+     * @param string               $channel       Canal sélectionné.
+     */
+    $payload = apply_filters('blc_notification_webhook_payload', $payload, $dataset_type, $summary, $settings, $channel, $message);
+
+    if (is_wp_error($payload)) {
+        return $payload;
+    }
+
+    $encoded_payload = wp_json_encode($payload);
+    if (!is_string($encoded_payload)) {
+        return new WP_Error('blc_webhook_json_encoding_failed', __('Impossible d’encoder le message de webhook en JSON.', 'liens-morts-detector-jlg'));
+    }
+
+    $request_args = array(
+        'timeout'     => apply_filters('blc_notification_webhook_timeout', 15, $dataset_type, $settings, $payload),
+        'redirection' => 3,
+        'blocking'    => true,
+        'headers'     => array('Content-Type' => 'application/json; charset=utf-8'),
+        'body'        => $encoded_payload,
+    );
+
+    /**
+     * Permet de filtrer les arguments passés à wp_remote_post pour le webhook.
+     *
+     * @param array<string, mixed> $request_args Arguments de la requête HTTP.
+     * @param string               $dataset_type Type d'analyse.
+     * @param array<string, mixed> $summary      Résumé d'analyse.
+     * @param array<string, mixed> $settings     Configuration du webhook.
+     * @param array<string, mixed> $payload      Corps JSON.
+     */
+    $request_args = apply_filters('blc_notification_webhook_request_args', $request_args, $dataset_type, $summary, $settings, $payload);
+
+    $response = wp_remote_post($settings['url'], $request_args);
+    if (is_wp_error($response)) {
+        return $response;
+    }
+
+    $code = (int) wp_remote_retrieve_response_code($response);
+    if ($code < 200 || $code >= 300) {
+        return new WP_Error(
+            'blc_webhook_unexpected_status',
+            sprintf(__('Le webhook a répondu avec le code HTTP %d.', 'liens-morts-detector-jlg'), $code),
+            array('response' => $response, 'code' => $code)
+        );
+    }
+
+    return array(
+        'response'     => $response,
+        'request_args' => $request_args,
+        'payload'      => $payload,
+        'code'         => $code,
+        'message'      => $message,
+    );
+}
+
+/**
+ * Envoie les notifications configurées (e-mail + webhook) et retourne le statut de chaque canal.
+ *
+ * @param string               $dataset_type Type d'analyse.
+ * @param array<string, mixed> $summary      Résumé d'analyse.
+ * @param string[]             $recipients   Destinataires e-mail.
+ * @param array<string, mixed> $args         Options complémentaires.
+ *
+ * @return array<string, array<string, mixed>>
+ */
+function blc_dispatch_scan_summary_notifications($dataset_type, array $summary, array $recipients, array $args = array()) {
+    $results = array(
+        'email'   => array('status' => 'skipped'),
+        'webhook' => array('status' => 'skipped'),
+    );
+
+    $context = isset($args['context']) ? (string) $args['context'] : 'scan';
+    $webhook_settings = isset($args['webhook_settings']) && is_array($args['webhook_settings'])
+        ? $args['webhook_settings']
+        : blc_get_notification_webhook_settings();
+
+    $dataset_label = isset($summary['dataset_label']) ? (string) $summary['dataset_label'] : $dataset_type;
+    $context_label = ($context === 'test') ? __('de test', 'liens-morts-detector-jlg') : __('planifiée', 'liens-morts-detector-jlg');
+
+    if ($recipients !== array()) {
+        $sent = wp_mail($recipients, (string) $summary['subject'], (string) $summary['message']);
+        if ($sent) {
+            $results['email']['status'] = 'sent';
+        } else {
+            $results['email'] = array(
+                'status' => 'failed',
+                'error'  => sprintf(__('Échec de l’envoi de l’e-mail pour l’analyse %s.', 'liens-morts-detector-jlg'), $dataset_label),
+            );
+            error_log(sprintf('BLC: Failed to send %s summary email (%s).', $dataset_type, $context_label));
+        }
+    }
+
+    if (blc_is_webhook_notification_configured($webhook_settings)) {
+        $webhook_response = blc_send_scan_summary_webhook($dataset_type, $summary, $webhook_settings);
+        if (is_wp_error($webhook_response)) {
+            $results['webhook'] = array(
+                'status' => 'failed',
+                'error'  => $webhook_response->get_error_message(),
+            );
+            error_log(sprintf('BLC: Webhook notification failed for %s summary (%s): %s', $dataset_type, $context_label, $webhook_response->get_error_message()));
+        } else {
+            $results['webhook'] = array(
+                'status' => 'sent',
+                'code'   => $webhook_response['code'],
+            );
+        }
+    }
+
+    return $results;
 }
 
 /**
@@ -787,13 +1030,6 @@ function blc_ajax_send_test_email() {
     $raw_recipients = isset($_POST['recipients']) ? wp_unslash($_POST['recipients']) : '';
     $recipients     = blc_parse_notification_recipients($raw_recipients);
 
-    if ($recipients === array()) {
-        wp_send_json_error(
-            array('message' => __('Ajoutez au moins un destinataire avant d’envoyer un test.', 'liens-morts-detector-jlg')),
-            BLC_HTTP_BAD_REQUEST
-        );
-    }
-
     $dataset_input = array();
     if (isset($_POST['dataset_types'])) {
         $dataset_input = wp_unslash($_POST['dataset_types']);
@@ -830,28 +1066,96 @@ function blc_ajax_send_test_email() {
 
     if ($dataset_types === array()) {
         wp_send_json_error(
-            array('message' => __('Activez au moins un canal de notification pour envoyer un test.', 'liens-morts-detector-jlg')),
+            array('message' => __('Sélectionnez au moins un type de résumé à tester.', 'liens-morts-detector-jlg')),
             BLC_HTTP_BAD_REQUEST
         );
     }
 
-    $sent_types   = array();
+    $webhook_overrides = array();
+    if (isset($_POST['webhook_url'])) {
+        $webhook_overrides['url'] = wp_unslash($_POST['webhook_url']);
+    }
+    if (isset($_POST['webhook_channel'])) {
+        $webhook_overrides['channel'] = wp_unslash($_POST['webhook_channel']);
+    }
+    if (isset($_POST['message_template'])) {
+        $webhook_overrides['message_template'] = wp_unslash($_POST['message_template']);
+    }
+
+    $webhook_settings = blc_get_notification_webhook_settings($webhook_overrides);
+    $has_webhook = blc_is_webhook_notification_configured($webhook_settings);
+
+    if ($recipients === array() && !$has_webhook) {
+        wp_send_json_error(
+            array('message' => __('Ajoutez un destinataire ou configurez un webhook avant d’envoyer un test.', 'liens-morts-detector-jlg')),
+            BLC_HTTP_BAD_REQUEST
+        );
+    }
+
+    $results = array();
+    $sent_types = array();
     $failed_types = array();
 
-    $labels = array(
-        'link'  => __('analyse des liens', 'liens-morts-detector-jlg'),
-        'image' => __('analyse des images', 'liens-morts-detector-jlg'),
+    $dataset_labels = array(
+        'link'  => __('Analyse des liens', 'liens-morts-detector-jlg'),
+        'image' => __('Analyse des images', 'liens-morts-detector-jlg'),
     );
 
+    $channel_labels = array(
+        'email'   => __('e-mail', 'liens-morts-detector-jlg'),
+        'webhook' => __('webhook', 'liens-morts-detector-jlg'),
+    );
+
+    $status_labels = array(
+        'sent'    => __('envoyé', 'liens-morts-detector-jlg'),
+        'failed'  => __('échec', 'liens-morts-detector-jlg'),
+        'skipped' => __('ignoré', 'liens-morts-detector-jlg'),
+    );
+
+    $format_channel_statuses = static function (array $channel_results) use ($channel_labels, $status_labels) {
+        $parts = array();
+        foreach ($channel_results as $channel => $details) {
+            $label = isset($channel_labels[$channel]) ? $channel_labels[$channel] : $channel;
+            $status_key = isset($details['status']) ? (string) $details['status'] : 'skipped';
+            $status = isset($status_labels[$status_key]) ? $status_labels[$status_key] : $status_key;
+            $parts[] = sprintf('%s (%s)', $label, $status);
+        }
+
+        return implode(', ', $parts);
+    };
+
     foreach ($dataset_types as $dataset_type) {
-        $email = blc_generate_scan_summary_email($dataset_type);
-        if ($email === null) {
+        $summary = blc_generate_scan_summary_email($dataset_type);
+        if ($summary === null) {
+            $results[$dataset_type] = array(
+                'email'   => array('status' => $recipients === array() ? 'skipped' : 'failed'),
+                'webhook' => array('status' => $has_webhook ? 'failed' : 'skipped'),
+            );
             $failed_types[] = $dataset_type;
             continue;
         }
 
-        $mail_sent = wp_mail($recipients, $email['subject'], $email['message']);
-        if ($mail_sent) {
+        $dispatch_results = blc_dispatch_scan_summary_notifications(
+            $dataset_type,
+            $summary,
+            $recipients,
+            array(
+                'context'          => 'test',
+                'webhook_settings' => $webhook_settings,
+            )
+        );
+
+        $results[$dataset_type] = $dispatch_results;
+
+        $has_success = false;
+        foreach ($dispatch_results as $channel_result) {
+            if (isset($channel_result['status']) && $channel_result['status'] === 'sent') {
+                $has_success = true;
+                break;
+            }
+        }
+
+        if ($has_success) {
             $sent_types[] = $dataset_type;
         } else {
             $failed_types[] = $dataset_type;
@@ -860,39 +1164,37 @@ function blc_ajax_send_test_email() {
 
     if ($sent_types === array()) {
         wp_send_json_error(
-            array('message' => __('Échec de l’envoi de l’e-mail de test. Veuillez réessayer.', 'liens-morts-detector-jlg')),
+            array('message' => __('Échec de l’envoi de la notification de test. Veuillez vérifier vos réglages.', 'liens-morts-detector-jlg')),
             BLC_HTTP_SERVER_ERROR
         );
     }
 
-    $build_label_list = static function (array $types) use ($labels) {
-        $names = array();
-        foreach ($types as $type) {
-            $names[] = isset($labels[$type]) ? $labels[$type] : $type;
-        }
+    $message_sections = array();
+    foreach ($results as $dataset_type => $channel_results) {
+        $dataset_label = isset($dataset_labels[$dataset_type]) ? $dataset_labels[$dataset_type] : ucfirst($dataset_type);
+        $message_sections[] = sprintf('%s : %s', $dataset_label, $format_channel_statuses($channel_results));
+    }
 
-        return implode(', ', $names);
-    };
-
-    $message = __('E-mail de test envoyé avec succès.', 'liens-morts-detector-jlg');
-    $partial = false;
-
-    if ($failed_types !== array()) {
-        $partial  = true;
+    $partial = ($failed_types !== array());
+    if ($partial) {
         $message = sprintf(
-            /* translators: 1: List of successful channels, 2: list of failed channels. */
-            __('E-mail de test envoyé pour : %1$s. Échec pour : %2$s.', 'liens-morts-detector-jlg'),
-            $build_label_list($sent_types),
-            $build_label_list($failed_types)
+            __('Notifications de test envoyées avec des avertissements : %s', 'liens-morts-detector-jlg'),
+            implode(' — ', $message_sections)
+        );
+    } else {
+        $message = sprintf(
+            __('Notifications de test envoyées avec succès : %s', 'liens-morts-detector-jlg'),
+            implode(' — ', $message_sections)
         );
     }
 
     wp_send_json_success(
         array(
-            'message'       => $message,
-            'sent'          => $sent_types,
-            'failed'        => $failed_types,
-            'partial'       => $partial,
+            'message' => $message,
+            'sent'    => $sent_types,
+            'failed'  => $failed_types,
+            'partial' => $partial,
+            'results' => $results,
         )
     );
 }

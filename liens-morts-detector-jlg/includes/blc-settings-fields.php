@@ -192,6 +192,36 @@ function blc_register_settings() {
         )
     );
 
+    register_setting(
+        $option_group,
+        'blc_notification_webhook_url',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_notification_webhook_url_option',
+            'default'           => '',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_notification_webhook_channel',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_notification_webhook_channel_option',
+            'default'           => 'disabled',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_notification_message_template',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_notification_message_template_option',
+            'default'           => "{{subject}}\n\n{{message}}",
+        )
+    );
+
     blc_register_settings_sections();
 }
 
@@ -946,7 +976,7 @@ function blc_render_notification_recipients_field() {
     ?>
     <textarea name="blc_notification_recipients" id="blc_notification_recipients" rows="3" class="large-text"><?php echo esc_textarea($notification_recipients); ?></textarea>
     <p class="description"><?php esc_html_e('Indiquez une adresse e-mail par ligne ou séparez-les par des virgules pour recevoir un résumé après chaque analyse.', 'liens-morts-detector-jlg'); ?></p>
-    <p class="description"><?php esc_html_e('Le bouton de test ci-dessus enverra un message à ces destinataires avec la configuration actuelle.', 'liens-morts-detector-jlg'); ?></p>
+    <p class="description"><?php esc_html_e('Le bouton de test ci-dessus utilisera ces destinataires pour l’envoi par e-mail. Laissez vide pour vous reposer uniquement sur les webhooks.', 'liens-morts-detector-jlg'); ?></p>
     <?php
 }
 
@@ -958,21 +988,44 @@ function blc_render_notification_recipients_field() {
 function blc_render_notification_channels_field() {
     $links_enabled  = (bool) get_option('blc_notification_links_enabled', true);
     $images_enabled = (bool) get_option('blc_notification_images_enabled', true);
+    $webhook_channel = blc_normalize_notification_webhook_channel(get_option('blc_notification_webhook_channel', 'disabled'));
+    $webhook_url = (string) get_option('blc_notification_webhook_url', '');
+    $message_template = (string) get_option('blc_notification_message_template', "{{subject}}\n\n{{message}}");
+    $channel_choices = blc_get_notification_webhook_channel_choices();
     ?>
     <fieldset>
         <legend class="screen-reader-text"><span><?php esc_html_e('Canaux de notification', 'liens-morts-detector-jlg'); ?></span></legend>
         <label for="blc_notification_links_enabled" class="blc-toggle">
             <input type="checkbox" name="blc_notification_links_enabled" id="blc_notification_links_enabled" value="1" <?php checked($links_enabled, true); ?>>
-            <?php esc_html_e('Envoyer un e-mail après un scan des liens', 'liens-morts-detector-jlg'); ?>
+            <?php esc_html_e('Envoyer une notification après un scan des liens', 'liens-morts-detector-jlg'); ?>
         </label>
         <br>
         <label for="blc_notification_images_enabled" class="blc-toggle">
             <input type="checkbox" name="blc_notification_images_enabled" id="blc_notification_images_enabled" value="1" <?php checked($images_enabled, true); ?>>
-            <?php esc_html_e('Envoyer un e-mail après un scan des images', 'liens-morts-detector-jlg'); ?>
+            <?php esc_html_e('Envoyer une notification après un scan des images', 'liens-morts-detector-jlg'); ?>
         </label>
-        <p class="description"><?php esc_html_e('Choisissez les analyses qui déclenchent l’envoi d’un résumé par e-mail.', 'liens-morts-detector-jlg'); ?></p>
+        <p class="description"><?php esc_html_e('Choisissez les analyses qui déclenchent l’envoi du résumé (e-mail ou webhook).', 'liens-morts-detector-jlg'); ?></p>
+        <hr>
         <p>
-            <button type="button" class="button" id="blc-send-test-email"><?php esc_html_e('Envoyer un e-mail de test', 'liens-morts-detector-jlg'); ?></button>
+            <label for="blc_notification_webhook_channel"><strong><?php esc_html_e('Canal de webhook', 'liens-morts-detector-jlg'); ?></strong></label><br>
+            <select name="blc_notification_webhook_channel" id="blc_notification_webhook_channel">
+                <?php foreach ($channel_choices as $value => $label) : ?>
+                    <option value="<?php echo esc_attr($value); ?>" <?php selected($webhook_channel, $value); ?>><?php echo esc_html($label); ?></option>
+                <?php endforeach; ?>
+            </select>
+        </p>
+        <p>
+            <label for="blc_notification_webhook_url"><strong><?php esc_html_e('URL du webhook', 'liens-morts-detector-jlg'); ?></strong></label><br>
+            <input type="url" name="blc_notification_webhook_url" id="blc_notification_webhook_url" class="regular-text" value="<?php echo esc_attr($webhook_url); ?>" placeholder="https://example.com/webhook">
+        </p>
+        <p class="description"><?php esc_html_e('Le message est envoyé au format JSON. Les intégrations Slack et Teams utilisent la clé « text » tandis que le format générique inclut plusieurs champs (message, sujet…).', 'liens-morts-detector-jlg'); ?></p>
+        <p>
+            <label for="blc_notification_message_template"><strong><?php esc_html_e('Modèle de message', 'liens-morts-detector-jlg'); ?></strong></label><br>
+            <textarea name="blc_notification_message_template" id="blc_notification_message_template" rows="4" class="large-text code"><?php echo esc_textarea($message_template); ?></textarea>
+        </p>
+        <p class="description"><?php esc_html_e('Placeholders disponibles : {{subject}}, {{message}}, {{dataset_type}}, {{dataset_label}}, {{broken_count}}, {{report_url}}, {{site_name}}.', 'liens-morts-detector-jlg'); ?></p>
+        <p>
+            <button type="button" class="button" id="blc-send-test-email"><?php esc_html_e('Envoyer une notification de test', 'liens-morts-detector-jlg'); ?></button>
             <span class="spinner" id="blc-test-email-spinner" aria-hidden="true"></span>
         </p>
         <div id="blc-test-email-feedback" class="blc-test-email-feedback" aria-live="polite"></div>
@@ -1394,5 +1447,121 @@ function blc_sanitize_notification_recipients_option($value) {
     $raw = is_scalar($value) ? (string) $value : '';
 
     return sanitize_textarea_field($raw);
+}
+
+/**
+ * Retourne la liste des canaux de webhook disponibles.
+ *
+ * @return array<string, string>
+ */
+function blc_get_notification_webhook_channel_choices() {
+    return array(
+        'disabled' => __('Désactivé', 'liens-morts-detector-jlg'),
+        'generic'  => __('Webhook générique (JSON)', 'liens-morts-detector-jlg'),
+        'slack'    => __('Slack', 'liens-morts-detector-jlg'),
+        'teams'    => __('Microsoft Teams', 'liens-morts-detector-jlg'),
+    );
+}
+
+/**
+ * Normalise le canal de webhook sélectionné.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string
+ */
+function blc_normalize_notification_webhook_channel($value) {
+    if (!is_scalar($value)) {
+        $value = 'disabled';
+    }
+
+    $value = sanitize_key((string) $value);
+    $choices = blc_get_notification_webhook_channel_choices();
+
+    if (!isset($choices[$value])) {
+        $value = 'disabled';
+    }
+
+    return $value;
+}
+
+/**
+ * Normalise l'URL de webhook configurée.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string
+ */
+function blc_normalize_notification_webhook_url($value) {
+    if (!is_scalar($value)) {
+        return '';
+    }
+
+    $value = trim((string) $value);
+    if ($value === '') {
+        return '';
+    }
+
+    $value = esc_url_raw($value);
+
+    return (string) $value;
+}
+
+/**
+ * Normalise le modèle de message des webhooks.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string
+ */
+function blc_normalize_notification_message_template($value) {
+    if (!is_scalar($value)) {
+        $value = '';
+    }
+
+    $value = (string) $value;
+    $value = wp_unslash($value);
+    $value = str_replace(array("\r\n", "\r"), "\n", $value);
+    $value = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+/u', '', $value);
+    $value = trim($value);
+
+    if ($value === '') {
+        $value = "{{subject}}\n\n{{message}}";
+    }
+
+    return $value;
+}
+
+/**
+ * Sanitize l'URL du webhook de notification.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string
+ */
+function blc_sanitize_notification_webhook_url_option($value) {
+    return blc_normalize_notification_webhook_url($value);
+}
+
+/**
+ * Sanitize le canal de webhook sélectionné.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string
+ */
+function blc_sanitize_notification_webhook_channel_option($value) {
+    return blc_normalize_notification_webhook_channel($value);
+}
+
+/**
+ * Sanitize le modèle de message des webhooks.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string
+ */
+function blc_sanitize_notification_message_template_option($value) {
+    return blc_normalize_notification_message_template($value);
 }
 

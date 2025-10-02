@@ -603,17 +603,29 @@ function blc_maybe_send_scan_summary($dataset_type) {
         return;
     }
 
+    $summary = blc_generate_scan_summary_email($dataset_type);
+    if ($summary === null) {
+        return;
+    }
+
     $recipients = blc_get_notification_recipients_list();
-    if ($recipients === []) {
+    $webhook_settings = blc_get_notification_webhook_settings();
+    $has_recipients = $recipients !== [];
+    $has_webhook = blc_is_webhook_notification_configured($webhook_settings);
+
+    if (!$has_recipients && !$has_webhook) {
         return;
     }
 
-    $email = blc_generate_scan_summary_email($dataset_type);
-    if ($email === null) {
-        return;
-    }
-
-    wp_mail($recipients, $email['subject'], $email['message']);
+    blc_dispatch_scan_summary_notifications(
+        $dataset_type,
+        $summary,
+        $recipients,
+        array(
+            'context'           => 'scan',
+            'webhook_settings'  => $webhook_settings,
+        )
+    );
 }
 
 /**
@@ -694,6 +706,7 @@ function blc_generate_scan_summary_email($dataset_type) {
     }
 
     if ($dataset_type === 'link') {
+        $dataset_label = __('analyse des liens', 'liens-morts-detector-jlg');
         $subject = sprintf(
             __('[%s] Résumé de la dernière analyse des liens', 'liens-morts-detector-jlg'),
             $site_name
@@ -719,6 +732,7 @@ function blc_generate_scan_summary_email($dataset_type) {
             __('— Liens Morts Detector', 'liens-morts-detector-jlg'),
         ];
     } else {
+        $dataset_label = __('analyse des images', 'liens-morts-detector-jlg');
         $subject = sprintf(
             __('[%s] Résumé de la dernière analyse des images', 'liens-morts-detector-jlg'),
             $site_name
@@ -748,10 +762,13 @@ function blc_generate_scan_summary_email($dataset_type) {
     $message = implode(PHP_EOL, $message_lines);
 
     return [
-        'subject' => $subject,
-        'message' => $message,
-        'dataset_type' => $dataset_type,
-        'broken_count' => $broken_count,
+        'subject'       => $subject,
+        'message'       => $message,
+        'dataset_type'  => $dataset_type,
+        'dataset_label' => $dataset_label,
+        'broken_count'  => $broken_count,
+        'report_url'    => $report_url,
+        'site_name'     => $site_name,
     ];
 }
 
