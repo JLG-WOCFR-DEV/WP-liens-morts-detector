@@ -586,29 +586,9 @@ if (!function_exists('blc_normalize_hour_option')) {
  * @return string[]
  */
 function blc_get_notification_recipients_list() {
-    $raw_recipients = (string) get_option('blc_notification_recipients', '');
-    if ($raw_recipients === '') {
-        return [];
-    }
+    $stored = get_option('blc_notification_recipients', '');
 
-    $candidates = preg_split('/[\r\n,]+/', $raw_recipients);
-    if (!is_array($candidates)) {
-        return [];
-    }
-
-    $recipients = [];
-    foreach ($candidates as $candidate) {
-        $email = sanitize_email(trim((string) $candidate));
-        if ($email === '') {
-            continue;
-        }
-
-        if (is_email($email)) {
-            $recipients[$email] = $email;
-        }
-    }
-
-    return array_values($recipients);
+    return blc_parse_notification_recipients($stored);
 }
 
 /**
@@ -619,26 +599,67 @@ function blc_get_notification_recipients_list() {
  * @return void
  */
 function blc_maybe_send_scan_summary($dataset_type) {
+    if (!blc_is_notification_channel_enabled($dataset_type)) {
+        return;
+    }
+
     $recipients = blc_get_notification_recipients_list();
     if ($recipients === []) {
         return;
     }
 
+    $email = blc_generate_scan_summary_email($dataset_type);
+    if ($email === null) {
+        return;
+    }
+
+    wp_mail($recipients, $email['subject'], $email['message']);
+}
+
+/**
+ * Check if a notification channel is enabled.
+ *
+ * @param string $dataset_type Dataset type ('link' or 'image').
+ *
+ * @return bool
+ */
+function blc_is_notification_channel_enabled($dataset_type) {
+    $dataset_type = (string) $dataset_type;
+
+    if ($dataset_type === 'link') {
+        return (bool) get_option('blc_notification_links_enabled', true);
+    }
+
+    if ($dataset_type === 'image') {
+        return (bool) get_option('blc_notification_images_enabled', true);
+    }
+
+    return false;
+}
+
+/**
+ * Build the scan summary email payload for a dataset type.
+ *
+ * @param string $dataset_type Dataset type ('link' or 'image').
+ *
+ * @return array<string, mixed>|null
+ */
+function blc_generate_scan_summary_email($dataset_type) {
     global $wpdb;
     if (!isset($wpdb) || !is_object($wpdb) || !isset($wpdb->prefix)) {
-        return;
+        return null;
     }
 
     $dataset_type = (string) $dataset_type;
     if ($dataset_type !== 'link' && $dataset_type !== 'image') {
-        return;
+        return null;
     }
 
     $table_name = $wpdb->prefix . 'blc_broken_links';
     $broken_count = 0;
     $row_types = blc_get_dataset_row_types($dataset_type);
     if ($row_types === []) {
-        return;
+        return null;
     }
 
     if (method_exists($wpdb, 'prepare') && method_exists($wpdb, 'get_var')) {
@@ -726,7 +747,44 @@ function blc_maybe_send_scan_summary($dataset_type) {
 
     $message = implode(PHP_EOL, $message_lines);
 
-    wp_mail($recipients, $subject, $message);
+    return [
+        'subject' => $subject,
+        'message' => $message,
+        'dataset_type' => $dataset_type,
+        'broken_count' => $broken_count,
+    ];
+}
+
+/**
+ * Parse a raw recipient string into a list of valid email addresses.
+ *
+ * @param mixed $raw_recipients Raw input value.
+ *
+ * @return string[]
+ */
+function blc_parse_notification_recipients($raw_recipients) {
+    if (!is_scalar($raw_recipients)) {
+        return [];
+    }
+
+    $candidates = preg_split('/[\r\n,;]+/', (string) $raw_recipients);
+    if (!is_array($candidates)) {
+        return [];
+    }
+
+    $recipients = [];
+    foreach ($candidates as $candidate) {
+        $email = sanitize_email(trim((string) $candidate));
+        if ($email === '') {
+            continue;
+        }
+
+        if (is_email($email)) {
+            $recipients[$email] = $email;
+        }
+    }
+
+    return array_values($recipients);
 }
 
 /**
