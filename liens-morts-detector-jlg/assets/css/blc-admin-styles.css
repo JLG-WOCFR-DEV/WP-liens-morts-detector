@@ -404,6 +404,16 @@ body.blc-modal-open {
     overflow: hidden;
 }
 
+.blc-scan-status {
+    margin-top: 8px;
+    font-style: italic;
+}
+
+.blc-scan-spinner {
+    margin-left: 8px;
+    float: none;
+}
+
 @media (max-width: 782px) {
     .blc-modal {
         padding: 0;

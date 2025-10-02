@@ -196,8 +196,82 @@ function blc_enqueue_admin_assets($hook) {
             'bulkGenericModalMessage'  => __('Voulez-vous appliquer cette action aux %s éléments sélectionnés ?', 'liens-morts-detector-jlg'),
             'bulkNoSelectionMessage'   => __('Veuillez sélectionner au moins un lien avant d\'appliquer une action groupée.', 'liens-morts-detector-jlg'),
             'bulkSuccessAnnouncement'  => __('Les actions groupées ont été appliquées avec succès.', 'liens-morts-detector-jlg'),
+            'scanStatusIdle'           => __('Aucune analyse en cours.', 'liens-morts-detector-jlg'),
+            'scanStatusQueued'         => __('Analyse en attente...', 'liens-morts-detector-jlg'),
+            'scanStatusRunning'        => __('Analyse en cours...', 'liens-morts-detector-jlg'),
+            'scanStatusCompleted'      => __('Analyse terminée.', 'liens-morts-detector-jlg'),
+            'scanStatusError'          => __('Analyse interrompue.', 'liens-morts-detector-jlg'),
+            'scanStatusUnknown'        => __('Statut d\'analyse inconnu.', 'liens-morts-detector-jlg'),
+            'scanProgressLabel'        => __('Progression : %s%%', 'liens-morts-detector-jlg'),
+            'scanBatchLabel'           => __('Lots traités : %1$s sur %2$s', 'liens-morts-detector-jlg'),
+            'scanNextBatchLabel'       => __('Prochain lot : #%s', 'liens-morts-detector-jlg'),
+            'scanErrorMessagePrefix'   => __('Erreur : %s', 'liens-morts-detector-jlg'),
+            'scanPollingFailed'        => __('La récupération du statut a échoué. Nouvel essai dans quelques instants.', 'liens-morts-detector-jlg'),
         )
     );
+
+    wp_localize_script(
+        'blc-admin-js',
+        'blcAdminConfig',
+        array(
+            'scanStateEndpoint' => esc_url_raw(rest_url('blc/v1/scan-state')),
+            'restNonce'         => wp_create_nonce('wp_rest'),
+            'pollInterval'      => 5000,
+        )
+    );
+}
+
+add_action('rest_api_init', 'blc_register_scan_state_routes');
+
+/**
+ * Register REST API routes used by the admin interface.
+ *
+ * @return void
+ */
+function blc_register_scan_state_routes() {
+    register_rest_route(
+        'blc/v1',
+        '/scan-state',
+        array(
+            'methods'             => \WP_REST_Server::READABLE,
+            'callback'            => 'blc_rest_get_scan_state',
+            'permission_callback' => static function () {
+                return current_user_can('manage_options');
+            },
+            'args'                => array(
+                'type' => array(
+                    'description' => __('Type d\'analyse à interroger.', 'liens-morts-detector-jlg'),
+                    'type'        => 'string',
+                    'enum'        => array('link', 'image', 'all'),
+                    'default'     => 'link',
+                ),
+            ),
+        )
+    );
+}
+
+/**
+ * Provide the current scan state for the requested scan type.
+ *
+ * @param \WP_REST_Request $request REST request instance.
+ * @return \WP_REST_Response|\WP_Error
+ */
+function blc_rest_get_scan_state(\WP_REST_Request $request) {
+    $type_param = $request->get_param('type');
+
+    if ($type_param === 'all') {
+        return rest_ensure_response(array(
+            'link'  => blc_get_scan_state('link'),
+            'image' => blc_get_scan_state('image'),
+        ));
+    }
+
+    $normalized = blc_normalize_scan_state_type($type_param);
+
+    return rest_ensure_response(array(
+        'type'  => $normalized,
+        'state' => blc_get_scan_state($normalized),
+    ));
 }
 
 /**

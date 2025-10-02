@@ -293,7 +293,7 @@ function blc_dashboard_links_page() {
                 <?php endif; ?>
             </div>
         </div>
-        <form method="post" style="margin-bottom: 20px;">
+        <form method="post" class="blc-manual-link-scan-form" data-scan-type="link" style="margin-bottom: 20px;">
             <?php wp_nonce_field('blc_manual_check_nonce'); ?>
             <input type="hidden" name="blc_manual_check" value="1">
             <p>
@@ -315,7 +315,8 @@ function blc_dashboard_links_page() {
                 </label><br>
                 <small><?php esc_html_e('Si non cochée, l\'analyse ne portera que sur les articles modifiés depuis la dernière exécution.', 'liens-morts-detector-jlg'); ?></small>
             </p>
-            <input type="submit" class="button button-primary" value="<?php echo esc_attr__('Lancer la vérification des liens', 'liens-morts-detector-jlg'); ?>">
+            <input type="submit" class="button button-primary blc-scan-trigger" value="<?php echo esc_attr__('Lancer la vérification des liens', 'liens-morts-detector-jlg'); ?>">
+            <div class="blc-scan-status" data-scan-type="link" aria-live="polite"></div>
         </form>
         <form method="post" class="blc-reschedule-cron-form" style="margin-bottom: 20px;">
             <?php wp_nonce_field('blc_reschedule_cron_nonce'); ?>
@@ -517,11 +518,12 @@ function blc_dashboard_images_page() {
                  <span class="blc-stat-label"><?php esc_html_e('Dernière analyse d\'images', 'liens-morts-detector-jlg'); ?></span>
              </div>
         </div>
-        <form method="post" style="margin-bottom: 20px;">
+        <form method="post" class="blc-manual-image-scan-form" data-scan-type="image" style="margin-bottom: 20px;">
             <?php wp_nonce_field('blc_manual_image_check_nonce'); ?>
             <input type="hidden" name="blc_manual_image_check" value="1">
             <p><?php esc_html_e("L'analyse des images peut être longue et consommer des ressources. Elle s'exécute en arrière-plan sur l'ensemble du site.", 'liens-morts-detector-jlg'); ?></p>
-            <input type="submit" class="button button-primary" value="<?php echo esc_attr__("Lancer l'analyse des images", 'liens-morts-detector-jlg'); ?>">
+            <input type="submit" class="button button-primary blc-scan-trigger" value="<?php echo esc_attr__("Lancer l'analyse des images", 'liens-morts-detector-jlg'); ?>">
+            <div class="blc-scan-status" data-scan-type="image" aria-live="polite"></div>
         </form>
         <?php if ($broken_images_count === 0): ?>
              <p><?php esc_html_e('✅ Aucune image cassée trouvée. Bravo !', 'liens-morts-detector-jlg'); ?></p>

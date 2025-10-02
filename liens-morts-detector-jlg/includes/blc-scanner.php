@@ -3,6 +3,7 @@
 if (!defined('ABSPATH')) exit;
 
 
+require_once __DIR__ . '/blc-scan-state.php';
 require_once __DIR__ . '/Scanner/RemoteRequestClient.php';
 require_once __DIR__ . '/Scanner/ScanQueue.php';
 require_once __DIR__ . '/Scanner/LinkScanController.php';
@@ -32,19 +33,22 @@ if (!class_exists('ImageScanQueue')) {
             $lock_token = '';
             if ($batch === 0) {
                 $lock_token = blc_acquire_image_scan_lock($lock_timeout);
-                if ($lock_token === '') {
-                    if ($debug_mode) { error_log('Analyse d\'images déjà en cours, reprogrammation du lot initial.'); }
-                    $retry_delay = max(60, $batch_delay_s);
-                    $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array(0, true));
-                    if (false === $scheduled) {
-                        error_log('BLC: Failed to schedule image batch #0 while waiting for lock.');
-                        do_action('blc_check_image_batch_schedule_failed', 0, true, 'initial_lock_retry');
-                    }
-                    return;
+            if ($lock_token === '') {
+                if ($debug_mode) { error_log('Analyse d\'images déjà en cours, reprogrammation du lot initial.'); }
+                $retry_delay = max(60, $batch_delay_s);
+                $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array(0, true));
+                if (false === $scheduled) {
+                    error_log('BLC: Failed to schedule image batch #0 while waiting for lock.');
+                    do_action('blc_check_image_batch_schedule_failed', 0, true, 'initial_lock_retry');
                 }
-            } else {
-                $stored_token = get_option('blc_image_scan_lock_token', '');
-                if (!is_string($stored_token)) {
+                \blc_mark_scan_state_queued('image', $batch, 'lock_unavailable', [
+                    'is_full_scan' => (bool) $is_full_scan,
+                ]);
+                return;
+            }
+        } else {
+            $stored_token = get_option('blc_image_scan_lock_token', '');
+            if (!is_string($stored_token)) {
                     $stored_token = '';
                 }
                 $lock_state = blc_get_image_scan_lock_state();
@@ -61,6 +65,9 @@ if (!class_exists('ImageScanQueue')) {
                             error_log(sprintf('BLC: Failed to reschedule image batch #%d due to missing lock token.', $batch));
                             do_action('blc_check_image_batch_schedule_failed', $batch, $is_full_scan, 'missing_lock_token');
                         }
+                        \blc_mark_scan_state_queued('image', $batch, 'lock_unavailable', [
+                            'is_full_scan' => (bool) $is_full_scan,
+                        ]);
                         return;
                     }
                 } elseif (!$lock_active) {
@@ -73,11 +80,17 @@ if (!class_exists('ImageScanQueue')) {
                             error_log(sprintf('BLC: Failed to reschedule image batch #%d after lock expiration.', $batch));
                             do_action('blc_check_image_batch_schedule_failed', $batch, $is_full_scan, 'expired_lock');
                         }
+                        \blc_mark_scan_state_queued('image', $batch, 'lock_expired', [
+                            'is_full_scan' => (bool) $is_full_scan,
+                        ]);
                         return;
                     }
                 } elseif ($active_token !== $stored_token) {
                     if ($lock_active) {
                         if ($debug_mode) { error_log('Analyse d\'images ignorée : un autre processus détient le verrou.'); }
+                        \blc_mark_scan_state_queued('image', $batch, 'lock_mismatch', [
+                            'is_full_scan' => (bool) $is_full_scan,
+                        ]);
                         return;
                     }
 
@@ -90,6 +103,9 @@ if (!class_exists('ImageScanQueue')) {
                             error_log(sprintf('BLC: Failed to reschedule image batch #%d after failing to refresh lock.', $batch));
                             do_action('blc_check_image_batch_schedule_failed', $batch, $is_full_scan, 'lock_refresh');
                         }
+                        \blc_mark_scan_state_queued('image', $batch, 'lock_refresh', [
+                            'is_full_scan' => (bool) $is_full_scan,
+                        ]);
                         return;
                     }
                 } else {
@@ -97,6 +113,10 @@ if (!class_exists('ImageScanQueue')) {
                     blc_refresh_image_scan_lock($lock_token, $lock_timeout);
                 }
             }
+
+            \blc_mark_scan_state_running('image', $batch, [
+                'is_full_scan' => (bool) $is_full_scan,
+            ]);
 
             $batch_size = 20;
             $public_post_types = get_post_types(['public' => true], 'names');
@@ -119,6 +139,31 @@ if (!class_exists('ImageScanQueue')) {
             ];
             $query = new WP_Query($args);
             $posts = $query->posts;
+
+            $total_batches = (int) $query->max_num_pages;
+            if ($total_batches < 0) {
+                $total_batches = 0;
+            }
+            if ($total_batches === 0) {
+                $total_batches = ($query->found_posts > 0) ? 1 : 0;
+            }
+
+            $processed_batches = $batch;
+            if ($processed_batches < 0) {
+                $processed_batches = 0;
+            }
+            if ($total_batches > 0 && $processed_batches > $total_batches) {
+                $processed_batches = $total_batches;
+            }
+
+            $next_batch_index = ($query->max_num_pages > ($batch + 1)) ? ($batch + 1) : null;
+
+            \blc_mark_scan_state_running('image', $batch, [
+                'total_batches'     => $total_batches,
+                'processed_batches' => $processed_batches,
+                'next_batch'        => $next_batch_index,
+                'is_full_scan'      => (bool) $is_full_scan,
+            ]);
             $checked_local_paths = [];
 
             $post_ids_in_batch = array_map('intval', wp_list_pluck($posts, 'ID'));
@@ -528,12 +573,32 @@ if (!class_exists('ImageScanQueue')) {
                             'blc_image_schedule_failed',
                             sprintf('Failed to schedule next image batch #%d.', $batch + 1)
                         );
+                    } else {
+                        $processed_batches = $batch + 1;
+                        if ($processed_batches < 0) {
+                            $processed_batches = 0;
+                        }
+                        if ($total_batches > 0 && $processed_batches > $total_batches) {
+                            $processed_batches = $total_batches;
+                        }
+
+                        \blc_mark_scan_state_running('image', $batch, [
+                            'processed_batches' => $processed_batches,
+                            'total_batches'     => $total_batches,
+                            'next_batch'        => $batch + 1,
+                            'is_full_scan'      => (bool) $is_full_scan,
+                        ]);
                     }
                 } else {
                     if ($debug_mode) { error_log("--- Scan IMAGES terminé ---"); }
                     update_option('blc_last_image_check_time', current_time('timestamp', true));
                     blc_maybe_send_scan_summary('image');
                     blc_release_image_scan_lock($lock_token);
+                    \blc_mark_scan_state_completed('image', $batch, [
+                        'processed_batches' => $total_batches,
+                        'total_batches'     => $total_batches,
+                        'is_full_scan'      => (bool) $is_full_scan,
+                    ]);
                 }
             } finally {
                 wp_reset_postdata();
@@ -1781,11 +1846,29 @@ function blc_restore_dataset_refresh($table_name, $types, $scan_run_id, ?array $
  */
 
 function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_window = false) {
+    $batch = (int) $batch;
+    $is_full_scan = (bool) $is_full_scan;
+    $bypass_rest_window = (bool) $bypass_rest_window;
+
+    blc_mark_scan_state_running('link', $batch, [
+        'is_full_scan'       => $is_full_scan,
+        'bypass_rest_window' => $bypass_rest_window,
+    ]);
+
     $remote_client = blc_make_remote_request_client();
     $queue = blc_make_scan_queue($remote_client);
     $controller = blc_make_link_scan_controller($queue);
 
-    return $controller->runBatch((int) $batch, (bool) $is_full_scan, (bool) $bypass_rest_window);
+    $result = $controller->runBatch($batch, $is_full_scan, $bypass_rest_window);
+
+    if (is_wp_error($result)) {
+        blc_mark_scan_state_error('link', $batch, $result->get_error_code(), $result->get_error_message(), [
+            'is_full_scan'       => $is_full_scan,
+            'bypass_rest_window' => $bypass_rest_window,
+        ]);
+    }
+
+    return $result;
 }
 
 
@@ -1797,9 +1880,24 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
  */
 
 function blc_perform_image_check($batch = 0, $is_full_scan = true) {
+    $batch = (int) $batch;
+    $is_full_scan = (bool) $is_full_scan;
+
+    blc_mark_scan_state_running('image', $batch, [
+        'is_full_scan' => $is_full_scan,
+    ]);
+
     $queue = blc_make_image_scan_queue();
     $controller = blc_make_image_scan_controller($queue);
 
-    return $controller->run($batch, $is_full_scan);
+    $result = $controller->run($batch, $is_full_scan);
+
+    if (is_wp_error($result)) {
+        blc_mark_scan_state_error('image', $batch, $result->get_error_code(), $result->get_error_message(), [
+            'is_full_scan' => $is_full_scan,
+        ]);
+    }
+
+    return $result;
 }
 

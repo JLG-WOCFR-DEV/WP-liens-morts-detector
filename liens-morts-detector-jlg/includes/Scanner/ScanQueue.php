@@ -55,6 +55,10 @@ class ScanQueue {
                         error_log(sprintf('BLC: Failed to reschedule link batch #%d while waiting for lock.', $batch));
                         do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'lock_unavailable');
                     }
+                    \blc_mark_scan_state_queued('link', $batch, 'lock_unavailable', [
+                        'is_full_scan'       => (bool) $is_full_scan,
+                        'bypass_rest_window' => (bool) $bypass_rest_window,
+                    ]);
                     return;
                 }
 
@@ -63,6 +67,11 @@ class ScanQueue {
                     __('Une analyse des liens est déjà en cours. Veuillez réessayer plus tard.', 'liens-morts-detector-jlg')
                 );
             }
+
+            \blc_mark_scan_state_running('link', $batch, [
+                'is_full_scan'       => (bool) $is_full_scan,
+                'bypass_rest_window' => (bool) $bypass_rest_window,
+            ]);
 
             $timeout_constraints = blc_get_request_timeout_constraints();
             $head_timeout_limits = $timeout_constraints['head'];
@@ -245,6 +254,10 @@ class ScanQueue {
                     error_log(sprintf('BLC: Failed to schedule link batch #%d during rest window.', $batch));
                     do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'rest_window');
                 }
+                \blc_mark_scan_state_queued('link', $batch, 'rest_window', [
+                    'is_full_scan'       => (bool) $is_full_scan,
+                    'bypass_rest_window' => (bool) $bypass_rest_window,
+                ]);
                 if ($lock_token !== '') {
                     blc_release_link_scan_lock($lock_token);
                     $lock_token = '';
@@ -272,6 +285,10 @@ class ScanQueue {
                                 error_log(sprintf('BLC: Failed to schedule link batch #%d after high load.', $batch));
                                 do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'server_load');
                             }
+                            \blc_mark_scan_state_queued('link', $batch, 'server_load', [
+                                'is_full_scan'       => (bool) $is_full_scan,
+                                'bypass_rest_window' => (bool) $bypass_rest_window,
+                            ]);
                             if ($lock_token !== '') {
                                 blc_release_link_scan_lock($lock_token);
                                 $lock_token = '';
@@ -341,6 +358,32 @@ class ScanQueue {
 
             $wp_query = new WP_Query($args);
             $posts = $wp_query->posts;
+
+            $total_batches = (int) $wp_query->max_num_pages;
+            if ($total_batches < 0) {
+                $total_batches = 0;
+            }
+            if ($total_batches === 0) {
+                $total_batches = ($wp_query->found_posts > 0) ? 1 : 0;
+            }
+
+            $processed_batches = $batch;
+            if ($processed_batches < 0) {
+                $processed_batches = 0;
+            }
+            if ($total_batches > 0 && $processed_batches > $total_batches) {
+                $processed_batches = $total_batches;
+            }
+
+            $next_batch_index = ($wp_query->max_num_pages > ($batch + 1)) ? ($batch + 1) : null;
+
+            \blc_mark_scan_state_running('link', $batch, [
+                'total_batches'      => $total_batches,
+                'processed_batches'  => $processed_batches,
+                'next_batch'         => $next_batch_index,
+                'is_full_scan'       => (bool) $is_full_scan,
+                'bypass_rest_window' => (bool) $bypass_rest_window,
+            ]);
 
             $cleanup_size = 0;
             if (method_exists($wpdb, 'get_var')) {
@@ -1465,6 +1508,20 @@ class ScanQueue {
 
                 if ($temporary_retry_scheduled) {
                     if ($debug_mode) { error_log('Scan reporté : statut HTTP temporaire détecté, nouveau passage planifié.'); }
+                    $processed_batches = $batch;
+                    if ($processed_batches < 0) {
+                        $processed_batches = 0;
+                    }
+                    if ($total_batches > 0 && $processed_batches > $total_batches) {
+                        $processed_batches = $total_batches;
+                    }
+
+                    \blc_mark_scan_state_queued('link', $batch, 'temporary_retry', [
+                        'processed_batches'  => $processed_batches,
+                        'total_batches'      => $total_batches,
+                        'is_full_scan'       => (bool) $is_full_scan,
+                        'bypass_rest_window' => (bool) $bypass_rest_window,
+                    ]);
                     return;
                 }
 
@@ -1473,11 +1530,33 @@ class ScanQueue {
                     if (false === $scheduled) {
                         error_log(sprintf('BLC: Failed to schedule next link batch #%d.', $batch + 1));
                         do_action('blc_check_batch_schedule_failed', $batch + 1, $is_full_scan, $bypass_rest_window, 'next_batch');
+                    } else {
+                        $processed_batches = $batch + 1;
+                        if ($processed_batches < 0) {
+                            $processed_batches = 0;
+                        }
+                        if ($total_batches > 0 && $processed_batches > $total_batches) {
+                            $processed_batches = $total_batches;
+                        }
+
+                        \blc_mark_scan_state_running('link', $batch, [
+                            'processed_batches'  => $processed_batches,
+                            'total_batches'      => $total_batches,
+                            'next_batch'         => $batch + 1,
+                            'is_full_scan'       => (bool) $is_full_scan,
+                            'bypass_rest_window' => (bool) $bypass_rest_window,
+                        ]);
                     }
                 } else {
                     update_option('blc_last_check_time', current_time('timestamp', true));
                     blc_clear_scan_cache($scan_cache_context);
                     blc_maybe_send_scan_summary('link');
+                    \blc_mark_scan_state_completed('link', $batch, [
+                        'processed_batches'  => $total_batches,
+                        'total_batches'      => $total_batches,
+                        'is_full_scan'       => (bool) $is_full_scan,
+                        'bypass_rest_window' => (bool) $bypass_rest_window,
+                    ]);
                 }
 
                 if ($debug_mode) { error_log("--- Fin du scan LIENS (Lot #$batch) ---"); }

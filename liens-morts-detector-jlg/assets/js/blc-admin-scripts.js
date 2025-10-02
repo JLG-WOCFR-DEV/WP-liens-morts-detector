@@ -874,4 +874,300 @@ jQuery(document).ready(function($) {
             }
         });
     });
+
+    (function initScanStatePolling() {
+        var config = window.blcAdminConfig || {};
+        var restUrl = typeof config.scanStateEndpoint === 'string' ? config.scanStateEndpoint : '';
+        var $forms = $('.blc-manual-link-scan-form, .blc-manual-image-scan-form');
+
+        if (!$forms.length || !restUrl) {
+            return;
+        }
+
+        var pollInterval = parseInt(config.pollInterval, 10);
+        if (!isFinite(pollInterval) || pollInterval <= 0) {
+            pollInterval = 5000;
+        }
+
+        var timers = {};
+        var lastStatuses = {};
+        var pendingReload = {};
+        var formsByType = {};
+
+        function getFormsForType(type) {
+            var normalized = type || 'link';
+            return formsByType[normalized];
+        }
+
+        function ensureStatusElement($form, type) {
+            var $status = $form.find('.blc-scan-status');
+            if (!$status.length) {
+                $status = $('<div>', {
+                    class: 'blc-scan-status',
+                    'data-scan-type': type,
+                    'aria-live': 'polite'
+                });
+                $form.append($status);
+            }
+
+            return $status;
+        }
+
+        function getSubmitButton($form) {
+            var $button = $form.find('.blc-scan-trigger');
+            if (!$button.length) {
+                $button = $form.find('button[type="submit"], input[type="submit"]');
+            }
+            return $button;
+        }
+
+        function setButtonDisabled(type, isDisabled) {
+            var $set = getFormsForType(type);
+            if (!$set || !$set.length) {
+                return;
+            }
+
+            $set.each(function() {
+                var $form = $(this);
+                var $button = getSubmitButton($form);
+                if ($button.length) {
+                    $button.prop('disabled', !!isDisabled);
+                }
+            });
+        }
+
+        function showSpinner(type) {
+            var $set = getFormsForType(type);
+            if (!$set || !$set.length) {
+                return;
+            }
+
+            $set.each(function() {
+                var $form = $(this);
+                var $button = getSubmitButton($form);
+                if (!$button.length) {
+                    return;
+                }
+
+                var $spinner = $form.find('.blc-scan-spinner');
+                if (!$spinner.length) {
+                    $spinner = $('<span>', {
+                        class: 'spinner is-active blc-scan-spinner',
+                        'aria-hidden': 'true'
+                    });
+                    $spinner.insertAfter($button.last());
+                } else {
+                    $spinner.addClass('is-active');
+                }
+            });
+        }
+
+        function hideSpinner(type) {
+            var $set = getFormsForType(type);
+            if (!$set || !$set.length) {
+                return;
+            }
+
+            $set.find('.blc-scan-spinner').remove();
+        }
+
+        function updateStatusMessage(type, message) {
+            var $set = getFormsForType(type);
+            if (!$set || !$set.length) {
+                return;
+            }
+
+            $set.each(function() {
+                var $form = $(this);
+                var $status = ensureStatusElement($form, type);
+                $status.text(message || '');
+            });
+        }
+
+        function formatScanStatus(state) {
+            if (!state || typeof state !== 'object') {
+                return messages.scanStatusIdle || '';
+            }
+
+            var statusKey = 'scanStatusUnknown';
+            switch (state.status) {
+                case 'idle':
+                    statusKey = 'scanStatusIdle';
+                    break;
+                case 'queued':
+                    statusKey = 'scanStatusQueued';
+                    break;
+                case 'running':
+                    statusKey = 'scanStatusRunning';
+                    break;
+                case 'completed':
+                    statusKey = 'scanStatusCompleted';
+                    break;
+                case 'error':
+                    statusKey = 'scanStatusError';
+                    break;
+            }
+
+            var parts = [];
+            var statusText = messages[statusKey] || state.status || '';
+            if (statusText) {
+                parts.push(statusText);
+            }
+
+            if (typeof state.progress === 'number' && !isNaN(state.progress)) {
+                var progressValue = Math.max(0, Math.min(100, Math.round(state.progress)));
+                var progressTemplate = messages.scanProgressLabel || 'Progression : %s%';
+                var progressText = progressTemplate.replace('%1$s', progressValue).replace('%s', progressValue);
+                if (progressText.indexOf('%%') !== -1) {
+                    progressText = progressText.replace('%%', '%');
+                }
+                parts.push(progressText);
+            }
+
+            if (typeof state.processed_batches === 'number' && typeof state.total_batches === 'number' && state.total_batches > 0) {
+                var processed = Math.max(0, Math.min(state.total_batches, parseInt(state.processed_batches, 10)));
+                var total = Math.max(0, parseInt(state.total_batches, 10));
+                var batchTemplate = messages.scanBatchLabel || 'Lots traités : %1$s / %2$s';
+                var batchText = batchTemplate
+                    .replace('%1$d', processed)
+                    .replace('%1$s', processed)
+                    .replace('%2$d', total)
+                    .replace('%2$s', total);
+                parts.push(batchText);
+            }
+
+            if (state.next_batch !== null && typeof state.next_batch !== 'undefined') {
+                var nextTemplate = messages.scanNextBatchLabel || 'Prochain lot : #%s';
+                var nextValue = parseInt(state.next_batch, 10);
+                var nextText = nextTemplate.replace('%1$s', nextValue).replace('%1$d', nextValue).replace('%s', nextValue).replace('%d', nextValue);
+                parts.push(nextText);
+            }
+
+            if (state.status === 'error' && state.error_message) {
+                var errorTemplate = messages.scanErrorMessagePrefix || messages.errorPrefix || '';
+                if (errorTemplate.indexOf('%s') !== -1 || errorTemplate.indexOf('%1$s') !== -1) {
+                    var errorText = errorTemplate.replace('%1$s', state.error_message).replace('%s', state.error_message);
+                    parts.push(errorText);
+                } else {
+                    parts.push(errorTemplate + state.error_message);
+                }
+            }
+
+            return parts.join(' · ');
+        }
+
+        function buildRequestUrl(type) {
+            var url = restUrl;
+            if (!type || type === 'all') {
+                return url;
+            }
+
+            var separator = url.indexOf('?') === -1 ? '?' : '&';
+            return url + separator + $.param({ type: type });
+        }
+
+        function fetchState(type) {
+            return $.ajax({
+                url: buildRequestUrl(type),
+                method: 'GET',
+                dataType: 'json',
+                beforeSend: function(xhr) {
+                    if (config.restNonce) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.restNonce);
+                    }
+                }
+            });
+        }
+
+        function stopPolling(type) {
+            if (timers[type]) {
+                window.clearInterval(timers[type]);
+                delete timers[type];
+            }
+        }
+
+        function handleState(type, state) {
+            var normalized = state && typeof state === 'object' ? state : {};
+            var status = normalized.status || 'idle';
+            var message = formatScanStatus(normalized);
+            updateStatusMessage(type, message);
+
+            if (status === 'running' || status === 'queued') {
+                setButtonDisabled(type, true);
+                showSpinner(type);
+                schedulePolling(type);
+            } else {
+                setButtonDisabled(type, false);
+                hideSpinner(type);
+                stopPolling(type);
+            }
+
+            if ((status === 'completed') && (lastStatuses[type] === 'running' || lastStatuses[type] === 'queued')) {
+                if (!pendingReload[type]) {
+                    pendingReload[type] = true;
+                    window.setTimeout(function() {
+                        window.location.reload();
+                    }, 1500);
+                }
+            }
+
+            if (status === 'error' && normalized.error_message) {
+                accessibility.speak(normalized.error_message, 'assertive');
+            }
+
+            lastStatuses[type] = status;
+        }
+
+        function refreshState(type) {
+            fetchState(type).done(function(response) {
+                var state = response;
+                if (response && typeof response === 'object' && response.state) {
+                    state = response.state;
+                }
+                handleState(type, state);
+            }).fail(function() {
+                updateStatusMessage(type, messages.scanPollingFailed || '');
+            });
+        }
+
+        function schedulePolling(type) {
+            if (timers[type]) {
+                return;
+            }
+
+            timers[type] = window.setInterval(function() {
+                refreshState(type);
+            }, pollInterval);
+        }
+
+        var handledTypes = {};
+
+        $forms.each(function() {
+            var $form = $(this);
+            var type = $form.data('scanType');
+            if (!type) {
+                type = $form.hasClass('blc-manual-image-scan-form') ? 'image' : 'link';
+            }
+
+            if (!formsByType[type]) {
+                formsByType[type] = $form;
+            } else {
+                formsByType[type] = formsByType[type].add($form);
+            }
+
+            $form.on('submit', function() {
+                window.setTimeout(function() {
+                    setButtonDisabled(type, true);
+                    showSpinner(type);
+                    updateStatusMessage(type, messages.scanStatusQueued || '');
+                }, 0);
+            });
+
+            if (!handledTypes[type]) {
+                handledTypes[type] = true;
+                refreshState(type);
+                schedulePolling(type);
+            }
+        });
+    })();
 });
