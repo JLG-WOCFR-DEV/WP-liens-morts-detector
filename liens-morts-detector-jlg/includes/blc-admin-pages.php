@@ -158,6 +158,94 @@ function blc_dashboard_links_page() {
         }
     }
 
+    if (isset($_POST['blc_reschedule_cron'])) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- vérifié via wp_nonce_field.
+        check_admin_referer('blc_reschedule_cron_nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('Permissions insuffisantes pour reprogrammer la vérification automatique.', 'liens-morts-detector-jlg'));
+        }
+
+        $reschedule_result = blc_reset_link_check_schedule(
+            array(
+                'context' => 'dashboard',
+            )
+        );
+
+        if (!$reschedule_result['success']) {
+            $error_message = esc_html__(
+                "La reprogrammation de l'analyse automatique a échoué. Vérifiez la configuration de WP-Cron.",
+                'liens-morts-detector-jlg'
+            );
+
+            printf(
+                '<div class="notice notice-error is-dismissible"><p>%s</p></div>',
+                $error_message
+            );
+
+            if ($reschedule_result['restore_attempted'] && !$reschedule_result['restored']) {
+                printf(
+                    '<div class="notice notice-warning is-dismissible"><p>%s</p></div>',
+                    esc_html__(
+                        "La planification précédente n'a pas pu être restaurée. Une intervention manuelle est nécessaire.",
+                        'liens-morts-detector-jlg'
+                    )
+                );
+            }
+        } else {
+            printf(
+                '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
+                esc_html__("La vérification automatique a été reprogrammée avec succès.", 'liens-morts-detector-jlg')
+            );
+        }
+    }
+
+    $next_scheduled_timestamp = wp_next_scheduled('blc_check_links');
+    $next_schedule_slug       = wp_get_schedule('blc_check_links');
+    $next_scheduled_display   = $next_scheduled_timestamp
+        ? wp_date('j M Y H:i', $next_scheduled_timestamp)
+        : __('Non planifiée', 'liens-morts-detector-jlg');
+
+    $schedule_labels = array(
+        'blc_hourly'       => __('Toutes les heures', 'liens-morts-detector-jlg'),
+        'blc_six_hours'    => __('Toutes les 6 heures', 'liens-morts-detector-jlg'),
+        'blc_twelve_hours' => __('Toutes les 12 heures', 'liens-morts-detector-jlg'),
+        'daily'            => __('Quotidienne', 'liens-morts-detector-jlg'),
+        'weekly'           => __('Hebdomadaire', 'liens-morts-detector-jlg'),
+        'monthly'          => __('Mensuelle', 'liens-morts-detector-jlg'),
+    );
+
+    $schedule_note = '';
+
+    if ('blc_custom_interval' === $next_schedule_slug) {
+        $custom_hours = blc_get_custom_frequency_hours();
+        $custom_time  = blc_get_custom_frequency_time();
+        $schedule_note = sprintf(
+            /* translators: 1: number of hours, 2: time of day. */
+            __('Toutes les %1$d heures (démarrage à %2$s)', 'liens-morts-detector-jlg'),
+            $custom_hours,
+            $custom_time
+        );
+    } elseif ($next_schedule_slug && isset($schedule_labels[$next_schedule_slug])) {
+        $schedule_note = $schedule_labels[$next_schedule_slug];
+    }
+
+    $timezone_label = blc_get_timezone_label();
+
+    if ('' !== $schedule_note && '' !== $timezone_label) {
+        $schedule_note = sprintf(
+            /* translators: 1: recurrence label, 2: timezone label. */
+            __('%1$s — Fuseau : %2$s', 'liens-morts-detector-jlg'),
+            $schedule_note,
+            $timezone_label
+        );
+    } elseif ('' === $schedule_note && '' !== $timezone_label) {
+        $schedule_note = sprintf(
+            /* translators: %s: timezone label. */
+            __('Fuseau : %s', 'liens-morts-detector-jlg'),
+            $timezone_label
+        );
+    }
+
     // Préparation des données et des statistiques pour les liens
     global $wpdb;
     $table_name = $wpdb->prefix . 'blc_broken_links';
@@ -197,6 +285,13 @@ function blc_dashboard_links_page() {
                 <span class="blc-stat-value"><?php echo esc_html($last_check_display); ?></span>
                 <span class="blc-stat-label"><?php esc_html_e('Dernière analyse', 'liens-morts-detector-jlg'); ?></span>
             </div>
+            <div class="blc-stat">
+                <span class="blc-stat-value"><?php echo esc_html($next_scheduled_display); ?></span>
+                <span class="blc-stat-label"><?php esc_html_e('Prochaine analyse automatique', 'liens-morts-detector-jlg'); ?></span>
+                <?php if ('' !== $schedule_note) : ?>
+                    <span class="blc-stat-note"><?php echo esc_html($schedule_note); ?></span>
+                <?php endif; ?>
+            </div>
         </div>
         <form method="post" style="margin-bottom: 20px;">
             <?php wp_nonce_field('blc_manual_check_nonce'); ?>
@@ -221,6 +316,16 @@ function blc_dashboard_links_page() {
                 <small><?php esc_html_e('Si non cochée, l\'analyse ne portera que sur les articles modifiés depuis la dernière exécution.', 'liens-morts-detector-jlg'); ?></small>
             </p>
             <input type="submit" class="button button-primary" value="<?php echo esc_attr__('Lancer la vérification des liens', 'liens-morts-detector-jlg'); ?>">
+        </form>
+        <form method="post" class="blc-reschedule-cron-form" style="margin-bottom: 20px;">
+            <?php wp_nonce_field('blc_reschedule_cron_nonce'); ?>
+            <input type="hidden" name="blc_reschedule_cron" value="1">
+            <p>
+                <button type="submit" class="button button-secondary">
+                    <?php esc_html_e('Reprogrammer la vérification automatique', 'liens-morts-detector-jlg'); ?>
+                </button>
+                <span class="description"><?php esc_html_e('Force la création d\'un nouvel événement selon la cadence configurée.', 'liens-morts-detector-jlg'); ?></span>
+            </p>
         </form>
         <?php if ($broken_links_count === 0): ?>
              <p><?php esc_html_e('✅ Aucun lien mort trouvé. Bravo !', 'liens-morts-detector-jlg'); ?></p>

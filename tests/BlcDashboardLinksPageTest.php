@@ -50,6 +50,10 @@ class BlcDashboardLinksPageTest extends TestCase
             define('ARRAY_A', 'ARRAY_A');
         }
 
+        if (!defined('HOUR_IN_SECONDS')) {
+            define('HOUR_IN_SECONDS', 3600);
+        }
+
         if (!defined('DAY_IN_SECONDS')) {
             define('DAY_IN_SECONDS', 86400);
         }
@@ -65,7 +69,10 @@ class BlcDashboardLinksPageTest extends TestCase
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/class-blc-links-list-table.php';
 
         $this->options = [
-            'blc_last_check_time' => 0,
+            'blc_last_check_time'        => 0,
+            'blc_frequency'              => 'weekly',
+            'blc_frequency_custom_hours' => 24,
+            'blc_frequency_custom_time'  => '02:00',
         ];
 
         $this->previous_wpdb = $GLOBALS['wpdb'] ?? null;
@@ -167,7 +174,46 @@ class BlcDashboardLinksPageTest extends TestCase
 
             return 'admin.php?' . http_build_query($args);
         });
+        Functions\when('wp_timezone_string')->justReturn('');
+        Functions\when('wp_timezone')->alias(static function () {
+            return new \DateTimeZone('UTC');
+        });
+        Functions\when('wp_date')->alias(static function ($format, $timestamp = null, $tz = null) {
+            $timestamp = $timestamp ?? time();
+            $timezone = $tz instanceof \DateTimeZone ? $tz : new \DateTimeZone('UTC');
+
+            $date = new \DateTime('@' . $timestamp);
+            $date->setTimezone($timezone);
+
+            return $date->format($format);
+        });
+        Functions\when('wp_next_scheduled')->alias(static function ($hook) {
+            if ('blc_check_links' === $hook) {
+                return 1700003600;
+            }
+
+            return false;
+        });
+        Functions\when('wp_get_schedule')->alias(static function ($hook) {
+            if ('blc_check_links' === $hook) {
+                return 'weekly';
+            }
+
+            return false;
+        });
+        Functions\when('wp_get_schedules')->alias(static function () {
+            return [
+                'blc_hourly'        => ['interval' => HOUR_IN_SECONDS],
+                'blc_six_hours'     => ['interval' => 6 * HOUR_IN_SECONDS],
+                'blc_twelve_hours'  => ['interval' => 12 * HOUR_IN_SECONDS],
+                'daily'             => ['interval' => DAY_IN_SECONDS],
+                'weekly'            => ['interval' => WEEK_IN_SECONDS],
+                'monthly'           => ['interval' => 30 * DAY_IN_SECONDS],
+                'blc_custom_interval' => ['interval' => DAY_IN_SECONDS],
+            ];
+        });
         Functions\when('wp_clear_scheduled_hook')->justReturn(true);
+        Functions\when('wp_schedule_event')->justReturn(true);
         Functions\when('check_admin_referer')->justReturn(true);
         Functions\when('current_user_can')->justReturn(true);
         Functions\when('wp_schedule_single_event')->justReturn(true);
@@ -316,6 +362,50 @@ class BlcDashboardLinksPageTest extends TestCase
         $this->assertSame(1, $calls);
         $this->assertStringContainsString("La vérification des liens a été programmée", $output);
         $this->assertStringContainsString("Le déclenchement immédiat du cron a échoué", $output);
+    }
+
+    public function test_reschedule_cron_displays_success_notice(): void
+    {
+        $_POST['blc_reschedule_cron'] = '1';
+
+        ob_start();
+        blc_dashboard_links_page();
+        $output = (string) ob_get_clean();
+
+        $this->assertStringContainsString("La vérification automatique a été reprogrammée avec succès.", $output);
+    }
+
+    public function test_reschedule_cron_displays_error_notice_on_failure(): void
+    {
+        $_POST['blc_reschedule_cron'] = '1';
+
+        $scheduleCalls = 0;
+        Functions\when('wp_schedule_event')->alias(static function ($timestamp, $recurrence, $hook) use (&$scheduleCalls) {
+            $scheduleCalls++;
+
+            return false;
+        });
+
+        Functions\expect('error_log')->once()->withArgs(static function ($message) {
+            return is_string($message)
+                && str_contains($message, 'BLC: Failed to schedule automatic link check');
+        });
+
+        Functions\expect('do_action')
+            ->once()
+            ->withArgs(static function ($hook, $schedule, $context) {
+                return 'blc_check_links_schedule_failed' === $hook
+                    && 'weekly' === $schedule
+                    && 'dashboard' === $context;
+            })
+            ->andReturnNull();
+
+        ob_start();
+        blc_dashboard_links_page();
+        $output = (string) ob_get_clean();
+
+        $this->assertGreaterThanOrEqual(1, $scheduleCalls);
+        $this->assertStringContainsString("La reprogrammation de l'analyse automatique a échoué.", $output);
     }
 
     public function test_views_include_additional_filters(): void

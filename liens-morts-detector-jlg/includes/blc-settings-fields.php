@@ -34,6 +34,26 @@ function blc_register_settings() {
 
     register_setting(
         $option_group,
+        'blc_frequency_custom_hours',
+        array(
+            'type'              => 'integer',
+            'sanitize_callback' => 'blc_sanitize_frequency_custom_hours_option',
+            'default'           => 24,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_frequency_custom_time',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_frequency_custom_time_option',
+            'default'           => '00:00',
+        )
+    );
+
+    register_setting(
+        $option_group,
         'blc_rest_start_hour',
         array(
             'type'              => 'string',
@@ -390,13 +410,89 @@ function blc_get_timezone_label() {
  * @return void
  */
 function blc_render_frequency_field() {
-    $frequency = get_option('blc_frequency', 'daily');
+    $frequency         = get_option('blc_frequency', 'daily');
+    $custom_hours_raw  = get_option('blc_frequency_custom_hours', 24);
+    $custom_hours      = blc_get_custom_frequency_hours($custom_hours_raw);
+    $custom_time_raw   = get_option('blc_frequency_custom_time', '00:00');
+    $custom_time_value = blc_prepare_time_input_value($custom_time_raw, '00:00');
+    $max_hours         = (int) apply_filters('blc_custom_frequency_max_hours', 24 * 30);
+
+    if ($max_hours < 1) {
+        $max_hours = 1;
+    }
+
+    $is_custom_selected = ('custom' === $frequency);
+
+    $preset_options = array(
+        'blc_hourly'      => __('Toutes les heures', 'liens-morts-detector-jlg'),
+        'blc_six_hours'   => __('Toutes les 6 heures', 'liens-morts-detector-jlg'),
+        'blc_twelve_hours'=> __('Toutes les 12 heures', 'liens-morts-detector-jlg'),
+        'daily'           => __('Quotidienne', 'liens-morts-detector-jlg'),
+        'weekly'          => __('Hebdomadaire', 'liens-morts-detector-jlg'),
+        'monthly'         => __('Mensuelle', 'liens-morts-detector-jlg'),
+    );
     ?>
-    <select name="blc_frequency" id="blc_frequency">
-        <option value="daily" <?php selected($frequency, 'daily'); ?>><?php esc_html_e('Quotidienne', 'liens-morts-detector-jlg'); ?></option>
-        <option value="weekly" <?php selected($frequency, 'weekly'); ?>><?php esc_html_e('Hebdomadaire', 'liens-morts-detector-jlg'); ?></option>
-        <option value="monthly" <?php selected($frequency, 'monthly'); ?>><?php esc_html_e('Mensuelle', 'liens-morts-detector-jlg'); ?></option>
-    </select>
+    <fieldset id="blc_frequency_fieldset" class="blc-frequency-field">
+        <legend class="screen-reader-text"><?php esc_html_e('Fréquence de vérification des liens', 'liens-morts-detector-jlg'); ?></legend>
+        <div class="blc-frequency-options">
+            <?php foreach ($preset_options as $value => $label) : ?>
+                <label class="blc-frequency-option">
+                    <input type="radio" name="blc_frequency" value="<?php echo esc_attr($value); ?>" <?php checked($frequency, $value); ?>>
+                    <span><?php echo esc_html($label); ?></span>
+                </label>
+            <?php endforeach; ?>
+            <label class="blc-frequency-option blc-frequency-option--custom">
+                <input type="radio" name="blc_frequency" value="custom" <?php checked($is_custom_selected); ?>>
+                <span><?php esc_html_e('Intervalle personnalisé', 'liens-morts-detector-jlg'); ?></span>
+            </label>
+        </div>
+        <div class="blc-frequency-custom-controls" aria-live="polite">
+            <div class="blc-frequency-custom-row">
+                <label for="blc_frequency_custom_hours" class="blc-frequency-custom-label">
+                    <?php esc_html_e('Toutes les', 'liens-morts-detector-jlg'); ?>
+                </label>
+                <input
+                    type="range"
+                    min="1"
+                    max="<?php echo esc_attr($max_hours); ?>"
+                    step="1"
+                    id="blc_frequency_custom_hours_slider"
+                    value="<?php echo esc_attr($custom_hours); ?>"
+                    aria-labelledby="blc_frequency_custom_hours_label"
+                    <?php disabled(!$is_custom_selected); ?>
+                >
+                <label id="blc_frequency_custom_hours_label" class="screen-reader-text" for="blc_frequency_custom_hours">
+                    <?php esc_html_e('Nombre d\'heures entre deux analyses automatiques', 'liens-morts-detector-jlg'); ?>
+                </label>
+                <input
+                    type="number"
+                    min="1"
+                    max="<?php echo esc_attr($max_hours); ?>"
+                    step="1"
+                    id="blc_frequency_custom_hours"
+                    name="blc_frequency_custom_hours"
+                    value="<?php echo esc_attr($custom_hours); ?>"
+                    <?php disabled(!$is_custom_selected); ?>
+                >
+                <span class="blc-frequency-custom-suffix"><?php esc_html_e('heures', 'liens-morts-detector-jlg'); ?></span>
+            </div>
+            <div class="blc-frequency-custom-row">
+                <label for="blc_frequency_custom_time" class="blc-frequency-custom-label">
+                    <?php esc_html_e('À déclencher à partir de', 'liens-morts-detector-jlg'); ?>
+                </label>
+                <input
+                    type="time"
+                    id="blc_frequency_custom_time"
+                    name="blc_frequency_custom_time"
+                    value="<?php echo esc_attr($custom_time_value); ?>"
+                    <?php disabled(!$is_custom_selected); ?>
+                >
+                <span class="blc-frequency-custom-suffix blc-frequency-custom-timezone">
+                    <?php echo esc_html(blc_get_timezone_label()); ?>
+                </span>
+            </div>
+        </div>
+    </fieldset>
     <p class="description">
         <?php
         echo wp_kses(
@@ -405,6 +501,65 @@ function blc_render_frequency_field() {
         );
         ?>
     </p>
+    <script>
+        (function () {
+            var fieldset = document.getElementById('blc_frequency_fieldset');
+            if (!fieldset) {
+                return;
+            }
+
+            var radios = fieldset.querySelectorAll('input[name="blc_frequency"]');
+            var slider = fieldset.querySelector('#blc_frequency_custom_hours_slider');
+            var numberInput = fieldset.querySelector('#blc_frequency_custom_hours');
+            var timeInput = fieldset.querySelector('#blc_frequency_custom_time');
+
+            var syncInputs = function (source, target) {
+                if (!source || !target) {
+                    return;
+                }
+
+                target.value = source.value;
+            };
+
+            if (slider && numberInput) {
+                slider.addEventListener('input', function () {
+                    syncInputs(slider, numberInput);
+                });
+
+                numberInput.addEventListener('input', function () {
+                    if (numberInput.value !== '') {
+                        syncInputs(numberInput, slider);
+                    }
+                });
+            }
+
+            var toggleCustomControls = function () {
+                var customRadio = fieldset.querySelector('input[name="blc_frequency"][value="custom"]');
+                var isCustom = customRadio && customRadio.checked;
+                var method = isCustom ? 'removeAttribute' : 'setAttribute';
+
+                if (slider) {
+                    slider[method]('disabled', 'disabled');
+                }
+
+                if (numberInput) {
+                    numberInput[method]('disabled', 'disabled');
+                }
+
+                if (timeInput) {
+                    timeInput[method]('disabled', 'disabled');
+                }
+
+                fieldset.classList.toggle('blc-frequency-field--custom', !!isCustom);
+            };
+
+            Array.prototype.forEach.call(radios, function (radio) {
+                radio.addEventListener('change', toggleCustomControls);
+            });
+
+            toggleCustomControls();
+        })();
+    </script>
     <?php
 }
 
@@ -720,6 +875,60 @@ function blc_render_debug_mode_field() {
 }
 
 /**
+ * Normalise la valeur d'heures soumise pour l'intervalle personnalisé.
+ *
+ * @param mixed $value    Valeur brute.
+ * @param int   $fallback Valeur de repli.
+ *
+ * @return int
+ */
+function blc_normalize_custom_frequency_hours($value, $fallback) {
+    $fallback_hours = blc_get_custom_frequency_hours($fallback);
+
+    return blc_get_custom_frequency_hours(null === $value ? $fallback_hours : $value);
+}
+
+/**
+ * Normalise l'heure de départ soumise pour l'intervalle personnalisé.
+ *
+ * @param mixed  $value    Valeur brute.
+ * @param string $fallback Valeur de repli.
+ *
+ * @return string
+ */
+function blc_normalize_custom_frequency_time($value, $fallback) {
+    $candidate = (null === $value || '' === $value) ? $fallback : $value;
+
+    return blc_get_custom_frequency_time($candidate);
+}
+
+/**
+ * Sanitize le nombre d'heures pour la fréquence personnalisée.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return int
+ */
+function blc_sanitize_frequency_custom_hours_option($value) {
+    $previous = get_option('blc_frequency_custom_hours', 24);
+
+    return blc_normalize_custom_frequency_hours($value, $previous);
+}
+
+/**
+ * Sanitize l'heure de départ pour la fréquence personnalisée.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string
+ */
+function blc_sanitize_frequency_custom_time_option($value) {
+    $previous = get_option('blc_frequency_custom_time', '00:00');
+
+    return blc_normalize_custom_frequency_time($value, $previous);
+}
+
+/**
  * Valide et normalise la fréquence de vérification.
  *
  * @param mixed $value Valeur brute soumise.
@@ -727,27 +936,40 @@ function blc_render_debug_mode_field() {
  * @return string
  */
 function blc_sanitize_frequency_option($value) {
-    $allowed_frequencies = array('daily', 'weekly', 'monthly');
-    $previous_frequency_option = get_option('blc_frequency', 'daily');
+    $allowed_frequencies = array(
+        'blc_hourly',
+        'blc_six_hours',
+        'blc_twelve_hours',
+        'daily',
+        'weekly',
+        'monthly',
+        'custom',
+    );
+
+    $previous_frequency_option    = get_option('blc_frequency', 'daily');
     $previous_frequency_sanitized = sanitize_text_field($previous_frequency_option);
-    $fallback_frequency = in_array($previous_frequency_sanitized, $allowed_frequencies, true)
+    $fallback_frequency           = in_array($previous_frequency_sanitized, $allowed_frequencies, true)
         ? $previous_frequency_sanitized
         : 'daily';
 
-    $frequency_raw = is_scalar($value) ? (string) $value : '';
+    $frequency_raw       = is_scalar($value) ? (string) $value : '';
     $submitted_frequency = sanitize_text_field($frequency_raw);
 
     if (in_array($submitted_frequency, $allowed_frequencies, true)) {
         $frequency = $submitted_frequency;
     } else {
-        $frequency = $fallback_frequency;
+        $frequency        = $fallback_frequency;
         $frequency_labels = array(
-            'daily'   => __('quotidienne', 'liens-morts-detector-jlg'),
-            'weekly'  => __('hebdomadaire', 'liens-morts-detector-jlg'),
-            'monthly' => __('mensuelle', 'liens-morts-detector-jlg'),
+            'blc_hourly'       => __('toutes les heures', 'liens-morts-detector-jlg'),
+            'blc_six_hours'    => __('toutes les 6 heures', 'liens-morts-detector-jlg'),
+            'blc_twelve_hours' => __('toutes les 12 heures', 'liens-morts-detector-jlg'),
+            'daily'            => __('quotidienne', 'liens-morts-detector-jlg'),
+            'weekly'           => __('hebdomadaire', 'liens-morts-detector-jlg'),
+            'monthly'          => __('mensuelle', 'liens-morts-detector-jlg'),
+            'custom'           => __('personnalisée', 'liens-morts-detector-jlg'),
         );
         $frequency_label = isset($frequency_labels[$frequency]) ? $frequency_labels[$frequency] : $frequency;
-        $message = sprintf(
+        $message         = sprintf(
             /* translators: %s: fallback frequency label. */
             esc_html__('La fréquence choisie est invalide. La valeur "%s" a été conservée.', 'liens-morts-detector-jlg'),
             esc_html($frequency_label)
@@ -755,57 +977,37 @@ function blc_sanitize_frequency_option($value) {
         add_settings_error('blc_settings', 'blc_frequency_warning', $message, 'warning');
     }
 
-    $previous_event_timestamp = wp_next_scheduled('blc_check_links');
-    $previous_event_schedule  = wp_get_schedule('blc_check_links');
-    wp_clear_scheduled_hook('blc_check_links');
-    $scheduled = wp_schedule_event(time(), $frequency, 'blc_check_links');
+    $custom_hours_option = get_option('blc_frequency_custom_hours', 24);
+    $custom_time_option  = get_option('blc_frequency_custom_time', '00:00');
 
-    if (false === $scheduled) {
-        error_log(
-            sprintf(
-                'BLC: Failed to schedule automatic link check (frequency: %s).',
-                $frequency
-            )
+    $custom_hours_override = null;
+    if (isset($_POST['blc_frequency_custom_hours'])) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- géré via l'API Settings.
+        $custom_hours_override = blc_normalize_custom_frequency_hours(
+            wp_unslash($_POST['blc_frequency_custom_hours']),
+            $custom_hours_option
         );
-        do_action('blc_check_links_schedule_failed', $frequency);
+    }
 
-        $restore_warning = '';
-        if (false !== $previous_event_timestamp && null !== $previous_event_timestamp) {
-            $restore_timestamp = (int) $previous_event_timestamp;
-            if ($restore_timestamp <= time()) {
-                $restore_timestamp = time() + HOUR_IN_SECONDS;
-            }
+    $custom_time_override = null;
+    if (isset($_POST['blc_frequency_custom_time'])) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- géré via l'API Settings.
+        $custom_time_override = blc_normalize_custom_frequency_time(
+            wp_unslash($_POST['blc_frequency_custom_time']),
+            $custom_time_option
+        );
+    }
 
-            $restore_recurrence = $previous_event_schedule
-                ? $previous_event_schedule
-                : $previous_frequency_sanitized;
-            $restored = wp_schedule_event($restore_timestamp, $restore_recurrence, 'blc_check_links');
+    $schedule_result = blc_reset_link_check_schedule(
+        array(
+            'frequency'    => $frequency,
+            'custom_hours' => $custom_hours_override,
+            'custom_time'  => $custom_time_override,
+            'context'      => 'settings',
+        )
+    );
 
-            if (false === $restored) {
-                error_log(
-                    sprintf(
-                        'BLC: Failed to restore previous automatic link check schedule (recurrence: %s, timestamp: %d).',
-                        $restore_recurrence,
-                        $restore_timestamp
-                    )
-                );
-                $restore_warning = esc_html__(
-                    "L'ancienne planification n'a pas pu être restaurée. Une intervention manuelle est nécessaire.",
-                    'liens-morts-detector-jlg'
-                );
-            } else {
-                error_log('BLC: Previous automatic link check schedule restored after failure.');
-                $restore_notice = esc_html__(
-                    'La planification précédente a été restaurée automatiquement. Vérifiez que les prochaines analyses se lanceront correctement.',
-                    'liens-morts-detector-jlg'
-                );
-                add_settings_error('blc_settings', 'blc_frequency_restore_notice', $restore_notice, 'warning');
-            }
-        } else {
-            $restore_warning = esc_html__(
-                "Aucune ancienne planification n'a été trouvée. Veuillez configurer manuellement la vérification automatique.",
-                'liens-morts-detector-jlg'
-            );
+    if (!$schedule_result['success']) {
+        if ($schedule_result['error_message'] !== '') {
+            error_log($schedule_result['error_message']);
         }
 
         $error_message = esc_html__(
@@ -814,7 +1016,26 @@ function blc_sanitize_frequency_option($value) {
         );
 
         add_settings_error('blc_settings', 'blc_frequency_schedule_error', $error_message, 'error');
-        if ('' !== $restore_warning) {
+
+        if ($schedule_result['restore_attempted']) {
+            if ($schedule_result['restored']) {
+                $restore_notice = esc_html__(
+                    'La planification précédente a été restaurée automatiquement. Vérifiez que les prochaines analyses se lanceront correctement.',
+                    'liens-morts-detector-jlg'
+                );
+                add_settings_error('blc_settings', 'blc_frequency_restore_notice', $restore_notice, 'warning');
+            } else {
+                $restore_warning = esc_html__(
+                    "L'ancienne planification n'a pas pu être restaurée. Une intervention manuelle est nécessaire.",
+                    'liens-morts-detector-jlg'
+                );
+                add_settings_error('blc_settings', 'blc_frequency_restore_warning', $restore_warning, 'warning');
+            }
+        } else {
+            $restore_warning = esc_html__(
+                "Aucune ancienne planification n'a été trouvée. Veuillez configurer manuellement la vérification automatique.",
+                'liens-morts-detector-jlg'
+            );
             add_settings_error('blc_settings', 'blc_frequency_restore_warning', $restore_warning, 'warning');
         }
     } else {
@@ -824,15 +1045,6 @@ function blc_sanitize_frequency_option($value) {
     return $frequency;
 }
 
-/**
- * Normalise une option d'heure de repos.
- *
- * @param mixed  $value       Valeur brute.
- * @param string $option_name Nom de l'option.
- * @param string $default     Valeur par défaut.
- *
- * @return string
- */
 function blc_sanitize_rest_hour_option($value, $option_name, $default) {
     $previous = get_option($option_name, $default);
     $raw      = is_scalar($value) ? (string) $value : '';
