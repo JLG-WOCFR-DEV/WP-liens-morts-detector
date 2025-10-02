@@ -225,6 +225,31 @@ function blc_dashboard_links_page() {
         <?php if ($broken_links_count === 0): ?>
              <p><?php esc_html_e('✅ Aucun lien mort trouvé. Bravo !', 'liens-morts-detector-jlg'); ?></p>
         <?php else: ?>
+            <div class="blc-status-legend" role="note">
+                <p class="blc-status-legend__title"><?php esc_html_e('Légende des statuts HTTP', 'liens-morts-detector-jlg'); ?></p>
+                <ul class="blc-status-legend__list">
+                    <li class="blc-status-legend__item">
+                        <span class="blc-status blc-status--2xx">200</span>
+                        <span><?php esc_html_e('Disponible (2xx)', 'liens-morts-detector-jlg'); ?></span>
+                    </li>
+                    <li class="blc-status-legend__item">
+                        <span class="blc-status blc-status--3xx">302</span>
+                        <span><?php esc_html_e('Redirection (3xx)', 'liens-morts-detector-jlg'); ?></span>
+                    </li>
+                    <li class="blc-status-legend__item">
+                        <span class="blc-status blc-status--4xx">404</span>
+                        <span><?php esc_html_e('Erreur client (4xx)', 'liens-morts-detector-jlg'); ?></span>
+                    </li>
+                    <li class="blc-status-legend__item">
+                        <span class="blc-status blc-status--5xx">502</span>
+                        <span><?php esc_html_e('Erreur serveur (5xx)', 'liens-morts-detector-jlg'); ?></span>
+                    </li>
+                    <li class="blc-status-legend__item">
+                        <span class="blc-status blc-status--unknown">?</span>
+                        <span><?php esc_html_e('Statut inconnu ou indisponible', 'liens-morts-detector-jlg'); ?></span>
+                    </li>
+                </ul>
+            </div>
             <form method="get" class="blc-links-filter-form" aria-labelledby="blc-links-filter-heading">
                 <h2 id="blc-links-filter-heading" class="screen-reader-text"><?php esc_html_e('Filtres de la liste des liens cassés', 'liens-morts-detector-jlg'); ?></h2>
                 <?php

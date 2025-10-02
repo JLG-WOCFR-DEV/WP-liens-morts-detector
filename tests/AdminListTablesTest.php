@@ -179,7 +179,7 @@ class AdminListTablesTest extends TestCase
             'url'             => 'https://example.com',
         ];
 
-        $this->assertSame('410', $table->renderHttpStatus($item));
+        $this->assertSame('<span class="blc-status blc-status--4xx blc-status--410">410</span>', $table->renderHttpStatus($item));
         $this->assertSame('1970-01-01 00:00', $table->renderLastChecked($item));
 
         $empty = [
