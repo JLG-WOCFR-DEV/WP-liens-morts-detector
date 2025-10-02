@@ -26,7 +26,13 @@ jQuery(document).ready(function($) {
         restoreModalMessage: 'Voulez-vous réintégrer ce lien dans la liste ?\n%s',
         restoreModalConfirm: 'Réintégrer',
         ignoredAnnouncement: 'Le lien est désormais ignoré.',
-        restoredAnnouncement: "Le lien n'est plus ignoré."
+        restoredAnnouncement: "Le lien n'est plus ignoré.",
+        bulkIgnoreModalMessage: 'Voulez-vous ignorer les %s liens sélectionnés ?',
+        bulkRestoreModalMessage: 'Voulez-vous réintégrer les %s liens sélectionnés ?',
+        bulkUnlinkModalMessage: 'Voulez-vous dissocier les %s liens sélectionnés ?',
+        bulkGenericModalMessage: 'Voulez-vous appliquer cette action aux %s éléments sélectionnés ?',
+        bulkNoSelectionMessage: 'Veuillez sélectionner au moins un lien avant de lancer une action groupée.',
+        bulkSuccessAnnouncement: 'Les actions groupées ont été appliquées avec succès.'
     };
 
     var messages = $.extend({}, defaultMessages, window.blcAdminMessages || {});
@@ -87,6 +93,28 @@ jQuery(document).ready(function($) {
 
     window.blcAdmin = window.blcAdmin || {};
     window.blcAdmin.accessibility = accessibility;
+
+    (function announceBulkNotice() {
+        var $notice = $('.blc-bulk-notice');
+
+        if (!$notice.length) {
+            return;
+        }
+
+        var announcement = $notice.data('blcBulkAnnouncement');
+
+        if (!announcement) {
+            announcement = $.trim($notice.text());
+        }
+
+        if (!announcement) {
+            announcement = messages.bulkSuccessAnnouncement || '';
+        }
+
+        if (announcement) {
+            accessibility.speak(announcement, 'polite');
+        }
+    })();
 
     var modal = (function() {
         var $modal = $('#blc-modal');
@@ -512,6 +540,109 @@ jQuery(document).ready(function($) {
     window.blcAdmin.listActions = $.extend({}, window.blcAdmin.listActions, {
         handleSuccessfulResponse: handleSuccessfulResponse,
         findNextFocusTarget: findNextFocusTarget
+    });
+
+    function getSelectedBulkAction($form) {
+        var action = $form.find('select[name="action"]').val();
+
+        if (action && action !== '-1') {
+            return action;
+        }
+
+        action = $form.find('select[name="action2"]').val();
+
+        if (action && action !== '-1') {
+            return action;
+        }
+
+        return null;
+    }
+
+    function buildBulkModalConfig(action, count) {
+        var title = '';
+        var confirmText = '';
+        var template = '';
+
+        if (action === 'ignore') {
+            title = messages.ignoreModalTitle || '';
+            confirmText = messages.ignoreModalConfirm || '';
+            template = messages.bulkIgnoreModalMessage || '';
+        } else if (action === 'restore') {
+            title = messages.restoreModalTitle || '';
+            confirmText = messages.restoreModalConfirm || '';
+            template = messages.bulkRestoreModalMessage || '';
+        } else {
+            title = messages.unlinkModalTitle || '';
+            confirmText = messages.unlinkModalConfirm || '';
+            template = messages.bulkUnlinkModalMessage || '';
+        }
+
+        if (!template) {
+            template = messages.bulkGenericModalMessage || '';
+        }
+
+        var message = template ? formatTemplate(template, count) : '';
+
+        return {
+            title: title,
+            message: message,
+            confirmText: confirmText,
+            cancelText: messages.cancelButton,
+            closeLabel: messages.closeLabel,
+            showInput: false
+        };
+    }
+
+    var BULK_SUPPORTED_ACTIONS = ['ignore', 'restore', 'unlink'];
+
+    $('.blc-links-filter-form').on('submit', function(e) {
+        var $form = $(this);
+
+        if ($form.data('blcBulkConfirmed')) {
+            $form.removeData('blcBulkConfirmed');
+            return;
+        }
+
+        var action = getSelectedBulkAction($form);
+
+        if (!action || $.inArray(action, BULK_SUPPORTED_ACTIONS) === -1) {
+            return;
+        }
+
+        var $modalElement = $('#blc-modal');
+        if (!$modalElement.length) {
+            return;
+        }
+
+        var $selected = $form.find('input[name="link_ids[]"]:checked');
+
+        if (!$selected.length) {
+            e.preventDefault();
+            var noSelectionMessage = messages.bulkNoSelectionMessage || '';
+            if (!noSelectionMessage && messages.genericError) {
+                noSelectionMessage = messages.genericError;
+            }
+
+            if (noSelectionMessage) {
+                accessibility.speak(noSelectionMessage, 'assertive');
+            }
+
+            return;
+        }
+
+        e.preventDefault();
+
+        var modalConfig = buildBulkModalConfig(action, $selected.length);
+
+        modal.open($.extend({}, modalConfig, {
+            onConfirm: function(_value, helpers) {
+                helpers.setSubmitting(true);
+                $form.data('blcBulkConfirmed', true);
+                window.setTimeout(function() {
+                    $form.get(0).submit();
+                }, 0);
+            }
+        }));
     });
 
     function hasWhitespace(value) {

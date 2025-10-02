@@ -186,6 +186,16 @@ function blc_enqueue_admin_assets($hook) {
             'restoreModalConfirm' => __('Réintégrer', 'liens-morts-detector-jlg'),
             'ignoredAnnouncement' => __('Le lien est désormais ignoré.', 'liens-morts-detector-jlg'),
             'restoredAnnouncement' => __('Le lien n\'est plus ignoré.', 'liens-morts-detector-jlg'),
+            /* translators: %s: number of selected links. */
+            'bulkIgnoreModalMessage'   => __('Voulez-vous ignorer les %s liens sélectionnés ?', 'liens-morts-detector-jlg'),
+            /* translators: %s: number of selected links. */
+            'bulkRestoreModalMessage'  => __('Voulez-vous réintégrer les %s liens sélectionnés ?', 'liens-morts-detector-jlg'),
+            /* translators: %s: number of selected links. */
+            'bulkUnlinkModalMessage'   => __('Voulez-vous dissocier les %s liens sélectionnés ?', 'liens-morts-detector-jlg'),
+            /* translators: %s: number of selected items. */
+            'bulkGenericModalMessage'  => __('Voulez-vous appliquer cette action aux %s éléments sélectionnés ?', 'liens-morts-detector-jlg'),
+            'bulkNoSelectionMessage'   => __('Veuillez sélectionner au moins un lien avant d\'appliquer une action groupée.', 'liens-morts-detector-jlg'),
+            'bulkSuccessAnnouncement'  => __('Les actions groupées ont été appliquées avec succès.', 'liens-morts-detector-jlg'),
         )
     );
 }
