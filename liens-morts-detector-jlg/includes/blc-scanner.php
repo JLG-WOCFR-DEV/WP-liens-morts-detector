@@ -328,14 +328,8 @@ if (!class_exists('ScanQueue')) {
             $last_check_time = (int) get_option('blc_last_check_time', 0);
             $table_name      = $wpdb->prefix . 'blc_broken_links';
 
-            $public_post_types = get_post_types(['public' => true], 'names');
-            if (!is_array($public_post_types)) {
-                $public_post_types = [];
-            }
-            $public_post_types = array_values(array_filter(array_map('strval', $public_post_types), static function ($post_type) {
-                return $post_type !== '';
-            }));
-            if ($public_post_types === []) {
+            $public_post_types = blc_get_configured_post_types();
+            if (!is_array($public_post_types) || $public_post_types === []) {
                 $public_post_types = ['post'];
             }
 
@@ -1612,14 +1606,8 @@ if (!class_exists('ImageScanQueue')) {
             }
 
             $batch_size = 20;
-            $public_post_types = get_post_types(['public' => true], 'names');
-            if (!is_array($public_post_types)) {
-                $public_post_types = [];
-            }
-            $public_post_types = array_values(array_filter(array_map('strval', $public_post_types), static function ($post_type) {
-                return $post_type !== '';
-            }));
-            if ($public_post_types === []) {
+            $public_post_types = blc_get_configured_post_types();
+            if (!is_array($public_post_types) || $public_post_types === []) {
                 $public_post_types = ['post'];
             }
 

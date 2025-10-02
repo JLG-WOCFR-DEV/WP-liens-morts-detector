@@ -21,6 +21,7 @@ function blc_register_settings() {
     $timeout_constraints = blc_get_request_timeout_constraints();
     $head_timeout_limits = isset($timeout_constraints['head']) ? $timeout_constraints['head'] : array('default' => 5);
     $get_timeout_limits  = isset($timeout_constraints['get']) ? $timeout_constraints['get'] : array('default' => 10);
+    $default_public_post_types = blc_get_default_public_post_types();
 
     register_setting(
         $option_group,
@@ -89,6 +90,16 @@ function blc_register_settings() {
             'type'              => 'integer',
             'sanitize_callback' => 'blc_sanitize_batch_delay_option',
             'default'           => 60,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_post_types',
+        array(
+            'type'              => 'array',
+            'sanitize_callback' => 'blc_sanitize_post_types_option',
+            'default'           => $default_public_post_types,
         )
     );
 
@@ -172,6 +183,10 @@ function blc_register_settings() {
         )
     );
 
+    if (get_option('blc_post_types', null) === null) {
+        update_option('blc_post_types', $default_public_post_types);
+    }
+
     blc_register_settings_sections();
 }
 
@@ -217,6 +232,17 @@ function blc_register_settings_sections() {
         __('Performance', 'liens-morts-detector-jlg'),
         '__return_false',
         $page
+    );
+
+    add_settings_field(
+        'blc_post_types',
+        __('Types de contenus analysés', 'liens-morts-detector-jlg'),
+        'blc_render_post_types_field',
+        $page,
+        'blc_performance_section',
+        array(
+            'label_for' => 'blc_post_types',
+        )
     );
 
     add_settings_field(
@@ -603,6 +629,80 @@ function blc_render_rest_period_field() {
         );
         ?>
     </p>
+    <?php
+}
+
+/**
+ * Affiche la liste des types de contenus disponibles pour l'analyse.
+ *
+ * @return void
+ */
+function blc_render_post_types_field() {
+    $selected_option = get_option('blc_post_types', blc_get_default_public_post_types());
+    if (!is_array($selected_option)) {
+        $selected_option = array($selected_option);
+    }
+
+    $selected_post_types = array();
+    foreach ($selected_option as $value) {
+        if (!is_scalar($value)) {
+            continue;
+        }
+
+        $post_type_key = sanitize_key((string) $value);
+        if ('' === $post_type_key) {
+            continue;
+        }
+
+        $selected_post_types[$post_type_key] = true;
+    }
+
+    $post_type_objects = get_post_types(array('public' => true), 'objects');
+    if (!is_array($post_type_objects)) {
+        $post_type_objects = array();
+    }
+
+    if (array() === $post_type_objects) {
+        echo '<p class="description">' . esc_html__('Aucun type de contenu public n\'a été détecté.', 'liens-morts-detector-jlg') . '</p>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+        return;
+    }
+
+    foreach ($post_type_objects as $post_type_key => $post_type_object) {
+        $sanitized_key = sanitize_key((string) $post_type_key);
+        if ('' === $sanitized_key) {
+            continue;
+        }
+
+        $label = '';
+        if (is_object($post_type_object)) {
+            if (isset($post_type_object->labels) && is_object($post_type_object->labels) && isset($post_type_object->labels->singular_name) && '' !== $post_type_object->labels->singular_name) {
+                $label = (string) $post_type_object->labels->singular_name;
+            } elseif (isset($post_type_object->label) && '' !== $post_type_object->label) {
+                $label = (string) $post_type_object->label;
+            }
+        }
+
+        if ('' === $label) {
+            $label = ucwords(str_replace(array('-', '_'), ' ', $sanitized_key));
+        }
+
+        $input_id = 'blc_post_type_' . $sanitized_key;
+        ?>
+        <label for="<?php echo esc_attr($input_id); ?>">
+            <input
+                type="checkbox"
+                id="<?php echo esc_attr($input_id); ?>"
+                name="blc_post_types[]"
+                value="<?php echo esc_attr($sanitized_key); ?>"
+                <?php checked(isset($selected_post_types[$sanitized_key])); ?>
+            >
+            <?php echo esc_html($label); ?>
+        </label><br>
+        <?php
+    }
+
+    ?>
+    <p class="description"><?php esc_html_e('Choisissez les types de contenus publics à inclure dans l’analyse. Par défaut, tous les types publics sont sélectionnés.', 'liens-morts-detector-jlg'); ?></p>
     <?php
 }
 
@@ -1167,6 +1267,59 @@ function blc_sanitize_scan_method_option($value) {
  */
 function blc_sanitize_remote_image_scan_option($value) {
     return (bool) $value;
+}
+
+/**
+ * Sanitize les types de contenus sélectionnés.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return array
+ */
+function blc_sanitize_post_types_option($value) {
+    $available_post_types = get_post_types(array('public' => true), 'names');
+    if (!is_array($available_post_types)) {
+        $available_post_types = array();
+    }
+
+    $available_lookup = array();
+    foreach ($available_post_types as $post_type) {
+        if (!is_scalar($post_type)) {
+            continue;
+        }
+
+        $post_type_key = sanitize_key((string) $post_type);
+        if ('' === $post_type_key) {
+            continue;
+        }
+
+        $available_lookup[$post_type_key] = true;
+    }
+
+    $raw_post_types = $value;
+    if (!is_array($raw_post_types)) {
+        $raw_post_types = array($raw_post_types);
+    }
+
+    $selected_post_types = array();
+    foreach ($raw_post_types as $post_type_value) {
+        if (!is_scalar($post_type_value)) {
+            continue;
+        }
+
+        $post_type_key = sanitize_key((string) $post_type_value);
+        if ('' === $post_type_key) {
+            continue;
+        }
+
+        if (array() !== $available_lookup && !isset($available_lookup[$post_type_key])) {
+            continue;
+        }
+
+        $selected_post_types[$post_type_key] = $post_type_key;
+    }
+
+    return array_values($selected_post_types);
 }
 
 /**

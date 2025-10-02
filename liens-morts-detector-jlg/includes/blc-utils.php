@@ -107,6 +107,105 @@ function blc_get_http_user_agent() {
 }
 
 /**
+ * Retourne la liste des types de contenus publics utilisés par défaut.
+ *
+ * @return array
+ */
+function blc_get_default_public_post_types() {
+    if (!function_exists('get_post_types')) {
+        return array('post');
+    }
+
+    $post_types = get_post_types(array('public' => true), 'names');
+    if (!is_array($post_types)) {
+        $post_types = array();
+    }
+
+    $normalized_post_types = array();
+    foreach ($post_types as $post_type) {
+        if (!is_scalar($post_type)) {
+            continue;
+        }
+
+        $post_type_key = sanitize_key((string) $post_type);
+        if ('' === $post_type_key) {
+            continue;
+        }
+
+        $normalized_post_types[$post_type_key] = $post_type_key;
+    }
+
+    if (array() === $normalized_post_types) {
+        return array('post');
+    }
+
+    return array_values($normalized_post_types);
+}
+
+/**
+ * Récupère la configuration actuelle des types de contenus analysés.
+ *
+ * @return array
+ */
+function blc_get_configured_post_types() {
+    $default_post_types = blc_get_default_public_post_types();
+
+    $option_value = get_option('blc_post_types', null);
+    if ($option_value === null) {
+        update_option('blc_post_types', $default_post_types);
+
+        return $default_post_types;
+    }
+
+    if (!is_array($option_value)) {
+        $option_value = array($option_value);
+    }
+
+    $available_post_types = get_post_types(array('public' => true), 'names');
+    if (!is_array($available_post_types)) {
+        $available_post_types = array();
+    }
+
+    $available_lookup = array();
+    foreach ($available_post_types as $available_post_type) {
+        if (!is_scalar($available_post_type)) {
+            continue;
+        }
+
+        $available_key = sanitize_key((string) $available_post_type);
+        if ('' === $available_key) {
+            continue;
+        }
+
+        $available_lookup[$available_key] = true;
+    }
+
+    $selected_post_types = array();
+    foreach ($option_value as $post_type_value) {
+        if (!is_scalar($post_type_value)) {
+            continue;
+        }
+
+        $post_type_key = sanitize_key((string) $post_type_value);
+        if ('' === $post_type_key) {
+            continue;
+        }
+
+        if (array() !== $available_lookup && !isset($available_lookup[$post_type_key])) {
+            continue;
+        }
+
+        $selected_post_types[$post_type_key] = $post_type_key;
+    }
+
+    if (array() === $selected_post_types) {
+        return array('post');
+    }
+
+    return array_values($selected_post_types);
+}
+
+/**
  * Charge le contenu HTML d'un article dans un DOMDocument et retourne également un DOMXPath.
  *
  * Cette fonction centralise la gestion des erreurs libxml et garantit la restauration de la

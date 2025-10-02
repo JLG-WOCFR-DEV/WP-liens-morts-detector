@@ -678,24 +678,34 @@ class BLC_Links_List_Table extends WP_List_Table {
     }
 
     private function get_available_post_types() {
-        if (!function_exists('get_post_types')) {
+        if (!function_exists('blc_get_configured_post_types')) {
             return [];
         }
 
-        $post_types = get_post_types(['public' => true]);
+        $post_types = blc_get_configured_post_types();
         if (!is_array($post_types)) {
-            return [];
+            $post_types = [];
         }
 
         $available_post_types = [];
-
         foreach ($post_types as $post_type) {
-            if (is_string($post_type) && $post_type !== '') {
-                $available_post_types[] = $post_type;
+            if (!is_scalar($post_type)) {
+                continue;
             }
+
+            $post_type_key = sanitize_key((string) $post_type);
+            if ($post_type_key === '') {
+                continue;
+            }
+
+            $available_post_types[$post_type_key] = $post_type_key;
         }
 
-        return array_values(array_unique($available_post_types));
+        if ($available_post_types === []) {
+            $available_post_types = ['post'];
+        }
+
+        return array_values($available_post_types);
     }
 
     private function get_selected_post_type() {
