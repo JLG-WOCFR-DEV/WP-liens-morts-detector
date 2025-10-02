@@ -32,8 +32,18 @@ class BlcSettingsPageTest extends TestCase
             define('ABSPATH', __DIR__ . '/../');
         }
 
+        if (!defined('HOUR_IN_SECONDS')) {
+            define('HOUR_IN_SECONDS', 3600);
+        }
+
+        if (!defined('DAY_IN_SECONDS')) {
+            define('DAY_IN_SECONDS', 86400);
+        }
+
         $this->options = [
             'blc_frequency'        => 'weekly',
+            'blc_frequency_custom_hours' => 24,
+            'blc_frequency_custom_time'  => '02:00',
             'blc_rest_start_hour'  => '08',
             'blc_rest_end_hour'    => '20',
             'blc_link_delay'       => 200,
@@ -81,6 +91,17 @@ class BlcSettingsPageTest extends TestCase
         Functions\when('wp_next_scheduled')->justReturn(false);
         Functions\when('wp_get_schedule')->justReturn(false);
         Functions\when('wp_clear_scheduled_hook')->justReturn(true);
+        Functions\when('wp_get_schedules')->alias(static function () {
+            return [
+                'blc_hourly'        => ['interval' => HOUR_IN_SECONDS],
+                'blc_six_hours'     => ['interval' => 6 * HOUR_IN_SECONDS],
+                'blc_twelve_hours'  => ['interval' => 12 * HOUR_IN_SECONDS],
+                'daily'             => ['interval' => DAY_IN_SECONDS],
+                'weekly'            => ['interval' => 7 * DAY_IN_SECONDS],
+                'monthly'           => ['interval' => 30 * DAY_IN_SECONDS],
+                'blc_custom_interval' => ['interval' => DAY_IN_SECONDS],
+            ];
+        });
         Functions\when('wp_kses')->alias(static fn($string, $allowed_html = null, $allowed_protocols = []) => $string);
         Functions\when('wp_kses_post')->alias(static fn($string) => $string);
         Functions\when('selected')->alias(static function ($value, $compare, $echo = true) {
@@ -120,6 +141,7 @@ class BlcSettingsPageTest extends TestCase
         });
         Functions\when('error_log')->justReturn(null);
         Functions\when('do_action')->justReturn(null);
+        Functions\when('wp_unslash')->alias(static fn($value) => $value);
         Functions\when('add_settings_error')->alias(function ($setting, $code, $message, $type = 'error') use ($test_case) {
             $test_case->settingsErrors[] = [
                 'setting' => $setting,
