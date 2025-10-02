@@ -94,6 +94,169 @@ jQuery(document).ready(function($) {
     window.blcAdmin = window.blcAdmin || {};
     window.blcAdmin.accessibility = accessibility;
 
+    function createNoticeElement(type, message) {
+        var classes = 'notice';
+        switch (type) {
+            case 'success':
+                classes += ' notice-success';
+                break;
+            case 'error':
+                classes += ' notice-error';
+                break;
+            case 'warning':
+                classes += ' notice-warning';
+                break;
+            default:
+                classes += ' notice-info';
+                break;
+        }
+
+        var $notice = $('<div>', { class: classes });
+        if (message) {
+            $('<p>').text(message).appendTo($notice);
+        }
+
+        return $notice;
+    }
+
+    (function setupTestEmailButton() {
+        var config = window.blcAdminNotifications || null;
+        if (!config || !config.nonce) {
+            return;
+        }
+
+        var $button = $('#blc-send-test-email');
+        if (!$button.length) {
+            return;
+        }
+
+        var $spinner = $('#blc-test-email-spinner');
+        var $feedback = $('#blc-test-email-feedback');
+        var $recipients = $('#blc_notification_recipients');
+        var $linkToggle = $('#blc_notification_links_enabled');
+        var $imageToggle = $('#blc_notification_images_enabled');
+        var isSending = false;
+
+        function ensureFeedbackContainer() {
+            if ($feedback && $feedback.length) {
+                return $feedback;
+            }
+
+            var $container = $('<div>', {
+                id: 'blc-test-email-feedback',
+                class: 'blc-test-email-feedback',
+                'aria-live': 'polite'
+            });
+
+            var $targetCell = $button.closest('td');
+            if ($targetCell.length) {
+                $targetCell.append($container);
+            } else {
+                $button.after($container);
+            }
+
+            $feedback = $container;
+            return $feedback;
+        }
+
+        function showFeedback(type, message) {
+            var $container = ensureFeedbackContainer();
+            $container.empty();
+
+            if (!message) {
+                return;
+            }
+
+            var $notice = createNoticeElement(type, message);
+            $container.append($notice);
+
+            var politeness = type === 'error' ? 'assertive' : 'polite';
+            accessibility.speak(message, politeness);
+        }
+
+        function setSending(state) {
+            isSending = state;
+            $button.prop('disabled', state);
+
+            if ($spinner.length) {
+                $spinner.toggleClass('is-active', state);
+            }
+
+            if (state) {
+                $button.attr('aria-busy', 'true');
+            } else {
+                $button.removeAttr('aria-busy');
+            }
+        }
+
+        $button.on('click', function(event) {
+            event.preventDefault();
+
+            if (isSending) {
+                return;
+            }
+
+            var recipientsValue = '';
+            if ($recipients.length) {
+                recipientsValue = $recipients.val();
+            }
+
+            if (!recipientsValue || $.trim(String(recipientsValue)) === '') {
+                showFeedback('warning', config.missingRecipientsText || '');
+                return;
+            }
+
+            var datasetTypes = [];
+            if ($linkToggle.length && $linkToggle.is(':checked')) {
+                datasetTypes.push('link');
+            }
+            if ($imageToggle.length && $imageToggle.is(':checked')) {
+                datasetTypes.push('image');
+            }
+
+            if (!datasetTypes.length) {
+                showFeedback('warning', config.missingChannelText || '');
+                return;
+            }
+
+            var ajaxEndpoint = config.ajaxUrl || (typeof window.ajaxurl !== 'undefined' ? window.ajaxurl : '');
+            if (!ajaxEndpoint) {
+                showFeedback('error', config.errorText || '');
+                return;
+            }
+
+            setSending(true);
+            if (config.sendingText) {
+                showFeedback('info', config.sendingText);
+            }
+
+            $.post(ajaxEndpoint, {
+                action: config.action,
+                _ajax_nonce: config.nonce,
+                recipients: recipientsValue,
+                dataset_types: datasetTypes
+            }).done(function(response) {
+                if (response && response.success) {
+                    var message = (response.data && response.data.message) ? response.data.message : (config.successText || '');
+                    var type = (response.data && response.data.partial) ? 'warning' : 'success';
+                    if (response.data && response.data.partial && !response.data.message && config.partialSuccessText) {
+                        message = config.partialSuccessText;
+                    }
+                    showFeedback(type, message);
+                } else {
+                    var errorMessage = (response && response.data && response.data.message)
+                        ? response.data.message
+                        : (config.errorText || '');
+                    showFeedback('error', errorMessage);
+                }
+            }).fail(function() {
+                showFeedback('error', config.errorText || '');
+            }).always(function() {
+                setSending(false);
+            });
+        });
+    })();
+
     (function announceBulkNotice() {
         var $notice = $('.blc-bulk-notice');
 

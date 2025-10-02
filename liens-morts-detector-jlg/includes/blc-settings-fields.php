@@ -164,6 +164,26 @@ function blc_register_settings() {
 
     register_setting(
         $option_group,
+        'blc_notification_links_enabled',
+        array(
+            'type'              => 'boolean',
+            'sanitize_callback' => 'blc_sanitize_notification_channel_option',
+            'default'           => true,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_notification_images_enabled',
+        array(
+            'type'              => 'boolean',
+            'sanitize_callback' => 'blc_sanitize_notification_channel_option',
+            'default'           => true,
+        )
+    );
+
+    register_setting(
+        $option_group,
         'blc_notification_recipients',
         array(
             'type'              => 'string',
@@ -340,6 +360,14 @@ function blc_register_settings_sections() {
         __('Notifications', 'liens-morts-detector-jlg'),
         '__return_false',
         $page
+    );
+
+    add_settings_field(
+        'blc_notification_channels',
+        __('Canaux d\'envoi', 'liens-morts-detector-jlg'),
+        'blc_render_notification_channels_field',
+        $page,
+        'blc_notifications_section'
     );
 
     add_settings_field(
@@ -847,6 +875,37 @@ function blc_render_notification_recipients_field() {
     ?>
     <textarea name="blc_notification_recipients" id="blc_notification_recipients" rows="3" class="large-text"><?php echo esc_textarea($notification_recipients); ?></textarea>
     <p class="description"><?php esc_html_e('Indiquez une adresse e-mail par ligne ou séparez-les par des virgules pour recevoir un résumé après chaque analyse.', 'liens-morts-detector-jlg'); ?></p>
+    <p class="description"><?php esc_html_e('Le bouton de test ci-dessus enverra un message à ces destinataires avec la configuration actuelle.', 'liens-morts-detector-jlg'); ?></p>
+    <?php
+}
+
+/**
+ * Affiche les réglages d'activation des notifications et le bouton de test.
+ *
+ * @return void
+ */
+function blc_render_notification_channels_field() {
+    $links_enabled  = (bool) get_option('blc_notification_links_enabled', true);
+    $images_enabled = (bool) get_option('blc_notification_images_enabled', true);
+    ?>
+    <fieldset>
+        <legend class="screen-reader-text"><span><?php esc_html_e('Canaux de notification', 'liens-morts-detector-jlg'); ?></span></legend>
+        <label for="blc_notification_links_enabled" class="blc-toggle">
+            <input type="checkbox" name="blc_notification_links_enabled" id="blc_notification_links_enabled" value="1" <?php checked($links_enabled, true); ?>>
+            <?php esc_html_e('Envoyer un e-mail après un scan des liens', 'liens-morts-detector-jlg'); ?>
+        </label>
+        <br>
+        <label for="blc_notification_images_enabled" class="blc-toggle">
+            <input type="checkbox" name="blc_notification_images_enabled" id="blc_notification_images_enabled" value="1" <?php checked($images_enabled, true); ?>>
+            <?php esc_html_e('Envoyer un e-mail après un scan des images', 'liens-morts-detector-jlg'); ?>
+        </label>
+        <p class="description"><?php esc_html_e('Choisissez les analyses qui déclenchent l’envoi d’un résumé par e-mail.', 'liens-morts-detector-jlg'); ?></p>
+        <p>
+            <button type="button" class="button" id="blc-send-test-email"><?php esc_html_e('Envoyer un e-mail de test', 'liens-morts-detector-jlg'); ?></button>
+            <span class="spinner" id="blc-test-email-spinner" aria-hidden="true"></span>
+        </p>
+        <div id="blc-test-email-feedback" class="blc-test-email-feedback" aria-live="polite"></div>
+    </fieldset>
     <?php
 }
 
@@ -1252,6 +1311,17 @@ function blc_sanitize_excluded_domains_option($value) {
  * @return bool
  */
 function blc_sanitize_debug_mode_option($value) {
+    return (bool) $value;
+}
+
+/**
+ * Sanitize les options booléennes liées aux canaux de notification.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return bool
+ */
+function blc_sanitize_notification_channel_option($value) {
     return (bool) $value;
 }
 

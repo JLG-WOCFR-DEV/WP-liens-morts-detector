@@ -198,6 +198,22 @@ function blc_enqueue_admin_assets($hook) {
             'bulkSuccessAnnouncement'  => __('Les actions groupées ont été appliquées avec succès.', 'liens-morts-detector-jlg'),
         )
     );
+
+    wp_localize_script(
+        'blc-admin-js',
+        'blcAdminNotifications',
+        array(
+            'action'                 => 'blc_send_test_email',
+            'nonce'                  => wp_create_nonce('blc_send_test_email'),
+            'ajaxUrl'                => admin_url('admin-ajax.php'),
+            'sendingText'            => __('Envoi du message de test…', 'liens-morts-detector-jlg'),
+            'successText'            => __('E-mail de test envoyé avec succès.', 'liens-morts-detector-jlg'),
+            'partialSuccessText'     => __('E-mail de test envoyé, mais certains canaux ont rencontré une erreur.', 'liens-morts-detector-jlg'),
+            'errorText'              => __('Échec de l’envoi de l’e-mail de test. Veuillez réessayer.', 'liens-morts-detector-jlg'),
+            'missingRecipientsText'  => __('Ajoutez au moins un destinataire avant d’envoyer un test.', 'liens-morts-detector-jlg'),
+            'missingChannelText'     => __('Activez au moins un canal de notification pour envoyer un test.', 'liens-morts-detector-jlg'),
+        )
+    );
 }
 
 /**
@@ -755,4 +771,128 @@ function blc_ajax_ignore_link_callback() {
         'announcement' => $announcement,
         'ignored'      => $is_currently_ignored,
     ]);
+}
+
+add_action('wp_ajax_blc_send_test_email', 'blc_ajax_send_test_email');
+function blc_ajax_send_test_email() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(
+            array('message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')),
+            BLC_HTTP_FORBIDDEN
+        );
+    }
+
+    check_ajax_referer('blc_send_test_email');
+
+    $raw_recipients = isset($_POST['recipients']) ? wp_unslash($_POST['recipients']) : '';
+    $recipients     = blc_parse_notification_recipients($raw_recipients);
+
+    if ($recipients === array()) {
+        wp_send_json_error(
+            array('message' => __('Ajoutez au moins un destinataire avant d’envoyer un test.', 'liens-morts-detector-jlg')),
+            BLC_HTTP_BAD_REQUEST
+        );
+    }
+
+    $dataset_input = array();
+    if (isset($_POST['dataset_types'])) {
+        $dataset_input = wp_unslash($_POST['dataset_types']);
+    }
+
+    if (!is_array($dataset_input)) {
+        $dataset_input = $dataset_input === '' ? array() : array($dataset_input);
+    }
+
+    $allowed_types = array('link', 'links', 'image', 'images');
+    $dataset_types = array();
+    foreach ($dataset_input as $candidate) {
+        if (!is_scalar($candidate)) {
+            continue;
+        }
+
+        $normalized = strtolower(trim((string) $candidate));
+        if ($normalized === '') {
+            continue;
+        }
+
+        if (!in_array($normalized, $allowed_types, true)) {
+            continue;
+        }
+
+        if ($normalized === 'links') {
+            $normalized = 'link';
+        } elseif ($normalized === 'images') {
+            $normalized = 'image';
+        }
+
+        $dataset_types[$normalized] = $normalized;
+    }
+
+    if ($dataset_types === array()) {
+        wp_send_json_error(
+            array('message' => __('Activez au moins un canal de notification pour envoyer un test.', 'liens-morts-detector-jlg')),
+            BLC_HTTP_BAD_REQUEST
+        );
+    }
+
+    $sent_types   = array();
+    $failed_types = array();
+
+    $labels = array(
+        'link'  => __('analyse des liens', 'liens-morts-detector-jlg'),
+        'image' => __('analyse des images', 'liens-morts-detector-jlg'),
+    );
+
+    foreach ($dataset_types as $dataset_type) {
+        $email = blc_generate_scan_summary_email($dataset_type);
+        if ($email === null) {
+            $failed_types[] = $dataset_type;
+            continue;
+        }
+
+        $mail_sent = wp_mail($recipients, $email['subject'], $email['message']);
+        if ($mail_sent) {
+            $sent_types[] = $dataset_type;
+        } else {
+            $failed_types[] = $dataset_type;
+        }
+    }
+
+    if ($sent_types === array()) {
+        wp_send_json_error(
+            array('message' => __('Échec de l’envoi de l’e-mail de test. Veuillez réessayer.', 'liens-morts-detector-jlg')),
+            BLC_HTTP_SERVER_ERROR
+        );
+    }
+
+    $build_label_list = static function (array $types) use ($labels) {
+        $names = array();
+        foreach ($types as $type) {
+            $names[] = isset($labels[$type]) ? $labels[$type] : $type;
+        }
+
+        return implode(', ', $names);
+    };
+
+    $message = __('E-mail de test envoyé avec succès.', 'liens-morts-detector-jlg');
+    $partial = false;
+
+    if ($failed_types !== array()) {
+        $partial  = true;
+        $message = sprintf(
+            /* translators: 1: List of successful channels, 2: list of failed channels. */
+            __('E-mail de test envoyé pour : %1$s. Échec pour : %2$s.', 'liens-morts-detector-jlg'),
+            $build_label_list($sent_types),
+            $build_label_list($failed_types)
+        );
+    }
+
+    wp_send_json_success(
+        array(
+            'message'       => $message,
+            'sent'          => $sent_types,
+            'failed'        => $failed_types,
+            'partial'       => $partial,
+        )
+    );
 }
