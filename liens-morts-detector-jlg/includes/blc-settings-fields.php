@@ -405,6 +405,78 @@ function blc_get_timezone_label() {
 }
 
 /**
+ * Retourne la liste des fréquences prédéfinies disponibles dans l'interface.
+ *
+ * @since 1.1.0
+ *
+ * @return array<string, string> Tableau associatif `valeur => libellé`.
+ */
+function blc_get_frequency_preset_options() {
+    $default_displays = blc_get_default_cron_schedules();
+
+    $base_options = array(
+        'blc_hourly'       => isset($default_displays['blc_hourly']['display'])
+            ? $default_displays['blc_hourly']['display']
+            : __('Toutes les heures', 'liens-morts-detector-jlg'),
+        'blc_six_hours'    => isset($default_displays['blc_six_hours']['display'])
+            ? $default_displays['blc_six_hours']['display']
+            : __('Toutes les 6 heures', 'liens-morts-detector-jlg'),
+        'blc_twelve_hours' => isset($default_displays['blc_twelve_hours']['display'])
+            ? $default_displays['blc_twelve_hours']['display']
+            : __('Toutes les 12 heures', 'liens-morts-detector-jlg'),
+        'daily'            => __('Quotidienne', 'liens-morts-detector-jlg'),
+        'weekly'           => isset($default_displays['weekly']['display'])
+            ? $default_displays['weekly']['display']
+            : __('Hebdomadaire', 'liens-morts-detector-jlg'),
+        'monthly'          => isset($default_displays['monthly']['display'])
+            ? $default_displays['monthly']['display']
+            : __('Mensuelle', 'liens-morts-detector-jlg'),
+    );
+
+    /**
+     * Permet de personnaliser les options affichées dans le sélecteur de fréquence.
+     *
+     * @since 1.1.0
+     *
+     * @param array $base_options Tableau associatif de valeurs => libellés ou définitions.
+     */
+    $options = apply_filters('blc_frequency_preset_options', $base_options);
+
+    $normalized_options = array();
+
+    foreach ($options as $value => $definition) {
+        if (!is_scalar($value)) {
+            continue;
+        }
+
+        $value = (string) $value;
+        if ('' === $value) {
+            continue;
+        }
+
+        if (is_array($definition)) {
+            if (isset($definition['label']) && is_scalar($definition['label'])) {
+                $label = (string) $definition['label'];
+            } elseif (isset($definition['display']) && is_scalar($definition['display'])) {
+                $label = (string) $definition['display'];
+            } else {
+                continue;
+            }
+        } else {
+            $label = (string) $definition;
+        }
+
+        if ('' === $label) {
+            continue;
+        }
+
+        $normalized_options[$value] = $label;
+    }
+
+    return $normalized_options;
+}
+
+/**
  * Affiche le champ de sélection de la fréquence de vérification.
  *
  * @return void
@@ -423,14 +495,13 @@ function blc_render_frequency_field() {
 
     $is_custom_selected = ('custom' === $frequency);
 
-    $preset_options = array(
-        'blc_hourly'      => __('Toutes les heures', 'liens-morts-detector-jlg'),
-        'blc_six_hours'   => __('Toutes les 6 heures', 'liens-morts-detector-jlg'),
-        'blc_twelve_hours'=> __('Toutes les 12 heures', 'liens-morts-detector-jlg'),
-        'daily'           => __('Quotidienne', 'liens-morts-detector-jlg'),
-        'weekly'          => __('Hebdomadaire', 'liens-morts-detector-jlg'),
-        'monthly'         => __('Mensuelle', 'liens-morts-detector-jlg'),
-    );
+    $preset_options = blc_get_frequency_preset_options();
+
+    if (empty($preset_options)) {
+        $preset_options = array(
+            'daily' => __('Quotidienne', 'liens-morts-detector-jlg'),
+        );
+    }
     ?>
     <fieldset id="blc_frequency_fieldset" class="blc-frequency-field">
         <legend class="screen-reader-text"><?php esc_html_e('Fréquence de vérification des liens', 'liens-morts-detector-jlg'); ?></legend>
@@ -936,15 +1007,9 @@ function blc_sanitize_frequency_custom_time_option($value) {
  * @return string
  */
 function blc_sanitize_frequency_option($value) {
-    $allowed_frequencies = array(
-        'blc_hourly',
-        'blc_six_hours',
-        'blc_twelve_hours',
-        'daily',
-        'weekly',
-        'monthly',
-        'custom',
-    );
+    $preset_options     = blc_get_frequency_preset_options();
+    $allowed_frequencies = array_keys($preset_options);
+    $allowed_frequencies[] = 'custom';
 
     $previous_frequency_option    = get_option('blc_frequency', 'daily');
     $previous_frequency_sanitized = sanitize_text_field($previous_frequency_option);
@@ -959,15 +1024,8 @@ function blc_sanitize_frequency_option($value) {
         $frequency = $submitted_frequency;
     } else {
         $frequency        = $fallback_frequency;
-        $frequency_labels = array(
-            'blc_hourly'       => __('toutes les heures', 'liens-morts-detector-jlg'),
-            'blc_six_hours'    => __('toutes les 6 heures', 'liens-morts-detector-jlg'),
-            'blc_twelve_hours' => __('toutes les 12 heures', 'liens-morts-detector-jlg'),
-            'daily'            => __('quotidienne', 'liens-morts-detector-jlg'),
-            'weekly'           => __('hebdomadaire', 'liens-morts-detector-jlg'),
-            'monthly'          => __('mensuelle', 'liens-morts-detector-jlg'),
-            'custom'           => __('personnalisée', 'liens-morts-detector-jlg'),
-        );
+        $frequency_labels = $preset_options;
+        $frequency_labels['custom'] = __('Intervalle personnalisé', 'liens-morts-detector-jlg');
         $frequency_label = isset($frequency_labels[$frequency]) ? $frequency_labels[$frequency] : $frequency;
         $message         = sprintf(
             /* translators: %s: fallback frequency label. */

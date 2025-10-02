@@ -24,6 +24,31 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 - L’analyse des images distantes (CDN, sous-domaines médias) peut être activée dans les réglages. Cette vérification reste basée sur les fichiers présents dans `wp-content/uploads` et peut rallonger la durée du scan ou consommer davantage de quotas côté CDN.
 
 ## Hooks disponibles
+### `blc_cron_schedule_definitions`
+Permet d’ajouter, modifier ou supprimer des intervalles WP‑Cron proposés par défaut (heures, jours, semaines…). Chaque entrée doit fournir un identifiant unique ainsi qu’un intervalle en secondes.
+
+```php
+add_filter('blc_cron_schedule_definitions', function (array $definitions): array {
+    $definitions['quarter_hour'] = array(
+        'interval' => 15 * MINUTE_IN_SECONDS,
+        'display'  => __('Toutes les 15 minutes', 'liens-morts-detector-jlg'),
+    );
+
+    return $definitions;
+});
+```
+
+### `blc_frequency_preset_options`
+Personnalise la liste des fréquences affichées dans les réglages (radios + champ personnalisé). Idéal pour mettre en cohérence l’interface avec un nouvel intervalle WP‑Cron ajouté via le filtre précédent.
+
+```php
+add_filter('blc_frequency_preset_options', function (array $options): array {
+    $options = array('quarter_hour' => __('Toutes les 15 minutes', 'liens-morts-detector-jlg')) + $options;
+
+    return $options;
+});
+```
+
 ### `blc_max_load_threshold`
 Permet d’ajuster le seuil de charge CPU au‑delà duquel l’analyse est reportée. La valeur par défaut est `2.0`.
 

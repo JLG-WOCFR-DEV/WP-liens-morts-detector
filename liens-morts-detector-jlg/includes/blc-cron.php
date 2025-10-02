@@ -6,41 +6,78 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Ajoute des planifications personnalisées (hebdomadaire, mensuelle) à la liste des
+ * Retourne les planifications personnalisées proposées par défaut.
+ *
+ * @since 1.1.0
+ *
+ * @return array<string, array{interval:int, display:string}> Tableau associatif de définitions.
+ */
+function blc_get_default_cron_schedules() {
+    return array(
+        'blc_hourly'       => array(
+            'interval' => HOUR_IN_SECONDS,
+            'display'  => __('Toutes les heures', 'liens-morts-detector-jlg'),
+        ),
+        'blc_six_hours'    => array(
+            'interval' => 6 * HOUR_IN_SECONDS,
+            'display'  => __('Toutes les 6 heures', 'liens-morts-detector-jlg'),
+        ),
+        'blc_twelve_hours' => array(
+            'interval' => 12 * HOUR_IN_SECONDS,
+            'display'  => __('Toutes les 12 heures', 'liens-morts-detector-jlg'),
+        ),
+        'weekly'           => array(
+            'interval' => 7 * DAY_IN_SECONDS,
+            'display'  => __('Une fois par semaine', 'liens-morts-detector-jlg'),
+        ),
+        'monthly'          => array(
+            'interval' => 30 * DAY_IN_SECONDS,
+            'display'  => __('Une fois par mois', 'liens-morts-detector-jlg'),
+        ),
+    );
+}
+
+/**
+ * Ajoute des planifications personnalisées (hebdomadaire, mensuelle, etc.) à la liste des
  * fréquences de WP-Cron.
  *
  * @param array $schedules Le tableau des planifications existantes.
  * @return array Le tableau des planifications mis à jour.
  */
 function blc_add_cron_schedules($schedules) {
+    $default_definitions = blc_get_default_cron_schedules();
 
-    // Ajoute des options courtes supplémentaires.
-    $schedules['blc_hourly'] = array(
-        'interval' => HOUR_IN_SECONDS,
-        'display'  => __('Toutes les heures', 'liens-morts-detector-jlg'),
-    );
+    /**
+     * Permet de modifier la liste des planifications ajoutées par le plugin.
+     *
+     * @since 1.1.0
+     *
+     * @param array $default_definitions Tableau associatif `slug => array( 'interval' => int, 'display' => string )`.
+     */
+    $definitions = apply_filters('blc_cron_schedule_definitions', $default_definitions);
 
-    $schedules['blc_six_hours'] = array(
-        'interval' => 6 * HOUR_IN_SECONDS,
-        'display'  => __('Toutes les 6 heures', 'liens-morts-detector-jlg'),
-    );
+    foreach ($definitions as $slug => $definition) {
+        if (!is_scalar($slug)) {
+            continue;
+        }
 
-    $schedules['blc_twelve_hours'] = array(
-        'interval' => 12 * HOUR_IN_SECONDS,
-        'display'  => __('Toutes les 12 heures', 'liens-morts-detector-jlg'),
-    );
+        $slug = (string) $slug;
+        if ('' === $slug || !is_array($definition)) {
+            continue;
+        }
 
-    // Ajoute l'option "Une fois par semaine"
-    $schedules['weekly'] = array(
-        'interval' => 7 * DAY_IN_SECONDS,
-        'display'  => __('Une fois par semaine', 'liens-morts-detector-jlg'),
-    );
+        $interval = isset($definition['interval']) ? (int) $definition['interval'] : 0;
+        if ($interval <= 0) {
+            continue;
+        }
 
-    // Ajoute l'option "Une fois par mois"
-    $schedules['monthly'] = array(
-        'interval' => 30 * DAY_IN_SECONDS,
-        'display'  => __('Une fois par mois', 'liens-morts-detector-jlg'),
-    );
+        $display = isset($definition['display']) ? (string) $definition['display'] : $slug;
+
+        $schedules[$slug] = array(
+            'interval' => $interval,
+            'display'  => $display,
+        );
+    }
 
     $custom_hours = blc_get_custom_frequency_hours();
     $default_custom_schedule = array(
