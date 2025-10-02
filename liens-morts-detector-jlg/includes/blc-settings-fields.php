@@ -1,0 +1,1058 @@
+<?php
+
+// Sécurité : empêche l'accès direct au fichier.
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+if (!function_exists('blc_normalize_hour_option')) {
+    require_once __DIR__ . '/blc-utils.php';
+}
+
+add_action('admin_init', 'blc_register_settings');
+
+/**
+ * Enregistre toutes les options de la page de réglages via l'API Settings.
+ *
+ * @return void
+ */
+function blc_register_settings() {
+    $option_group = 'blc_settings';
+    $timeout_constraints = blc_get_request_timeout_constraints();
+    $head_timeout_limits = isset($timeout_constraints['head']) ? $timeout_constraints['head'] : array('default' => 5);
+    $get_timeout_limits  = isset($timeout_constraints['get']) ? $timeout_constraints['get'] : array('default' => 10);
+
+    register_setting(
+        $option_group,
+        'blc_frequency',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_frequency_option',
+            'default'           => 'daily',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_rest_start_hour',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_rest_start_hour_option',
+            'default'           => '08',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_rest_end_hour',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_rest_end_hour_option',
+            'default'           => '20',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_link_delay',
+        array(
+            'type'              => 'integer',
+            'sanitize_callback' => 'blc_sanitize_link_delay_option',
+            'default'           => 200,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_batch_delay',
+        array(
+            'type'              => 'integer',
+            'sanitize_callback' => 'blc_sanitize_batch_delay_option',
+            'default'           => 60,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_head_request_timeout',
+        array(
+            'type'              => 'number',
+            'sanitize_callback' => 'blc_sanitize_head_timeout_option',
+            'default'           => isset($head_timeout_limits['default']) ? $head_timeout_limits['default'] : 5,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_get_request_timeout',
+        array(
+            'type'              => 'number',
+            'sanitize_callback' => 'blc_sanitize_get_timeout_option',
+            'default'           => isset($get_timeout_limits['default']) ? $get_timeout_limits['default'] : 10,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_scan_method',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_scan_method_option',
+            'default'           => 'precise',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_remote_image_scan_enabled',
+        array(
+            'type'              => 'boolean',
+            'sanitize_callback' => 'blc_sanitize_remote_image_scan_option',
+            'default'           => false,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_post_statuses',
+        array(
+            'type'              => 'array',
+            'sanitize_callback' => 'blc_sanitize_post_statuses_option',
+            'default'           => array('publish'),
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_excluded_domains',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_excluded_domains_option',
+            'default'           => "x.com\ntwitter.com\nlinkedin.com",
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_debug_mode',
+        array(
+            'type'              => 'boolean',
+            'sanitize_callback' => 'blc_sanitize_debug_mode_option',
+            'default'           => false,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_notification_recipients',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_notification_recipients_option',
+            'default'           => '',
+        )
+    );
+
+    blc_register_settings_sections();
+}
+
+/**
+ * Déclare les sections et les champs affichés dans la page de réglages.
+ *
+ * @return void
+ */
+function blc_register_settings_sections() {
+    $page = 'blc-settings';
+
+    add_settings_section(
+        'blc_planification_section',
+        __('Planification', 'liens-morts-detector-jlg'),
+        '__return_false',
+        $page
+    );
+
+    add_settings_field(
+        'blc_frequency',
+        __('Fréquence de vérification', 'liens-morts-detector-jlg'),
+        'blc_render_frequency_field',
+        $page,
+        'blc_planification_section',
+        array(
+            'label_for' => 'blc_frequency',
+        )
+    );
+
+    add_settings_field(
+        'blc_rest_period',
+        __('😴 Plage horaire de repos', 'liens-morts-detector-jlg'),
+        'blc_render_rest_period_field',
+        $page,
+        'blc_planification_section',
+        array(
+            'label_for' => 'blc_rest_start_hour',
+        )
+    );
+
+    add_settings_section(
+        'blc_performance_section',
+        __('Performance', 'liens-morts-detector-jlg'),
+        '__return_false',
+        $page
+    );
+
+    add_settings_field(
+        'blc_link_delay',
+        __('⚙️ Délai entre chaque lien', 'liens-morts-detector-jlg'),
+        'blc_render_number_field',
+        $page,
+        'blc_performance_section',
+        array(
+            'option_name' => 'blc_link_delay',
+            'min'         => 0,
+            'step'        => 50,
+            'unit'        => __('ms', 'liens-morts-detector-jlg'),
+            'description' => __('Pause après la vérification de chaque URL. (Défaut : 200)', 'liens-morts-detector-jlg'),
+            'label_for'   => 'blc_link_delay',
+        )
+    );
+
+    add_settings_field(
+        'blc_batch_delay',
+        __('⚙️ Délai entre chaque lot', 'liens-morts-detector-jlg'),
+        'blc_render_number_field',
+        $page,
+        'blc_performance_section',
+        array(
+            'option_name' => 'blc_batch_delay',
+            'min'         => 10,
+            'step'        => 10,
+            'unit'        => __('secondes', 'liens-morts-detector-jlg'),
+            'description' => __('Pause entre chaque groupe de 20 articles analysés. (Défaut : 60)', 'liens-morts-detector-jlg'),
+            'label_for'   => 'blc_batch_delay',
+        )
+    );
+
+    add_settings_field(
+        'blc_head_request_timeout',
+        __('⏱️ Timeout requêtes HEAD', 'liens-morts-detector-jlg'),
+        'blc_render_timeout_field',
+        $page,
+        'blc_performance_section',
+        array(
+            'option_name' => 'blc_head_request_timeout',
+            'description' => __('Durée maximale accordée à chaque requête HEAD. (Défaut : 5)', 'liens-morts-detector-jlg'),
+            'constraints' => 'head',
+            'label_for'   => 'blc_head_request_timeout',
+        )
+    );
+
+    add_settings_field(
+        'blc_get_request_timeout',
+        __('⏱️ Timeout requêtes GET', 'liens-morts-detector-jlg'),
+        'blc_render_timeout_field',
+        $page,
+        'blc_performance_section',
+        array(
+            'option_name' => 'blc_get_request_timeout',
+            'description' => __('Durée maximale accordée à chaque requête GET lors du fallback. (Défaut : 10)', 'liens-morts-detector-jlg'),
+            'constraints' => 'get',
+            'label_for'   => 'blc_get_request_timeout',
+        )
+    );
+
+    add_settings_section(
+        'blc_post_statuses_section',
+        __('Statuts analysés', 'liens-morts-detector-jlg'),
+        '__return_false',
+        $page
+    );
+
+    add_settings_field(
+        'blc_post_statuses',
+        __('Statuts des contenus à analyser', 'liens-morts-detector-jlg'),
+        'blc_render_post_statuses_field',
+        $page,
+        'blc_post_statuses_section'
+    );
+
+    add_settings_section(
+        'blc_scan_section',
+        __('Méthode d\'Analyse', 'liens-morts-detector-jlg'),
+        '__return_false',
+        $page
+    );
+
+    add_settings_field(
+        'blc_scan_method',
+        __('Stratégie de vérification', 'liens-morts-detector-jlg'),
+        'blc_render_scan_method_field',
+        $page,
+        'blc_scan_section'
+    );
+
+    add_settings_field(
+        'blc_excluded_domains',
+        __('Liste d\'exclusion', 'liens-morts-detector-jlg'),
+        'blc_render_excluded_domains_field',
+        $page,
+        'blc_scan_section',
+        array(
+            'label_for' => 'blc_excluded_domains',
+        )
+    );
+
+    add_settings_section(
+        'blc_images_section',
+        __('Images distantes', 'liens-morts-detector-jlg'),
+        '__return_false',
+        $page
+    );
+
+    add_settings_field(
+        'blc_remote_image_scan_enabled',
+        __('Analyse des images CDN', 'liens-morts-detector-jlg'),
+        'blc_render_remote_image_scan_field',
+        $page,
+        'blc_images_section'
+    );
+
+    add_settings_section(
+        'blc_notifications_section',
+        __('Notifications', 'liens-morts-detector-jlg'),
+        '__return_false',
+        $page
+    );
+
+    add_settings_field(
+        'blc_notification_recipients',
+        __('Destinataires du résumé', 'liens-morts-detector-jlg'),
+        'blc_render_notification_recipients_field',
+        $page,
+        'blc_notifications_section',
+        array(
+            'label_for' => 'blc_notification_recipients',
+        )
+    );
+
+    add_settings_section(
+        'blc_debug_section',
+        __('Débogage', 'liens-morts-detector-jlg'),
+        '__return_false',
+        $page
+    );
+
+    add_settings_field(
+        'blc_debug_mode',
+        __('Mode Débogage', 'liens-morts-detector-jlg'),
+        'blc_render_debug_mode_field',
+        $page,
+        'blc_debug_section'
+    );
+}
+
+/**
+ * Calcule l'étiquette de fuseau horaire affichée sur la page des réglages.
+ *
+ * @return string
+ */
+function blc_get_timezone_label() {
+    $timezone_label = '';
+
+    if (function_exists('wp_timezone_string')) {
+        $timezone_label = (string) wp_timezone_string();
+    }
+
+    if ('' === $timezone_label && function_exists('wp_timezone')) {
+        $timezone_object = wp_timezone();
+        if ($timezone_object instanceof DateTimeZone) {
+            $timezone_label = $timezone_object->getName();
+        }
+    }
+
+    if ('' === $timezone_label) {
+        $timezone_label = (string) get_option('timezone_string', '');
+    }
+
+    if ('' === $timezone_label) {
+        $gmt_offset = get_option('gmt_offset');
+        if (is_numeric($gmt_offset) && (float) $gmt_offset !== 0.0) {
+            $timezone_label = sprintf('UTC%+g', (float) $gmt_offset);
+        } else {
+            $timezone_label = 'UTC';
+        }
+    }
+
+    return $timezone_label;
+}
+
+/**
+ * Affiche le champ de sélection de la fréquence de vérification.
+ *
+ * @return void
+ */
+function blc_render_frequency_field() {
+    $frequency = get_option('blc_frequency', 'daily');
+    ?>
+    <select name="blc_frequency" id="blc_frequency">
+        <option value="daily" <?php selected($frequency, 'daily'); ?>><?php esc_html_e('Quotidienne', 'liens-morts-detector-jlg'); ?></option>
+        <option value="weekly" <?php selected($frequency, 'weekly'); ?>><?php esc_html_e('Hebdomadaire', 'liens-morts-detector-jlg'); ?></option>
+        <option value="monthly" <?php selected($frequency, 'monthly'); ?>><?php esc_html_e('Mensuelle', 'liens-morts-detector-jlg'); ?></option>
+    </select>
+    <p class="description">
+        <?php
+        echo wp_kses(
+            __('Fréquence de la vérification automatique des <strong>liens</strong>.', 'liens-morts-detector-jlg'),
+            array('strong' => array())
+        );
+        ?>
+    </p>
+    <?php
+}
+
+/**
+ * Affiche les champs de plage horaire de repos.
+ *
+ * @return void
+ */
+function blc_render_rest_period_field() {
+    $rest_start_hour_option = get_option('blc_rest_start_hour', '08');
+    $rest_end_hour_option   = get_option('blc_rest_end_hour', '20');
+
+    $rest_start_hour = blc_prepare_time_input_value($rest_start_hour_option, '08');
+    $rest_end_hour   = blc_prepare_time_input_value($rest_end_hour_option, '20');
+    $timezone_label  = blc_get_timezone_label();
+
+    ?>
+    <?php esc_html_e('Ne pas lancer de scan entre', 'liens-morts-detector-jlg'); ?>
+    <label class="screen-reader-text" for="blc_rest_start_hour"><?php esc_html_e('Heure de début de la plage de repos', 'liens-morts-detector-jlg'); ?></label>
+    <input type="time" name="blc_rest_start_hour" id="blc_rest_start_hour" value="<?php echo esc_attr($rest_start_hour); ?>">
+    <?php esc_html_e('et', 'liens-morts-detector-jlg'); ?>
+    <label class="screen-reader-text" for="blc_rest_end_hour"><?php esc_html_e('Heure de fin de la plage de repos', 'liens-morts-detector-jlg'); ?></label>
+    <input type="time" name="blc_rest_end_hour" id="blc_rest_end_hour" value="<?php echo esc_attr($rest_end_hour); ?>">
+    <p class="description">
+        <?php
+        $timezone_information = sprintf(
+            /* translators: %s: timezone label. */
+            __('Fuseau horaire : %s', 'liens-morts-detector-jlg'),
+            esc_html($timezone_label)
+        );
+
+        $timezone_description = sprintf(
+            /* translators: %s: formatted timezone information. */
+            __('Le scan automatique des <strong>liens</strong> ne s\'exécutera pas durant cette période. %s', 'liens-morts-detector-jlg'),
+            $timezone_information
+        );
+
+        echo wp_kses(
+            $timezone_description,
+            array('strong' => array())
+        );
+        ?>
+    </p>
+    <?php
+}
+
+/**
+ * Affiche un champ numérique générique.
+ *
+ * @param array $args Arguments de configuration du champ.
+ *
+ * @return void
+ */
+function blc_render_number_field($args) {
+    $option_name = isset($args['option_name']) ? (string) $args['option_name'] : '';
+    if ('' === $option_name) {
+        return;
+    }
+
+    if (isset($args['value'])) {
+        $value = $args['value'];
+    } else {
+        $value = get_option($option_name, 0);
+    }
+    $min   = isset($args['min']) ? $args['min'] : null;
+    $max   = isset($args['max']) ? $args['max'] : null;
+    $step  = isset($args['step']) ? $args['step'] : 1;
+    $unit  = isset($args['unit']) ? (string) $args['unit'] : '';
+
+    $attributes = array(
+        'type="number"',
+        'name="' . esc_attr($option_name) . '"',
+        'id="' . esc_attr($option_name) . '"',
+        'value="' . esc_attr($value) . '"',
+        'step="' . esc_attr($step) . '"',
+    );
+
+    if (null !== $min) {
+        $attributes[] = 'min="' . esc_attr($min) . '"';
+    }
+
+    if (null !== $max) {
+        $attributes[] = 'max="' . esc_attr($max) . '"';
+    }
+
+    echo '<input ' . implode(' ', $attributes) . '>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+
+    if ('' !== $unit) {
+        echo ' ' . esc_html($unit);
+    }
+
+    if (!empty($args['description'])) {
+        echo '<p class="description">' . esc_html($args['description']) . '</p>';
+    }
+}
+
+/**
+ * Affiche un champ numérique spécifique aux timeouts.
+ *
+ * @param array $args Arguments contenant notamment les contraintes à utiliser.
+ *
+ * @return void
+ */
+function blc_render_timeout_field($args) {
+    $option_name = isset($args['option_name']) ? (string) $args['option_name'] : '';
+    if ('' === $option_name) {
+        return;
+    }
+
+    $constraints_key = isset($args['constraints']) ? (string) $args['constraints'] : '';
+    $timeout_constraints = blc_get_request_timeout_constraints();
+
+    if (!isset($timeout_constraints[$constraints_key])) {
+        $limits = array('min' => 0, 'max' => 0, 'default' => 0);
+    } else {
+        $limits = $timeout_constraints[$constraints_key];
+    }
+
+    $value = blc_normalize_timeout_option(
+        get_option($option_name, $limits['default']),
+        $limits['default'],
+        $limits['min'],
+        $limits['max']
+    );
+
+    blc_render_number_field(
+        array(
+            'option_name' => $option_name,
+            'min'         => $limits['min'],
+            'max'         => $limits['max'],
+            'step'        => 0.5,
+            'unit'        => __('secondes', 'liens-morts-detector-jlg'),
+            'description' => isset($args['description']) ? $args['description'] : '',
+            'value'       => $value,
+        )
+    );
+}
+
+/**
+ * Affiche la liste des statuts de contenus sélectionnables.
+ *
+ * @return void
+ */
+function blc_render_post_statuses_field() {
+    $selected_post_statuses_option = get_option('blc_post_statuses', array('publish'));
+    if (!is_array($selected_post_statuses_option)) {
+        $selected_post_statuses_option = array($selected_post_statuses_option);
+    }
+
+    $selected_post_statuses = array();
+    foreach ($selected_post_statuses_option as $status_value) {
+        if (!is_scalar($status_value)) {
+            continue;
+        }
+
+        $status_key = sanitize_key((string) $status_value);
+        if ('' === $status_key) {
+            continue;
+        }
+
+        $selected_post_statuses[$status_key] = $status_key;
+    }
+
+    if (array() === $selected_post_statuses) {
+        $selected_post_statuses = array('publish');
+    }
+
+    $status_objects = get_post_stati(array(), 'objects');
+    if (!is_array($status_objects)) {
+        $status_objects = array();
+    }
+
+    foreach ($status_objects as $status_key => $status_object) {
+        $sanitized_key = sanitize_key((string) $status_key);
+        if ('' === $sanitized_key) {
+            continue;
+        }
+
+        $label = '';
+        if (is_object($status_object) && isset($status_object->label) && '' !== $status_object->label) {
+            $label = (string) $status_object->label;
+        }
+
+        if ('' === $label) {
+            $label = ucwords(str_replace(array('-', '_'), ' ', $sanitized_key));
+        }
+
+        ?>
+        <label>
+            <input type="checkbox" name="blc_post_statuses[]" value="<?php echo esc_attr($sanitized_key); ?>" <?php checked(in_array($sanitized_key, $selected_post_statuses, true)); ?>>
+            <?php echo esc_html($label); ?>
+        </label><br>
+        <?php
+    }
+
+    ?>
+    <p class="description"><?php esc_html_e('Sélectionnez les statuts des contenus à inclure dans l’analyse. Par défaut, seuls les contenus publiés sont examinés.', 'liens-morts-detector-jlg'); ?></p>
+    <?php
+}
+
+/**
+ * Affiche les options de méthode d'analyse.
+ *
+ * @return void
+ */
+function blc_render_scan_method_field() {
+    $scan_method = get_option('blc_scan_method', 'precise');
+    ?>
+    <fieldset>
+        <div class="blc-scan-method-option">
+            <label>
+                <input
+                    type="radio"
+                    name="blc_scan_method"
+                    value="precise"
+                    <?php checked($scan_method, 'precise'); ?>
+                    aria-describedby="blc-scan-method-precise-desc"
+                >
+                <strong><?php esc_html_e('Précise (recommandé)', 'liens-morts-detector-jlg'); ?></strong>
+            </label>
+            <p id="blc-scan-method-precise-desc" class="description"><?php esc_html_e('Simule un navigateur. Réduit les faux positifs, mais est un peu plus lent.', 'liens-morts-detector-jlg'); ?></p>
+        </div>
+        <div class="blc-scan-method-option">
+            <label>
+                <input
+                    type="radio"
+                    name="blc_scan_method"
+                    value="fast"
+                    <?php checked($scan_method, 'fast'); ?>
+                    aria-describedby="blc-scan-method-fast-desc"
+                >
+                <strong><?php esc_html_e('Rapide', 'liens-morts-detector-jlg'); ?></strong>
+            </label>
+            <p id="blc-scan-method-fast-desc" class="description"><?php esc_html_e('Vérification basique. Très léger, mais peut générer des faux positifs.', 'liens-morts-detector-jlg'); ?></p>
+        </div>
+    </fieldset>
+    <?php
+}
+
+/**
+ * Affiche le champ de liste d'exclusion.
+ *
+ * @return void
+ */
+function blc_render_excluded_domains_field() {
+    $excluded_domains = get_option('blc_excluded_domains', "x.com\ntwitter.com\nlinkedin.com");
+    ?>
+    <textarea name="blc_excluded_domains" id="blc_excluded_domains" rows="5" class="large-text"><?php echo esc_textarea($excluded_domains); ?></textarea>
+    <p class="description"><?php esc_html_e('Domaines à ignorer pendant l’analyse. Un domaine par ligne (ex: amazon.fr).', 'liens-morts-detector-jlg'); ?></p>
+    <?php
+}
+
+/**
+ * Affiche le champ d'activation de l'analyse des images distantes.
+ *
+ * @return void
+ */
+function blc_render_remote_image_scan_field() {
+    $remote_image_scan_enabled = (bool) get_option('blc_remote_image_scan_enabled', false);
+    ?>
+    <fieldset>
+        <label for="blc_remote_image_scan_enabled">
+            <input type="checkbox" name="blc_remote_image_scan_enabled" id="blc_remote_image_scan_enabled" value="1" <?php checked($remote_image_scan_enabled, true); ?>>
+            <?php esc_html_e('Vérifier aussi les images servies depuis un domaine ou un CDN distinct.', 'liens-morts-detector-jlg'); ?>
+        </label>
+        <p class="description">
+            <?php
+            echo wp_kses(
+                __('Activez cette option si vos images sont délivrées via un CDN ou un sous-domaine dédié. Le plugin s\'appuie toujours sur les fichiers présents dans <code>wp-content/uploads</code> pour détecter les absences. Cette vérification supplémentaire peut rallonger la durée du scan et consommer davantage de quotas côté CDN (latence, limitations de requêtes).', 'liens-morts-detector-jlg'),
+                array('code' => array())
+            );
+            ?>
+        </p>
+    </fieldset>
+    <?php
+}
+
+/**
+ * Affiche le champ des destinataires de notification.
+ *
+ * @return void
+ */
+function blc_render_notification_recipients_field() {
+    $notification_recipients = (string) get_option('blc_notification_recipients', '');
+    ?>
+    <textarea name="blc_notification_recipients" id="blc_notification_recipients" rows="3" class="large-text"><?php echo esc_textarea($notification_recipients); ?></textarea>
+    <p class="description"><?php esc_html_e('Indiquez une adresse e-mail par ligne ou séparez-les par des virgules pour recevoir un résumé après chaque analyse.', 'liens-morts-detector-jlg'); ?></p>
+    <?php
+}
+
+/**
+ * Affiche le champ permettant d'activer le mode débogage.
+ *
+ * @return void
+ */
+function blc_render_debug_mode_field() {
+    $debug_mode = (bool) get_option('blc_debug_mode', false);
+    ?>
+    <fieldset>
+        <label for="blc_debug_mode">
+            <input type="checkbox" name="blc_debug_mode" id="blc_debug_mode" value="1" <?php checked($debug_mode, true); ?>>
+            <?php esc_html_e('Activer le journal de débogage', 'liens-morts-detector-jlg'); ?>
+        </label>
+        <p class="description">
+            <?php
+            echo wp_kses_post(
+                __('Écrit des informations dans <code>/wp-content/debug.log</code>. Nécessite que <code>WP_DEBUG_LOG</code> soit à <code>true</code> dans <code>wp-config.php</code>.', 'liens-morts-detector-jlg')
+            );
+            ?>
+        </p>
+    </fieldset>
+    <?php
+}
+
+/**
+ * Valide et normalise la fréquence de vérification.
+ *
+ * @param mixed $value Valeur brute soumise.
+ *
+ * @return string
+ */
+function blc_sanitize_frequency_option($value) {
+    $allowed_frequencies = array('daily', 'weekly', 'monthly');
+    $previous_frequency_option = get_option('blc_frequency', 'daily');
+    $previous_frequency_sanitized = sanitize_text_field($previous_frequency_option);
+    $fallback_frequency = in_array($previous_frequency_sanitized, $allowed_frequencies, true)
+        ? $previous_frequency_sanitized
+        : 'daily';
+
+    $frequency_raw = is_scalar($value) ? (string) $value : '';
+    $submitted_frequency = sanitize_text_field($frequency_raw);
+
+    if (in_array($submitted_frequency, $allowed_frequencies, true)) {
+        $frequency = $submitted_frequency;
+    } else {
+        $frequency = $fallback_frequency;
+        $frequency_labels = array(
+            'daily'   => __('quotidienne', 'liens-morts-detector-jlg'),
+            'weekly'  => __('hebdomadaire', 'liens-morts-detector-jlg'),
+            'monthly' => __('mensuelle', 'liens-morts-detector-jlg'),
+        );
+        $frequency_label = isset($frequency_labels[$frequency]) ? $frequency_labels[$frequency] : $frequency;
+        $message = sprintf(
+            /* translators: %s: fallback frequency label. */
+            esc_html__('La fréquence choisie est invalide. La valeur "%s" a été conservée.', 'liens-morts-detector-jlg'),
+            esc_html($frequency_label)
+        );
+        add_settings_error('blc_settings', 'blc_frequency_warning', $message, 'warning');
+    }
+
+    $previous_event_timestamp = wp_next_scheduled('blc_check_links');
+    $previous_event_schedule  = wp_get_schedule('blc_check_links');
+    wp_clear_scheduled_hook('blc_check_links');
+    $scheduled = wp_schedule_event(time(), $frequency, 'blc_check_links');
+
+    if (false === $scheduled) {
+        error_log(
+            sprintf(
+                'BLC: Failed to schedule automatic link check (frequency: %s).',
+                $frequency
+            )
+        );
+        do_action('blc_check_links_schedule_failed', $frequency);
+
+        $restore_warning = '';
+        if (false !== $previous_event_timestamp && null !== $previous_event_timestamp) {
+            $restore_timestamp = (int) $previous_event_timestamp;
+            if ($restore_timestamp <= time()) {
+                $restore_timestamp = time() + HOUR_IN_SECONDS;
+            }
+
+            $restore_recurrence = $previous_event_schedule
+                ? $previous_event_schedule
+                : $previous_frequency_sanitized;
+            $restored = wp_schedule_event($restore_timestamp, $restore_recurrence, 'blc_check_links');
+
+            if (false === $restored) {
+                error_log(
+                    sprintf(
+                        'BLC: Failed to restore previous automatic link check schedule (recurrence: %s, timestamp: %d).',
+                        $restore_recurrence,
+                        $restore_timestamp
+                    )
+                );
+                $restore_warning = esc_html__(
+                    "L'ancienne planification n'a pas pu être restaurée. Une intervention manuelle est nécessaire.",
+                    'liens-morts-detector-jlg'
+                );
+            } else {
+                error_log('BLC: Previous automatic link check schedule restored after failure.');
+                $restore_notice = esc_html__(
+                    'La planification précédente a été restaurée automatiquement. Vérifiez que les prochaines analyses se lanceront correctement.',
+                    'liens-morts-detector-jlg'
+                );
+                add_settings_error('blc_settings', 'blc_frequency_restore_notice', $restore_notice, 'warning');
+            }
+        } else {
+            $restore_warning = esc_html__(
+                "Aucune ancienne planification n'a été trouvée. Veuillez configurer manuellement la vérification automatique.",
+                'liens-morts-detector-jlg'
+            );
+        }
+
+        $error_message = esc_html__(
+            "La nouvelle planification n'a pas pu être programmée. Vérifiez la configuration de WP-Cron.",
+            'liens-morts-detector-jlg'
+        );
+
+        add_settings_error('blc_settings', 'blc_frequency_schedule_error', $error_message, 'error');
+        if ('' !== $restore_warning) {
+            add_settings_error('blc_settings', 'blc_frequency_restore_warning', $restore_warning, 'warning');
+        }
+    } else {
+        add_settings_error('blc_settings', 'blc_settings_saved', esc_html__('Réglages enregistrés !', 'liens-morts-detector-jlg'), 'updated');
+    }
+
+    return $frequency;
+}
+
+/**
+ * Normalise une option d'heure de repos.
+ *
+ * @param mixed  $value       Valeur brute.
+ * @param string $option_name Nom de l'option.
+ * @param string $default     Valeur par défaut.
+ *
+ * @return string
+ */
+function blc_sanitize_rest_hour_option($value, $option_name, $default) {
+    $previous = get_option($option_name, $default);
+    $raw      = is_scalar($value) ? (string) $value : '';
+    $clean    = sanitize_text_field($raw);
+
+    return blc_normalize_hour_option($clean, $previous ? $previous : $default);
+}
+
+/**
+ * Normalise l'heure de début de repos.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string
+ */
+function blc_sanitize_rest_start_hour_option($value) {
+    return blc_sanitize_rest_hour_option($value, 'blc_rest_start_hour', '08');
+}
+
+/**
+ * Normalise l'heure de fin de repos.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string
+ */
+function blc_sanitize_rest_end_hour_option($value) {
+    return blc_sanitize_rest_hour_option($value, 'blc_rest_end_hour', '20');
+}
+
+/**
+ * Sanitize le délai entre deux liens.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return int
+ */
+function blc_sanitize_link_delay_option($value) {
+    return max(0, (int) $value);
+}
+
+/**
+ * Sanitize le délai entre deux lots.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return int
+ */
+function blc_sanitize_batch_delay_option($value) {
+    return max(0, (int) $value);
+}
+
+/**
+ * Sanitize le timeout des requêtes HEAD.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return float
+ */
+function blc_sanitize_head_timeout_option($value) {
+    $constraints = blc_get_request_timeout_constraints();
+    $limits      = isset($constraints['head']) ? $constraints['head'] : array('default' => 5, 'min' => 1, 'max' => 10);
+
+    $previous = blc_normalize_timeout_option(
+        get_option('blc_head_request_timeout', $limits['default']),
+        $limits['default'],
+        $limits['min'],
+        $limits['max']
+    );
+
+    return blc_normalize_timeout_option($value, $previous, $limits['min'], $limits['max']);
+}
+
+/**
+ * Sanitize le timeout des requêtes GET.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return float
+ */
+function blc_sanitize_get_timeout_option($value) {
+    $constraints = blc_get_request_timeout_constraints();
+    $limits      = isset($constraints['get']) ? $constraints['get'] : array('default' => 10, 'min' => 1, 'max' => 30);
+
+    $previous = blc_normalize_timeout_option(
+        get_option('blc_get_request_timeout', $limits['default']),
+        $limits['default'],
+        $limits['min'],
+        $limits['max']
+    );
+
+    return blc_normalize_timeout_option($value, $previous, $limits['min'], $limits['max']);
+}
+
+/**
+ * Sanitize la méthode d'analyse choisie.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string
+ */
+function blc_sanitize_scan_method_option($value) {
+    $allowed_methods = array('precise', 'fast');
+    $method_raw      = is_scalar($value) ? (string) $value : '';
+    $method          = sanitize_text_field($method_raw);
+
+    if (!in_array($method, $allowed_methods, true)) {
+        $method = 'precise';
+    }
+
+    return $method;
+}
+
+/**
+ * Sanitize l'activation de l'analyse des images distantes.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return bool
+ */
+function blc_sanitize_remote_image_scan_option($value) {
+    return (bool) $value;
+}
+
+/**
+ * Sanitize les statuts de contenus sélectionnés.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return array
+ */
+function blc_sanitize_post_statuses_option($value) {
+    $available_status_names = get_post_stati(array(), 'names');
+    if (!is_array($available_status_names)) {
+        $available_status_names = array();
+    }
+
+    $available_status_lookup = array();
+    foreach ($available_status_names as $status_name) {
+        $normalized_status = sanitize_key((string) $status_name);
+        if ('' === $normalized_status) {
+            continue;
+        }
+
+        $available_status_lookup[$normalized_status] = true;
+    }
+
+    $raw_statuses = $value;
+    if (!is_array($raw_statuses)) {
+        $raw_statuses = array($raw_statuses);
+    }
+
+    $selected_statuses = array();
+    foreach ($raw_statuses as $status_value) {
+        if (!is_scalar($status_value)) {
+            continue;
+        }
+
+        $status_key = sanitize_key((string) $status_value);
+        if ('' === $status_key) {
+            continue;
+        }
+
+        if (array() !== $available_status_lookup && !isset($available_status_lookup[$status_key])) {
+            continue;
+        }
+
+        $selected_statuses[$status_key] = $status_key;
+    }
+
+    if (array() === $selected_statuses) {
+        if (isset($available_status_lookup['publish'])) {
+            $selected_statuses = array('publish');
+        } elseif (array() !== $available_status_lookup) {
+            foreach ($available_status_lookup as $status_key => $_unused) {
+                $selected_statuses = array($status_key);
+                break;
+            }
+        } else {
+            $selected_statuses = array('publish');
+        }
+    }
+
+    return array_values($selected_statuses);
+}
+
+/**
+ * Sanitize la liste des domaines exclus.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string
+ */
+function blc_sanitize_excluded_domains_option($value) {
+    $raw = is_scalar($value) ? (string) $value : '';
+
+    return sanitize_textarea_field($raw);
+}
+
+/**
+ * Sanitize le mode débogage.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return bool
+ */
+function blc_sanitize_debug_mode_option($value) {
+    return (bool) $value;
+}
+
+/**
+ * Sanitize la liste des destinataires de notification.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string
+ */
+function blc_sanitize_notification_recipients_option($value) {
+    $raw = is_scalar($value) ? (string) $value : '';
+
+    return sanitize_textarea_field($raw);
+}
+

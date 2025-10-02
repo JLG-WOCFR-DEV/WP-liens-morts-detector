@@ -72,3 +72,10 @@ if (!function_exists('esc_url')) {
     }
 }
 
+if (!function_exists('__return_false')) {
+    function __return_false()
+    {
+        return false;
+    }
+}
+

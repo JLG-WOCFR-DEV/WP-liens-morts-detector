@@ -54,6 +54,7 @@ require_once BLC_PLUGIN_PATH . 'includes/blc-activation.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-cron.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-scanner.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-utils.php';
+require_once BLC_PLUGIN_PATH . 'includes/blc-settings-fields.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-admin-pages.php';
 require_once BLC_PLUGIN_PATH . 'includes/class-blc-links-list-table.php';
 require_once BLC_PLUGIN_PATH . 'includes/class-blc-images-list-table.php';
