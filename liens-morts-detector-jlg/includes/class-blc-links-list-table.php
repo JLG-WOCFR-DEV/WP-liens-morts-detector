@@ -237,8 +237,10 @@ class BLC_Links_List_Table extends WP_List_Table {
      * Définit les colonnes du tableau, avec une nouvelle colonne pour le texte du lien.
      */
     public function get_columns() {
+        $select_all_label = esc_attr__('Sélectionner tous les liens morts', 'liens-morts-detector-jlg');
+
         return [
-            'cb'           => '<input type="checkbox" />',
+            'cb'           => sprintf('<input type="checkbox" aria-label="%s" />', $select_all_label),
             'url'          => __('URL Cassée', 'liens-morts-detector-jlg'),
             'anchor_text'  => __('Texte du lien', 'liens-morts-detector-jlg'),
             'http_status'  => __('Statut HTTP', 'liens-morts-detector-jlg'),
@@ -248,6 +250,13 @@ class BLC_Links_List_Table extends WP_List_Table {
         ];
     }
 
+    /**
+     * Rendu de la colonne de cases à cocher utilisée pour les actions groupées.
+     *
+     * @param array $item L'élément actuel du tableau.
+     *
+     * @return string
+     */
     protected function column_cb($item) {
         $row_id = isset($item['id']) ? absint($item['id']) : 0;
 
@@ -255,18 +264,24 @@ class BLC_Links_List_Table extends WP_List_Table {
             return '';
         }
 
-        return sprintf(
-            '<input type="checkbox" name="link_ids[]" value="%d" />',
-            $row_id
-        );
+        $aria_label = esc_attr__('Sélectionner ce lien mort', 'liens-morts-detector-jlg');
+
+        return sprintf('<input type="checkbox" name="link_ids[]" value="%1$d" aria-label="%2$s" />', $row_id, $aria_label);
     }
 
+    /**
+     * Liste les actions disponibles pour les actions groupées.
+     *
+     * @return array
+     */
     protected function get_bulk_actions() {
-        return [
+        $actions = [
             'ignore'  => __('Ignorer', 'liens-morts-detector-jlg'),
             'restore' => __('Ne plus ignorer', 'liens-morts-detector-jlg'),
             'unlink'  => __('Dissocier', 'liens-morts-detector-jlg'),
         ];
+
+        return apply_filters('blc_links_list_table_bulk_actions', $actions);
     }
 
     /**
@@ -859,7 +874,7 @@ class BLC_Links_List_Table extends WP_List_Table {
             : '';
 
         printf(
-            '<div class="%1$s"%3$s><p>%2$s</p></div>',
+            '<div class="%1$s" role="status" aria-live="polite"%3$s><p>%2$s</p></div>',
             esc_attr($classes),
             esc_html($this->bulk_notice['message']),
             $announcement_attribute

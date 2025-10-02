@@ -637,6 +637,11 @@ jQuery(document).ready(function($) {
         modal.open($.extend({}, modalConfig, {
             onConfirm: function(_value, helpers) {
                 helpers.setSubmitting(true);
+                $(document).trigger('blcAdmin:bulkActionConfirmed', {
+                    action: action,
+                    count: $selected.length,
+                    form: $form
+                });
                 $form.data('blcBulkConfirmed', true);
                 window.setTimeout(function() {
                     $form.get(0).submit();
