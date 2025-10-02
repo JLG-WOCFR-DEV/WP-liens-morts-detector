@@ -21,6 +21,10 @@ class BLC_Links_List_Table extends WP_List_Table {
     private $internal_url_condition_cache = null;
     private $search_term = null;
 
+    private $bulk_notice = null;
+
+    private static $bulk_query_args_registered = false;
+
     /**
      * Constructeur de la classe.
      */
@@ -31,6 +35,11 @@ class BLC_Links_List_Table extends WP_List_Table {
             'ajax'     => false
         ]);
         $this->site_url = home_url();
+
+        if (!self::$bulk_query_args_registered) {
+            add_filter('removable_query_args', [__CLASS__, 'filter_removable_query_args']);
+            self::$bulk_query_args_registered = true;
+        }
     }
 
     /**
@@ -229,12 +238,34 @@ class BLC_Links_List_Table extends WP_List_Table {
      */
     public function get_columns() {
         return [
+            'cb'           => '<input type="checkbox" />',
             'url'          => __('URL Cassée', 'liens-morts-detector-jlg'),
             'anchor_text'  => __('Texte du lien', 'liens-morts-detector-jlg'),
             'http_status'  => __('Statut HTTP', 'liens-morts-detector-jlg'),
             'last_checked_at' => __('Dernier contrôle', 'liens-morts-detector-jlg'),
             'post_title'   => __('Trouvé dans l\'article/page', 'liens-morts-detector-jlg'),
             'actions'      => __('Actions', 'liens-morts-detector-jlg')
+        ];
+    }
+
+    protected function column_cb($item) {
+        $row_id = isset($item['id']) ? absint($item['id']) : 0;
+
+        if ($row_id <= 0) {
+            return '';
+        }
+
+        return sprintf(
+            '<input type="checkbox" name="link_ids[]" value="%d" />',
+            $row_id
+        );
+    }
+
+    protected function get_bulk_actions() {
+        return [
+            'ignore'  => __('Ignorer', 'liens-morts-detector-jlg'),
+            'restore' => __('Ne plus ignorer', 'liens-morts-detector-jlg'),
+            'unlink'  => __('Dissocier', 'liens-morts-detector-jlg'),
         ];
     }
 
@@ -459,6 +490,9 @@ class BLC_Links_List_Table extends WP_List_Table {
      * Prépare les données pour l'affichage : récupération, filtrage, et pagination.
      */
     public function prepare_items($data = null, $total_items_override = null) {
+        $this->process_bulk_action();
+        $this->maybe_prepare_bulk_notice_from_query();
+
         $this->_column_headers = [$this->get_columns(), [], []];
         $current_view = (!empty($_GET['link_type'])) ? sanitize_text_field(wp_unslash($_GET['link_type'])) : 'all';
         $per_page     = 20;
@@ -712,6 +746,557 @@ class BLC_Links_List_Table extends WP_List_Table {
         $this->search_term = $raw;
 
         return $this->search_term;
+    }
+
+    protected function process_bulk_action() {
+        $action = $this->current_action();
+
+        if (!in_array($action, ['ignore', 'restore', 'unlink'], true)) {
+            return;
+        }
+
+        $ids = $this->get_requested_bulk_ids();
+
+        check_admin_referer('bulk-' . $this->_args['plural']);
+
+        if ($ids === []) {
+            $notice = [
+                'message'      => __('Veuillez sélectionner au moins un lien avant d\'appliquer une action groupée.', 'liens-morts-detector-jlg'),
+                'type'         => 'warning',
+                'announcement' => __('Aucune action groupée appliquée : aucun lien sélectionné.', 'liens-morts-detector-jlg'),
+            ];
+
+            $this->redirect_after_bulk($notice);
+        }
+
+        if ($action === 'unlink') {
+            $notice = $this->handle_bulk_unlink($ids);
+        } else {
+            $notice = $this->handle_bulk_ignore($ids, $action);
+        }
+
+        $this->redirect_after_bulk($notice);
+    }
+
+    private function maybe_prepare_bulk_notice_from_query() {
+        if ($this->bulk_notice !== null) {
+            return;
+        }
+
+        if (!isset($_GET['blc-bulk-message'])) {
+            return;
+        }
+
+        $raw_message = $_GET['blc-bulk-message'];
+        if (!is_string($raw_message)) {
+            return;
+        }
+
+        if (function_exists('wp_unslash')) {
+            $raw_message = wp_unslash($raw_message);
+        }
+
+        $message = sanitize_text_field($raw_message);
+
+        if ($message === '') {
+            return;
+        }
+
+        $type = 'success';
+
+        if (isset($_GET['blc-bulk-type'])) {
+            $raw_type = $_GET['blc-bulk-type'];
+            if (is_string($raw_type)) {
+                if (function_exists('wp_unslash')) {
+                    $raw_type = wp_unslash($raw_type);
+                }
+                $candidate = sanitize_key($raw_type);
+                if (in_array($candidate, ['success', 'warning', 'error', 'info'], true)) {
+                    $type = $candidate;
+                }
+            }
+        }
+
+        $announcement = '';
+
+        if (isset($_GET['blc-bulk-announcement'])) {
+            $raw_announcement = $_GET['blc-bulk-announcement'];
+            if (is_string($raw_announcement)) {
+                if (function_exists('wp_unslash')) {
+                    $raw_announcement = wp_unslash($raw_announcement);
+                }
+                $announcement = sanitize_text_field($raw_announcement);
+            }
+        }
+
+        if ($announcement === '') {
+            $announcement = $message;
+        }
+
+        $this->bulk_notice = [
+            'message'      => $message,
+            'class'        => 'notice-' . $type,
+            'announcement' => $announcement,
+        ];
+
+        add_action('admin_notices', [$this, 'render_bulk_notice']);
+    }
+
+    public function render_bulk_notice() {
+        if ($this->bulk_notice === null) {
+            return;
+        }
+
+        $type_class = isset($this->bulk_notice['class']) ? trim((string) $this->bulk_notice['class']) : 'notice-success';
+        if ($type_class === '') {
+            $type_class = 'notice-success';
+        }
+
+        $classes = sprintf('notice %s blc-bulk-notice is-dismissible', $type_class);
+        $announcement = isset($this->bulk_notice['announcement']) ? (string) $this->bulk_notice['announcement'] : '';
+        $announcement_attribute = $announcement !== ''
+            ? sprintf(' data-blc-bulk-announcement="%s"', esc_attr($announcement))
+            : '';
+
+        printf(
+            '<div class="%1$s"%3$s><p>%2$s</p></div>',
+            esc_attr($classes),
+            esc_html($this->bulk_notice['message']),
+            $announcement_attribute
+        );
+    }
+
+    public static function filter_removable_query_args($args) {
+        $args[] = 'blc-bulk-message';
+        $args[] = 'blc-bulk-type';
+        $args[] = 'blc-bulk-announcement';
+
+        return array_values(array_unique($args));
+    }
+
+    private function get_requested_bulk_ids() {
+        if (!isset($_REQUEST['link_ids'])) {
+            return [];
+        }
+
+        $raw_values = $_REQUEST['link_ids'];
+        if (!is_array($raw_values)) {
+            $raw_values = [$raw_values];
+        }
+
+        if (function_exists('wp_unslash')) {
+            $raw_values = wp_unslash($raw_values);
+        }
+
+        $ids = [];
+
+        foreach ($raw_values as $value) {
+            if (!is_scalar($value)) {
+                continue;
+            }
+
+            $id = absint($value);
+            if ($id > 0) {
+                $ids[$id] = $id;
+            }
+        }
+
+        return array_values($ids);
+    }
+
+    private function redirect_after_bulk(array $notice) {
+        $message = isset($notice['message']) ? sanitize_text_field($notice['message']) : '';
+        $type = isset($notice['type']) ? sanitize_key($notice['type']) : 'success';
+
+        if (!in_array($type, ['success', 'warning', 'error', 'info'], true)) {
+            $type = 'success';
+        }
+
+        $announcement = isset($notice['announcement']) ? sanitize_text_field($notice['announcement']) : $message;
+
+        $removals = [
+            'action',
+            'action2',
+            'link_ids',
+            'link_ids[]',
+            'link_ids%5B%5D',
+            '_wpnonce',
+            '_wp_http_referer',
+            'blc-bulk-message',
+            'blc-bulk-type',
+            'blc-bulk-announcement',
+        ];
+
+        $redirect = remove_query_arg($removals, add_query_arg([]));
+
+        if ($message !== '') {
+            $query_args = [
+                'blc-bulk-message'      => $message,
+                'blc-bulk-type'         => $type,
+                'blc-bulk-announcement' => $announcement !== '' ? $announcement : $message,
+            ];
+
+            $redirect = add_query_arg($query_args, $redirect);
+        }
+
+        wp_safe_redirect($redirect);
+        exit;
+    }
+
+    private function handle_bulk_ignore(array $ids, $mode) {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'blc_broken_links';
+
+        $placeholders = implode(', ', array_fill(0, count($ids), '%d'));
+        $query_params = array_merge($ids, ['link']);
+
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, post_id, url, anchor, post_title, ignored_at FROM $table_name WHERE id IN ($placeholders) AND type = %s",
+                $query_params
+            ),
+            ARRAY_A
+        );
+
+        $missing = max(0, count($ids) - count($rows));
+        $permission_denied = 0;
+        $already_count = 0;
+        $ids_to_update = [];
+        $bytes_delta = 0;
+
+        foreach ($rows as $row) {
+            $row_id = isset($row['id']) ? (int) $row['id'] : 0;
+            if ($row_id <= 0) {
+                continue;
+            }
+
+            $post_id = isset($row['post_id']) ? (int) $row['post_id'] : 0;
+            if (!$this->user_can_manage_row($post_id)) {
+                $permission_denied++;
+                continue;
+            }
+
+            $is_ignored = $this->is_row_ignored($row);
+
+            if ($mode === 'ignore') {
+                if ($is_ignored) {
+                    $already_count++;
+                    continue;
+                }
+
+                $ids_to_update[] = $row_id;
+                $bytes_delta -= $this->calculate_row_footprint($row);
+            } else {
+                if (!$is_ignored) {
+                    $already_count++;
+                    continue;
+                }
+
+                $ids_to_update[] = $row_id;
+                $bytes_delta += $this->calculate_row_footprint($row);
+            }
+        }
+
+        $success_count = 0;
+        $db_error = '';
+
+        if (!empty($ids_to_update)) {
+            $update_placeholders = implode(', ', array_fill(0, count($ids_to_update), '%d'));
+
+            if ($mode === 'ignore') {
+                $timestamp = current_time('mysql', true);
+                $sql = "UPDATE $table_name SET ignored_at = %s WHERE id IN ($update_placeholders) AND type = %s";
+                $params = array_merge([$timestamp], $ids_to_update, ['link']);
+            } else {
+                $sql = "UPDATE $table_name SET ignored_at = NULL WHERE id IN ($update_placeholders) AND type = %s";
+                $params = array_merge($ids_to_update, ['link']);
+            }
+
+            $updated = $wpdb->query($wpdb->prepare($sql, $params));
+
+            if ($updated === false) {
+                $db_error = $wpdb->last_error;
+            } else {
+                $success_count = (int) $updated;
+
+                if ($success_count > 0) {
+                    if ($bytes_delta !== 0) {
+                        blc_adjust_dataset_storage_footprint('link', $bytes_delta);
+                    }
+
+                    blc_mark_link_view_counts_dirty();
+                }
+            }
+        }
+
+        $message_parts = [];
+
+        if ($success_count > 0) {
+            if ($mode === 'ignore') {
+                $message_parts[] = sprintf(
+                    _n('%d lien a été ignoré.', '%d liens ont été ignorés.', $success_count, 'liens-morts-detector-jlg'),
+                    $success_count
+                );
+            } else {
+                $message_parts[] = sprintf(
+                    _n('%d lien n\'est plus ignoré.', '%d liens ne sont plus ignorés.', $success_count, 'liens-morts-detector-jlg'),
+                    $success_count
+                );
+            }
+        }
+
+        if ($already_count > 0) {
+            $message_parts[] = sprintf(
+                _n('%d lien était déjà dans cet état.', '%d liens étaient déjà dans cet état.', $already_count, 'liens-morts-detector-jlg'),
+                $already_count
+            );
+        }
+
+        if ($permission_denied > 0) {
+            $message_parts[] = sprintf(
+                _n('Permissions insuffisantes pour %d lien.', 'Permissions insuffisantes pour %d liens.', $permission_denied, 'liens-morts-detector-jlg'),
+                $permission_denied
+            );
+        }
+
+        if ($missing > 0) {
+            $message_parts[] = sprintf(
+                _n('%d lien sélectionné est introuvable.', '%d liens sélectionnés sont introuvables.', $missing, 'liens-morts-detector-jlg'),
+                $missing
+            );
+        }
+
+        if ($db_error !== '') {
+            $message_parts[] = __('Une erreur de base de données est survenue lors de la mise à jour des liens.', 'liens-morts-detector-jlg');
+        }
+
+        if (empty($message_parts)) {
+            if ($mode === 'ignore') {
+                $message_parts[] = __('Aucun lien n\'a été ignoré.', 'liens-morts-detector-jlg');
+            } else {
+                $message_parts[] = __('Aucun lien n\'a été réintégré.', 'liens-morts-detector-jlg');
+            }
+        }
+
+        $type = 'success';
+
+        if ($success_count === 0) {
+            if ($db_error !== '' || $permission_denied > 0 || $missing > 0) {
+                $type = 'error';
+            } elseif ($already_count > 0) {
+                $type = 'info';
+            } else {
+                $type = 'warning';
+            }
+        } elseif ($db_error !== '' || $permission_denied > 0 || $missing > 0) {
+            $type = 'warning';
+        }
+
+        $announcement = $message_parts[0];
+
+        return [
+            'message'      => implode(' ', $message_parts),
+            'type'         => $type,
+            'announcement' => $announcement,
+        ];
+    }
+
+    private function handle_bulk_unlink(array $ids) {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'blc_broken_links';
+
+        $placeholders = implode(', ', array_fill(0, count($ids), '%d'));
+        $query_params = array_merge($ids, ['link']);
+
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, post_id, url, anchor, post_title, occurrence_index FROM $table_name WHERE id IN ($placeholders) AND type = %s",
+                $query_params
+            ),
+            ARRAY_A
+        );
+
+        $missing = max(0, count($ids) - count($rows));
+        $permission_denied = 0;
+        $processing_failures = 0;
+        $success_count = 0;
+        $bytes_delta = 0;
+
+        foreach ($rows as $row) {
+            $row_id = isset($row['id']) ? (int) $row['id'] : 0;
+            if ($row_id <= 0) {
+                continue;
+            }
+
+            $post_id = isset($row['post_id']) ? (int) $row['post_id'] : 0;
+            $occurrence_index = $this->normalize_occurrence_index($row['occurrence_index'] ?? null);
+            $stored_url = isset($row['url']) ? blc_prepare_posted_url($row['url']) : '';
+
+            if ($stored_url === '') {
+                $processing_failures++;
+                continue;
+            }
+
+            $post = null;
+            if ($post_id > 0) {
+                $post = get_post($post_id);
+            }
+
+            if ($post instanceof WP_Post) {
+                if (!current_user_can('edit_post', $post_id)) {
+                    $permission_denied++;
+                    continue;
+                }
+
+                $normalized_content = blc_normalize_post_content_encoding($post->post_content);
+                $removal = blc_remove_link_wrappers_from_content($normalized_content, $stored_url, $occurrence_index);
+
+                if (!is_array($removal) || empty($removal['removed']) || !array_key_exists('content', $removal)) {
+                    $processing_failures++;
+                    continue;
+                }
+
+                $new_content = blc_restore_post_content_encoding($removal['content']);
+                $update_result = wp_update_post(
+                    [
+                        'ID'           => $post_id,
+                        'post_content' => wp_slash($new_content),
+                    ],
+                    true
+                );
+
+                if (!$update_result || is_wp_error($update_result)) {
+                    $processing_failures++;
+                    continue;
+                }
+            } else {
+                if (!current_user_can('manage_options')) {
+                    $permission_denied++;
+                    continue;
+                }
+            }
+
+            $deleted = $wpdb->delete($table_name, ['id' => $row_id], ['%d']);
+
+            if ($deleted === false) {
+                $processing_failures++;
+                continue;
+            }
+
+            $bytes_delta -= $this->calculate_row_footprint($row);
+            $success_count++;
+        }
+
+        if ($success_count > 0) {
+            blc_mark_link_view_counts_dirty();
+            if ($bytes_delta !== 0) {
+                blc_adjust_dataset_storage_footprint('link', $bytes_delta);
+            }
+        }
+
+        $message_parts = [];
+
+        if ($success_count > 0) {
+            $message_parts[] = sprintf(
+                _n('%d lien a été dissocié.', '%d liens ont été dissociés.', $success_count, 'liens-morts-detector-jlg'),
+                $success_count
+            );
+        }
+
+        if ($processing_failures > 0) {
+            $message_parts[] = sprintf(
+                _n('%d lien n\'a pas pu être dissocié en raison d\'une erreur.', '%d liens n\'ont pas pu être dissociés en raison d\'erreurs.', $processing_failures, 'liens-morts-detector-jlg'),
+                $processing_failures
+            );
+        }
+
+        if ($permission_denied > 0) {
+            $message_parts[] = sprintf(
+                _n('Permissions insuffisantes pour %d lien.', 'Permissions insuffisantes pour %d liens.', $permission_denied, 'liens-morts-detector-jlg'),
+                $permission_denied
+            );
+        }
+
+        if ($missing > 0) {
+            $message_parts[] = sprintf(
+                _n('%d lien sélectionné est introuvable.', '%d liens sélectionnés sont introuvables.', $missing, 'liens-morts-detector-jlg'),
+                $missing
+            );
+        }
+
+        if (empty($message_parts)) {
+            $message_parts[] = __('Aucun lien n\'a été dissocié.', 'liens-morts-detector-jlg');
+        }
+
+        $type = 'success';
+
+        if ($success_count === 0) {
+            if ($processing_failures > 0 || $permission_denied > 0 || $missing > 0) {
+                $type = 'error';
+            } else {
+                $type = 'warning';
+            }
+        } elseif ($processing_failures > 0 || $permission_denied > 0 || $missing > 0) {
+            $type = 'warning';
+        }
+
+        $announcement = $message_parts[0];
+
+        return [
+            'message'      => implode(' ', $message_parts),
+            'type'         => $type,
+            'announcement' => $announcement,
+        ];
+    }
+
+    private function user_can_manage_row($post_id) {
+        $post_id = absint($post_id);
+
+        if ($post_id > 0) {
+            $post = get_post($post_id);
+            if ($post) {
+                return current_user_can('edit_post', $post_id);
+            }
+        }
+
+        return current_user_can('manage_options');
+    }
+
+    private function is_row_ignored($row) {
+        $ignored_raw = $row['ignored_at'] ?? null;
+
+        if (is_string($ignored_raw)) {
+            $normalized = trim($ignored_raw);
+
+            return ($normalized !== '' && $normalized !== '0000-00-00 00:00:00');
+        }
+
+        return $ignored_raw !== null;
+    }
+
+    private function calculate_row_footprint($row) {
+        $url = $row['url'] ?? '';
+        $anchor = $row['anchor'] ?? '';
+        $post_title = $row['post_title'] ?? '';
+
+        return blc_calculate_row_storage_footprint_bytes($url, $anchor, $post_title);
+    }
+
+    private function normalize_occurrence_index($value) {
+        if ($value === null) {
+            return null;
+        }
+
+        if (is_numeric($value)) {
+            $candidate = (int) $value;
+            if ($candidate >= 0) {
+                return $candidate;
+            }
+        }
+
+        return null;
     }
 
     private function get_unchecked_sentinel_value() {
