@@ -204,7 +204,7 @@
     }
 
     .wp-list-table td::before {
-        content: attr(data-colname) ":";
+        content: attr(data-colname);
         font-weight: 600;
         color: #50575e;
         flex: 0 0 clamp(96px, 42%, 180px);
@@ -214,6 +214,10 @@
         margin-right: 6px;
         text-transform: none;
         letter-spacing: 0;
+    }
+
+    .wp-list-table td[data-colname]:not([data-colname=""])::after {
+        content: ": ";
     }
 
     .wp-list-table td.column-primary {
