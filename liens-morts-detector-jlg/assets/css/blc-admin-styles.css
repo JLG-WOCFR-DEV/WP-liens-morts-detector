@@ -86,22 +86,85 @@
     margin-bottom: 20px;
     border-left: 4px solid #72aee6; /* Couleur bleue standard de WordPress */
 }
+
 .blc-stat {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    flex-grow: 1;
+    flex: 1 1 180px;
     text-align: center;
+    gap: 8px;
+    padding: 18px;
+    border: 1px solid #dcdcde;
+    border-radius: 6px;
+    background-color: #f6f7f7;
+    color: #1d2327;
+    text-decoration: none;
+    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    cursor: pointer;
 }
+
+.blc-stat:hover,
+.blc-stat:focus-visible {
+    background-color: #f0f6fc;
+    border-color: #2271b1;
+    color: #0a4b78;
+    box-shadow: 0 0 0 1px #2271b1 inset;
+}
+
+.blc-stat:focus-visible {
+    outline: 2px solid #2271b1;
+    outline-offset: 2px;
+}
+
+.blc-stat:hover .blc-stat-label,
+.blc-stat:focus-visible .blc-stat-label {
+    text-decoration: underline;
+}
+
 .blc-stat-value {
-    font-size: 2.5em;
+    font-size: 2.2em;
     font-weight: 600;
     line-height: 1.2;
-    color: #1d2327;
+    color: inherit;
 }
+
 .blc-stat-label {
     font-size: 1em;
+    color: inherit;
+}
+
+.blc-meta-box {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    background-color: #fff;
+    border: 1px solid #c3c4c7;
+    padding: 20px;
+    margin-bottom: 20px;
+    border-left: 4px solid #dcdcde;
+}
+
+.blc-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex: 1 1 180px;
+    text-align: center;
+    gap: 6px;
+}
+
+.blc-meta-value {
+    font-size: 1.6em;
+    font-weight: 600;
+    line-height: 1.3;
+    color: #1d2327;
+}
+
+.blc-meta-label {
+    font-size: 0.95em;
     color: #50575e;
 }
 
@@ -113,7 +176,39 @@
     display: block;
 }
 
+@media (prefers-reduced-motion: reduce) {
+    .blc-stat {
+        transition: none;
+    }
+}
+
 @media (prefers-color-scheme: dark) {
+    .blc-stat {
+        background-color: #1f1f1f;
+        border-color: #3c434a;
+        color: #f0f0f1;
+    }
+
+    .blc-stat:hover,
+    .blc-stat:focus-visible {
+        background-color: #30363d;
+        border-color: #72aee6;
+        color: #cbe5ff;
+    }
+
+    .blc-meta-box {
+        background-color: #1d2327;
+        border-color: #3c434a;
+    }
+
+    .blc-meta-value {
+        color: #f0f0f1;
+    }
+
+    .blc-meta-label {
+        color: #d0d3d7;
+    }
+
     .blc-stat-note {
         color: #b7c0cc;
     }

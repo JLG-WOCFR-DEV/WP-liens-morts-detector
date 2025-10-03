@@ -1828,4 +1828,102 @@ jQuery(document).ready(function($) {
             }
         });
     });
+
+(function setupDashboardFilterPersistence() {
+    var STORAGE_KEY = 'blcDashboardLinkType';
+    var $dashboard = $('.blc-dashboard-links-page');
+
+    if (!$dashboard.length) {
+        return;
+    }
+
+    var storageAvailable = false;
+    try {
+        var testKey = STORAGE_KEY + '_test';
+        window.localStorage.setItem(testKey, '1');
+        window.localStorage.removeItem(testKey);
+        storageAvailable = true;
+    } catch (error) {
+        storageAvailable = false;
+    }
+
+    if (!storageAvailable) {
+        return;
+    }
+
+    var params;
+    try {
+        params = new URLSearchParams(window.location.search);
+    } catch (error) {
+        return;
+    }
+
+    if (params.get('page') !== 'blc-dashboard') {
+        return;
+    }
+
+    var storedType = window.localStorage.getItem(STORAGE_KEY) || '';
+    var hasLinkType = params.has('link_type') && params.get('link_type') !== null;
+
+    if (!hasLinkType) {
+        if (storedType && storedType !== 'all') {
+            params.set('link_type', storedType);
+            var redirectUrl = window.location.pathname + '?' + params.toString();
+            if (window.location.hash) {
+                redirectUrl += window.location.hash;
+            }
+            window.location.replace(redirectUrl);
+            return;
+        }
+        storedType = 'all';
+    } else {
+        storedType = params.get('link_type') || '';
+        if (!storedType) {
+            storedType = 'all';
+        }
+    }
+
+    window.localStorage.setItem(STORAGE_KEY, storedType);
+
+    $dashboard.on('click', '.blc-stats-box a[data-link-type]', function() {
+        var type = $(this).data('link-type');
+        if (typeof type === 'undefined' || type === null || type === '') {
+            type = 'all';
+        }
+        window.localStorage.setItem(STORAGE_KEY, String(type));
+    });
+
+    $(document).on('click', 'a[href*="page=blc-dashboard"]', function() {
+        var href = $(this).attr('href');
+        if (!href) {
+            return;
+        }
+
+        var linkType = null;
+        try {
+            var url = new URL(href, window.location.origin);
+            if (url.searchParams.get('page') !== 'blc-dashboard') {
+                return;
+            }
+            if (url.searchParams.has('link_type')) {
+                linkType = url.searchParams.get('link_type') || '';
+            } else {
+                linkType = 'all';
+            }
+        } catch (error) {
+            return;
+        }
+
+        if (linkType === null) {
+            return;
+        }
+
+        if (!linkType) {
+            linkType = 'all';
+        }
+
+        window.localStorage.setItem(STORAGE_KEY, linkType);
+    });
+})();
+
 });
