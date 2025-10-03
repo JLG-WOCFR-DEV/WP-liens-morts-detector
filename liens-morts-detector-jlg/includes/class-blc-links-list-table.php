@@ -481,27 +481,24 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         $classes = ['blc-status'];
         $label = (string) $raw_status;
-        $status_description = __('Statut inconnu ou indisponible', 'liens-morts-detector-jlg');
+        $status_category_labels = [
+            '1xx'     => __('Réponse informative (1xx)', 'liens-morts-detector-jlg'),
+            '2xx'     => __('Disponible (2xx)', 'liens-morts-detector-jlg'),
+            '3xx'     => __('Redirection (3xx)', 'liens-morts-detector-jlg'),
+            '4xx'     => __('Erreur client (4xx)', 'liens-morts-detector-jlg'),
+            '5xx'     => __('Erreur serveur (5xx)', 'liens-morts-detector-jlg'),
+            'unknown' => __('Statut inconnu ou indisponible', 'liens-morts-detector-jlg'),
+        ];
+        $status_description = $status_category_labels['unknown'];
 
         if (is_numeric($raw_status)) {
             $status_code = (int) $raw_status;
             $label = (string) $status_code;
 
-            if ($status_code >= 200 && $status_code < 300) {
-                $classes[] = 'blc-status--2xx';
-                $status_description = __('Disponible (2xx)', 'liens-morts-detector-jlg');
-            } elseif ($status_code >= 300 && $status_code < 400) {
-                $classes[] = 'blc-status--3xx';
-                $status_description = __('Redirection (3xx)', 'liens-morts-detector-jlg');
-            } elseif ($status_code >= 400 && $status_code < 500) {
-                $classes[] = 'blc-status--4xx';
-                $status_description = __('Erreur client (4xx)', 'liens-morts-detector-jlg');
-            } elseif ($status_code >= 500 && $status_code < 600) {
-                $classes[] = 'blc-status--5xx';
-                $status_description = __('Erreur serveur (5xx)', 'liens-morts-detector-jlg');
-            } elseif ($status_code >= 100 && $status_code < 200) {
-                $classes[] = 'blc-status--1xx';
-                $status_description = __('Réponse informative (1xx)', 'liens-morts-detector-jlg');
+            $range_key = sprintf('%dxx', (int) floor($status_code / 100));
+            if (isset($status_category_labels[$range_key])) {
+                $classes[] = 'blc-status--' . $range_key;
+                $status_description = $status_category_labels[$range_key];
             } else {
                 $classes[] = 'blc-status--unknown';
             }
