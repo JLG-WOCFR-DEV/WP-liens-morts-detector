@@ -262,6 +262,26 @@ msgstr ""
 msgid "Une fois par mois"
 msgstr ""
 
-#: includes/class-blc-links-list-table.php:462
+#: includes/class-blc-links-list-table.php:485
 msgid "Réponse informative (1xx)"
+msgstr ""
+
+#: includes/blc-admin-pages.php:761 includes/class-blc-links-list-table.php:486
+msgid "Disponible (2xx)"
+msgstr ""
+
+#: includes/blc-admin-pages.php:765 includes/class-blc-links-list-table.php:487
+msgid "Redirection (3xx)"
+msgstr ""
+
+#: includes/blc-admin-pages.php:769 includes/class-blc-links-list-table.php:488
+msgid "Erreur client (4xx)"
+msgstr ""
+
+#: includes/blc-admin-pages.php:773 includes/class-blc-links-list-table.php:489
+msgid "Erreur serveur (5xx)"
+msgstr ""
+
+#: includes/blc-admin-pages.php:777 includes/class-blc-links-list-table.php:490
+msgid "Statut inconnu ou indisponible"
 msgstr ""
