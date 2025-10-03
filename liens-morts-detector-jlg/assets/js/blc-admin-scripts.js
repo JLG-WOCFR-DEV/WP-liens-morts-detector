@@ -717,6 +717,12 @@ jQuery(document).ready(function($) {
 
     function handleSuccessfulResponse(response, row, helpers) {
         var $row = row && row.jquery ? row : $(row);
+        var prefersReducedMotion = false;
+
+        if (typeof window.matchMedia === 'function') {
+            var mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+            prefersReducedMotion = !!(mediaQuery && mediaQuery.matches);
+        }
 
         accessibility.speak(getAnnouncementMessage(response), 'polite');
 
@@ -726,53 +732,59 @@ jQuery(document).ready(function($) {
             helpers.close(nextFocusTarget);
         }
 
-        if ($row && $row.length) {
-            $row.fadeOut(300, function() {
-                var $currentRow = $(this);
-                var $tbody = $currentRow.closest('tbody');
-                $currentRow.remove();
+        function finalizeListUpdate($currentRow) {
+            var $normalizedRow = $currentRow && $currentRow.jquery ? $currentRow : $();
+            var $tbody = $normalizedRow.closest('tbody');
 
-                if (!$tbody.length) {
-                    $tbody = $('#the-list');
-                }
+            if ($normalizedRow.length) {
+                $normalizedRow.remove();
+            }
 
-                var $remainingRows = $tbody.children('tr').filter(function() {
-                    var $candidate = $(this);
-                    return !$candidate.hasClass('no-items') && !$candidate.hasClass('inline-edit-row');
-                });
+            if (!$tbody.length) {
+                $tbody = $('#the-list');
+            }
 
-                var messageRow = null;
-
-                if (!$remainingRows.length) {
-                    var messageText = messages.noItemsMessage || '';
-
-                    if (messageText) {
-                        var colspan = determineColumnCount($tbody, $currentRow);
-                        var $existingNoItems = $tbody.children('tr.no-items');
-                        if ($existingNoItems.length) {
-                            $existingNoItems.remove();
-                        }
-
-                        messageRow = $('<tr>', { class: 'no-items' });
-                        $('<td>', { colspan: colspan }).text(messageText).appendTo(messageRow);
-                        $tbody.append(messageRow);
-                    }
-                }
-
-                $(document).trigger('blcAdmin:listUpdated', {
-                    response: response,
-                    tbody: $tbody,
-                    table: $tbody.closest('table'),
-                    messageRow: messageRow
-                });
+            var $remainingRows = $tbody.children('tr').filter(function() {
+                var $candidate = $(this);
+                return !$candidate.hasClass('no-items') && !$candidate.hasClass('inline-edit-row');
             });
-        } else {
+
+            var messageRow = null;
+
+            if (!$remainingRows.length) {
+                var messageText = messages.noItemsMessage || '';
+
+                if (messageText) {
+                    var colspan = determineColumnCount($tbody, $normalizedRow.length ? $normalizedRow : $tbody.children('tr').first());
+                    var $existingNoItems = $tbody.children('tr.no-items');
+                    if ($existingNoItems.length) {
+                        $existingNoItems.remove();
+                    }
+
+                    messageRow = $('<tr>', { class: 'no-items' });
+                    $('<td>', { colspan: colspan }).text(messageText).appendTo(messageRow);
+                    $tbody.append(messageRow);
+                }
+            }
+
             $(document).trigger('blcAdmin:listUpdated', {
                 response: response,
-                tbody: $('#the-list'),
-                table: $('#the-list').closest('table'),
-                messageRow: null
+                tbody: $tbody,
+                table: $tbody.closest('table'),
+                messageRow: messageRow
             });
+        }
+
+        if ($row && $row.length) {
+            if (prefersReducedMotion) {
+                finalizeListUpdate($row);
+            } else {
+                $row.fadeOut(300, function() {
+                    finalizeListUpdate($(this));
+                });
+            }
+        } else {
+            finalizeListUpdate($());
         }
     }
 
