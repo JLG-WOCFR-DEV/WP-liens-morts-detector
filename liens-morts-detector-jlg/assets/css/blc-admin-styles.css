@@ -105,6 +105,18 @@
     cursor: pointer;
 }
 
+.blc-stat.is-active {
+    background-color: #f0f6fc;
+    border-color: #2271b1;
+    color: #0a4b78;
+    box-shadow: 0 0 0 1px #2271b1 inset;
+}
+
+.blc-stat.is-active .blc-stat-label,
+.blc-stat.is-active .blc-stat-value {
+    text-decoration: none;
+}
+
 .blc-stat:hover,
 .blc-stat:focus,
 .blc-stat:focus-visible {
@@ -196,6 +208,13 @@
         background-color: #1f1f1f;
         border-color: #3c434a;
         color: #f0f0f1;
+    }
+
+    .blc-stat.is-active {
+        background-color: #233142;
+        border-color: #72aee6;
+        color: #cbe5ff;
+        box-shadow: 0 0 0 1px #72aee6 inset;
     }
 
     .blc-stat:hover,
