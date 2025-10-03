@@ -211,6 +211,202 @@ if (!function_exists('blc_get_link_scan_status_payload')) {
     }
 }
 
+if (!function_exists('blc_get_default_image_scan_status')) {
+    /**
+     * Retrieve the default image scan status structure.
+     *
+     * @return array<string, mixed>
+     */
+    function blc_get_default_image_scan_status() {
+        return [
+            'state'             => 'idle',
+            'current_batch'     => 0,
+            'processed_batches' => 0,
+            'total_batches'     => 0,
+            'remaining_batches' => 0,
+            'is_full_scan'      => true,
+            'message'           => '',
+            'last_error'        => '',
+            'started_at'        => 0,
+            'ended_at'          => 0,
+            'updated_at'        => 0,
+            'total_items'       => 0,
+            'processed_items'   => 0,
+        ];
+    }
+}
+
+if (!function_exists('blc_get_image_scan_status')) {
+    /**
+     * Return the current image scan status from the database.
+     *
+     * @return array<string, mixed>
+     */
+    function blc_get_image_scan_status() {
+        $status = get_option('blc_image_scan_status', []);
+        if (!is_array($status)) {
+            $status = [];
+        }
+
+        $defaults = blc_get_default_image_scan_status();
+        $status = array_merge($defaults, array_intersect_key($status, $defaults));
+
+        $allowed_states = ['idle', 'queued', 'running', 'completed', 'failed', 'cancelled'];
+        $state = isset($status['state']) ? sanitize_key((string) $status['state']) : 'idle';
+        if ($state === '' || !in_array($state, $allowed_states, true)) {
+            $state = 'idle';
+        }
+        $status['state'] = $state;
+
+        foreach (['current_batch', 'processed_batches', 'total_batches', 'remaining_batches', 'started_at', 'ended_at', 'updated_at', 'total_items', 'processed_items'] as $numeric_key) {
+            $status[$numeric_key] = isset($status[$numeric_key]) ? max(0, (int) $status[$numeric_key]) : 0;
+        }
+
+        $status['is_full_scan'] = true;
+        $status['message'] = isset($status['message']) && is_string($status['message']) ? $status['message'] : '';
+        $status['last_error'] = isset($status['last_error']) && is_string($status['last_error']) ? $status['last_error'] : '';
+
+        if ($status['state'] === 'completed' && $status['ended_at'] === 0 && $status['updated_at'] > 0) {
+            $status['ended_at'] = $status['updated_at'];
+        }
+
+        return $status;
+    }
+}
+
+if (!function_exists('blc_update_image_scan_status')) {
+    /**
+     * Persist image scan status updates.
+     *
+     * @param array<string, mixed> $changes Associative array of changes to merge into the status payload.
+     *
+     * @return array<string, mixed> Updated status payload.
+     */
+    function blc_update_image_scan_status(array $changes) {
+        $status = blc_get_image_scan_status();
+        $previous_state = $status['state'];
+
+        foreach ($changes as $key => $value) {
+            switch ($key) {
+                case 'state':
+                    $new_state = sanitize_key((string) $value);
+                    if ($new_state === '' || !in_array($new_state, ['idle', 'queued', 'running', 'completed', 'failed', 'cancelled'], true)) {
+                        $new_state = 'idle';
+                    }
+                    $status['state'] = $new_state;
+                    break;
+                case 'message':
+                    $status['message'] = is_string($value) ? $value : '';
+                    break;
+                case 'last_error':
+                    $status['last_error'] = is_string($value) ? $value : '';
+                    break;
+                case 'current_batch':
+                case 'processed_batches':
+                case 'total_batches':
+                case 'remaining_batches':
+                case 'started_at':
+                case 'ended_at':
+                case 'updated_at':
+                case 'total_items':
+                case 'processed_items':
+                    $status[$key] = max(0, (int) $value);
+                    break;
+                case 'is_full_scan':
+                    $status['is_full_scan'] = (bool) $value;
+                    break;
+                default:
+                    $status[$key] = $value;
+                    break;
+            }
+        }
+
+        $now = time();
+        if ($status['state'] === 'running' && ($status['started_at'] === 0 || $previous_state !== 'running')) {
+            $status['started_at'] = $now;
+        }
+
+        if ($status['state'] === 'completed' || $status['state'] === 'failed' || $status['state'] === 'cancelled') {
+            $status['ended_at'] = $now;
+        } elseif ($status['state'] === 'idle' && !array_key_exists('ended_at', $changes)) {
+            $status['ended_at'] = 0;
+            if (!array_key_exists('started_at', $changes)) {
+                $status['started_at'] = 0;
+            }
+        }
+
+        $status['updated_at'] = $now;
+        $status['is_full_scan'] = true;
+
+        update_option('blc_image_scan_status', $status, false);
+
+        return $status;
+    }
+}
+
+if (!function_exists('blc_reset_image_scan_status')) {
+    /**
+     * Clear the stored image scan status.
+     *
+     * @return void
+     */
+    function blc_reset_image_scan_status() {
+        delete_option('blc_image_scan_status');
+    }
+}
+
+if (!function_exists('blc_get_next_image_batch_timestamp')) {
+    /**
+     * Retrieve the next scheduled timestamp for image scan batches.
+     *
+     * @return int
+     */
+    function blc_get_next_image_batch_timestamp() {
+        if (!function_exists('wp_next_scheduled')) {
+            return 0;
+        }
+
+        $next_batch = wp_next_scheduled('blc_check_image_batch');
+        if ($next_batch) {
+            return (int) $next_batch;
+        }
+
+        return 0;
+    }
+}
+
+if (!function_exists('blc_get_image_scan_status_payload')) {
+    /**
+     * Build the enriched scan status payload for image scans.
+     *
+     * @return array<string, mixed>
+     */
+    function blc_get_image_scan_status_payload() {
+        $status = blc_get_image_scan_status();
+
+        $default_lock_timeout = defined('MINUTE_IN_SECONDS') ? 15 * MINUTE_IN_SECONDS : 900;
+        $lock_timeout = apply_filters('blc_image_scan_lock_timeout', $default_lock_timeout);
+        if (!is_int($lock_timeout)) {
+            $lock_timeout = (int) $lock_timeout;
+        }
+        if ($lock_timeout < 0) {
+            $lock_timeout = 0;
+        }
+
+        $lock_state = blc_get_image_scan_lock_state();
+        $status['lock_active'] = blc_is_image_scan_lock_active($lock_state, $lock_timeout);
+        $status['lock_timestamp'] = isset($lock_state['locked_at']) ? (int) $lock_state['locked_at'] : 0;
+        $status['lock_timeout'] = $lock_timeout;
+        $status['next_batch_timestamp'] = blc_get_next_image_batch_timestamp();
+
+        if (!isset($status['lock_active'])) {
+            $status['lock_active'] = false;
+        }
+
+        return $status;
+    }
+}
+
 if (!function_exists('blc_register_scan_status_rest_route')) {
     /**
      * Register REST API routes for scan status retrieval.
@@ -229,6 +425,13 @@ if (!function_exists('blc_register_scan_status_rest_route')) {
                 'methods'             => \WP_REST_Server::READABLE,
                 'callback'            => 'blc_rest_get_scan_status',
                 'permission_callback' => 'blc_rest_scan_status_permissions',
+                'args'                => [
+                    'type' => [
+                        'type'    => 'string',
+                        'enum'    => ['link', 'image'],
+                        'default' => 'link',
+                    ],
+                ],
             ]
         );
     }
@@ -254,6 +457,13 @@ if (!function_exists('blc_rest_get_scan_status')) {
      * @return \WP_REST_Response|array<string, mixed>
      */
     function blc_rest_get_scan_status(\WP_REST_Request $request) {
+        $type = $request->get_param('type');
+        $type = is_string($type) ? strtolower($type) : 'link';
+
+        if ($type === 'image') {
+            return rest_ensure_response(blc_get_image_scan_status_payload());
+        }
+
         return rest_ensure_response(blc_get_link_scan_status_payload());
     }
 }
@@ -354,6 +564,13 @@ if (!class_exists('ImageScanQueue')) {
                 }
             }
 
+            blc_update_image_scan_status([
+                'state'         => 'running',
+                'current_batch' => (int) $batch,
+                'is_full_scan'  => true,
+                'message'       => __('Analyse des images en cours…', 'liens-morts-detector-jlg'),
+            ]);
+
             $batch_size = 20;
             $public_post_types = get_post_types(['public' => true], 'names');
             if (!is_array($public_post_types)) {
@@ -376,6 +593,46 @@ if (!class_exists('ImageScanQueue')) {
             $query = new WP_Query($args);
             $posts = $query->posts;
             $checked_local_paths = [];
+
+            $total_items = isset($query->found_posts) ? max(0, (int) $query->found_posts) : 0;
+            $max_pages = isset($query->max_num_pages) ? (int) $query->max_num_pages : 0;
+            if ($max_pages <= 0) {
+                if ($total_items > 0 && $batch_size > 0) {
+                    $max_pages = (int) ceil($total_items / $batch_size);
+                } elseif (!empty($posts) && $batch === 0) {
+                    $max_pages = 1;
+                } else {
+                    $max_pages = max(1, $batch + 1);
+                }
+            }
+
+            $total_batches = max(1, $max_pages);
+            $processed_batches = min($total_batches, $batch + 1);
+            $remaining_batches = max(0, $total_batches - $processed_batches);
+            $posts_in_batch = is_array($posts) ? count($posts) : 0;
+            $processed_items = max(0, ($batch * $batch_size) + $posts_in_batch);
+            if ($total_items > 0) {
+                $processed_items = min($processed_items, $total_items);
+            }
+
+            $status_message = sprintf(
+                /* translators: 1: current batch number, 2: total batch count. */
+                __('Analyse du lot %1$d sur %2$d en cours…', 'liens-morts-detector-jlg'),
+                $processed_batches,
+                $total_batches
+            );
+
+            blc_update_image_scan_status([
+                'state'             => 'running',
+                'current_batch'     => (int) $batch,
+                'processed_batches' => $processed_batches,
+                'total_batches'     => $total_batches,
+                'remaining_batches' => $remaining_batches,
+                'total_items'       => $total_items,
+                'processed_items'   => $processed_items,
+                'is_full_scan'      => true,
+                'message'           => $status_message,
+            ]);
 
             $post_ids_in_batch = array_map('intval', wp_list_pluck($posts, 'ID'));
             $post_ids_in_batch = array_values(array_unique(array_filter($post_ids_in_batch, static function ($value) {
@@ -780,15 +1037,54 @@ if (!class_exists('ImageScanQueue')) {
 
                         delete_option('blc_image_scan_lock_token');
 
+                        blc_update_image_scan_status([
+                            'state'           => 'failed',
+                            'last_error'      => __('Impossible de programmer le lot suivant.', 'liens-morts-detector-jlg'),
+                            'message'         => __('Impossible de programmer le lot suivant.', 'liens-morts-detector-jlg'),
+                            'total_items'     => $total_items,
+                            'processed_items' => $processed_items,
+                            'is_full_scan'    => true,
+                        ]);
+
                         return new WP_Error(
                             'blc_image_schedule_failed',
                             sprintf('Failed to schedule next image batch #%d.', $batch + 1)
                         );
                     }
+
+                    blc_update_image_scan_status([
+                        'state'             => 'running',
+                        'current_batch'     => (int) $batch,
+                        'processed_batches' => $processed_batches,
+                        'total_batches'     => $total_batches,
+                        'remaining_batches' => max(0, $remaining_batches),
+                        'total_items'       => $total_items,
+                        'processed_items'   => $processed_items,
+                        'is_full_scan'      => true,
+                        'message'           => sprintf(
+                            /* translators: 1: completed batch number, 2: next batch number. */
+                            __('Lot %1$d terminé. Lot %2$d planifié.', 'liens-morts-detector-jlg'),
+                            $processed_batches,
+                            min($total_batches, $processed_batches + 1)
+                        ),
+                    ]);
                 } else {
                     if ($debug_mode) { error_log("--- Scan IMAGES terminé ---"); }
                     update_option('blc_last_image_check_time', current_time('timestamp', true));
                     blc_maybe_send_scan_summary('image');
+                    blc_update_image_scan_status([
+                        'state'             => 'completed',
+                        'current_batch'     => (int) $batch,
+                        'processed_batches' => $processed_batches,
+                        'total_batches'     => $total_batches,
+                        'remaining_batches' => 0,
+                        'total_items'       => $total_items,
+                        'processed_items'   => max($total_items, $processed_items),
+                        'is_full_scan'      => true,
+                        'message'           => $total_items > 0
+                            ? __('Analyse terminée. Tous les lots ont été traités.', 'liens-morts-detector-jlg')
+                            : __('Analyse terminée. Aucun contenu à analyser.', 'liens-morts-detector-jlg'),
+                    ]);
                     blc_release_image_scan_lock($lock_token);
                 }
             } finally {

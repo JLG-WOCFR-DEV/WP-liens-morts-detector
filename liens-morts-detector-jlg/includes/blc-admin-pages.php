@@ -234,6 +234,90 @@ function blc_schedule_manual_link_scan($is_full_scan = false) {
 }
 
 /**
+ * Schedule a manual image scan and update the stored status.
+ *
+ * @return array{success:bool,message:string,manual_trigger_failed:bool}
+ */
+function blc_schedule_manual_image_scan() {
+    if (function_exists('wp_clear_scheduled_hook')) {
+        wp_clear_scheduled_hook('blc_check_image_batch');
+    }
+
+    $scheduled = wp_schedule_single_event(time(), 'blc_check_image_batch', array(0, true));
+
+    if (false === $scheduled) {
+        error_log('BLC: Failed to schedule manual image check.');
+        do_action('blc_manual_image_check_schedule_failed');
+
+        $failure_message = __("La vérification des images n'a pas pu être programmée. Veuillez réessayer.", 'liens-morts-detector-jlg');
+
+        blc_update_image_scan_status([
+            'state'      => 'failed',
+            'message'    => $failure_message,
+            'last_error' => $failure_message,
+        ]);
+
+        return [
+            'success'               => false,
+            'message'               => $failure_message,
+            'manual_trigger_failed' => false,
+        ];
+    }
+
+    $manual_trigger_failed = false;
+
+    if (!defined('DISABLE_WP_CRON') || !DISABLE_WP_CRON) {
+        $manual_trigger_result = null;
+
+        if (function_exists('spawn_cron')) {
+            $manual_trigger_result = spawn_cron();
+        } elseif (function_exists('wp_cron')) {
+            $manual_trigger_result = wp_cron();
+        }
+
+        if (null !== $manual_trigger_result) {
+            $is_error = (false === $manual_trigger_result);
+
+            if (function_exists('is_wp_error') && is_wp_error($manual_trigger_result)) {
+                $is_error = true;
+            }
+
+            if ($is_error) {
+                $manual_trigger_failed = true;
+                error_log('BLC: Manual cron trigger failed for image check.');
+            }
+        }
+    }
+
+    $status_message = __('Analyse programmée. Le premier lot démarrera sous peu.', 'liens-morts-detector-jlg');
+
+    if ($manual_trigger_failed) {
+        $status_message .= ' ' . __("Le déclenchement immédiat du cron a échoué. Le système WordPress essaiera de l'exécuter automatiquement.", 'liens-morts-detector-jlg');
+    }
+
+    blc_update_image_scan_status([
+        'state'             => 'queued',
+        'current_batch'     => 0,
+        'processed_batches' => 0,
+        'total_batches'     => 0,
+        'remaining_batches' => 0,
+        'total_items'       => 0,
+        'processed_items'   => 0,
+        'is_full_scan'      => true,
+        'message'           => $status_message,
+        'last_error'        => '',
+        'started_at'        => time(),
+        'ended_at'          => 0,
+    ]);
+
+    return [
+        'success'               => true,
+        'message'               => __("La vérification des images a été programmée et s'exécute en arrière-plan.", 'liens-morts-detector-jlg'),
+        'manual_trigger_failed' => $manual_trigger_failed,
+    ];
+}
+
+/**
  * Retrieve the localized label for a scan status.
  *
  * @param string $state Status identifier.
@@ -654,7 +738,6 @@ function blc_dashboard_links_page() {
 function blc_dashboard_images_page() {
     blc_render_action_modal();
 
-    // Gère le lancement du scan d'images
     if (isset($_POST['blc_manual_image_check'])) {
         check_admin_referer('blc_manual_image_check_nonce');
 
@@ -662,48 +745,20 @@ function blc_dashboard_images_page() {
             wp_die(esc_html__('Permissions insuffisantes pour lancer une analyse manuelle.', 'liens-morts-detector-jlg'));
         }
 
-        wp_clear_scheduled_hook('blc_check_image_batch');
-        $scheduled = wp_schedule_single_event(time(), 'blc_check_image_batch', array(0, true));
+        $schedule_result = blc_schedule_manual_image_scan();
 
-        if (false === $scheduled) {
-            error_log('BLC: Failed to schedule manual image check.');
-            do_action('blc_manual_image_check_schedule_failed');
+        if (!$schedule_result['success']) {
             printf(
                 '<div class="notice notice-error is-dismissible"><p>%s</p></div>',
-                esc_html__("La vérification des images n'a pas pu être programmée. Veuillez réessayer.", 'liens-morts-detector-jlg')
+                esc_html($schedule_result['message'])
             );
         } else {
-            $manual_trigger_failed = false;
-
-            if (!defined('DISABLE_WP_CRON') || !DISABLE_WP_CRON) {
-                $manual_trigger_result = null;
-
-                if (function_exists('spawn_cron')) {
-                    $manual_trigger_result = spawn_cron();
-                } elseif (function_exists('wp_cron')) {
-                    $manual_trigger_result = wp_cron();
-                }
-
-                if (null !== $manual_trigger_result) {
-                    $is_error = (false === $manual_trigger_result);
-
-                    if (function_exists('is_wp_error') && is_wp_error($manual_trigger_result)) {
-                        $is_error = true;
-                    }
-
-                    if ($is_error) {
-                        $manual_trigger_failed = true;
-                        error_log('BLC: Manual cron trigger failed for image check.');
-                    }
-                }
-            }
-
             printf(
                 '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
-                esc_html__("La vérification des images a été programmée et s'exécute en arrière-plan.", 'liens-morts-detector-jlg')
+                esc_html($schedule_result['message'])
             );
 
-            if ($manual_trigger_failed) {
+            if (!empty($schedule_result['manual_trigger_failed'])) {
                 printf(
                     '<div class="notice notice-error is-dismissible"><p>%s</p></div>',
                     esc_html__(
@@ -741,13 +796,90 @@ function blc_dashboard_images_page() {
 
         $option_size_bytes = blc_get_dataset_storage_footprint_bytes('image');
     }
-    $option_size_kb      = $option_size_bytes / 1024;
-    $size_display        = ($option_size_kb < 1024)
+
+    $option_size_kb = $option_size_bytes / 1024;
+    $size_display = ($option_size_kb < 1024)
         ? sprintf('%s %s', number_format_i18n($option_size_kb, 2), __('Ko', 'liens-morts-detector-jlg'))
         : sprintf('%s %s', number_format_i18n($option_size_kb / 1024, 2), __('Mo', 'liens-morts-detector-jlg'));
-    $last_check_display  = $last_image_check_time
+
+    $last_check_display = $last_image_check_time
         ? wp_date('j M Y', $last_image_check_time)
         : __('Jamais', 'liens-morts-detector-jlg');
+
+    $image_scan_status = blc_get_image_scan_status_payload();
+    $image_scan_state_slug = isset($image_scan_status['state']) ? sanitize_key($image_scan_status['state']) : 'idle';
+    if ($image_scan_state_slug === '') {
+        $image_scan_state_slug = 'idle';
+    }
+
+    $image_scan_state_label = blc_get_scan_state_label($image_scan_state_slug);
+
+    $image_total_batches_display = isset($image_scan_status['total_batches']) ? (int) $image_scan_status['total_batches'] : 0;
+    if ($image_total_batches_display <= 0 && in_array($image_scan_state_slug, array('queued', 'running'), true)) {
+        $image_total_batches_display = max(1, (int) $image_scan_status['processed_batches']);
+    }
+    $image_total_batches_display = max(0, $image_total_batches_display);
+
+    $image_processed_batches_display = isset($image_scan_status['processed_batches']) ? (int) $image_scan_status['processed_batches'] : 0;
+    if ($image_total_batches_display > 0) {
+        $image_processed_batches_display = max(0, min($image_processed_batches_display, $image_total_batches_display));
+    }
+
+    $image_initial_progress = 0;
+    if ($image_total_batches_display > 0) {
+        $image_initial_progress = (int) round(($image_processed_batches_display / max(1, $image_total_batches_display)) * 100);
+    } elseif ('completed' === $image_scan_state_slug) {
+        $image_initial_progress = 100;
+    }
+    $image_initial_progress = max(0, min(100, $image_initial_progress));
+
+    $image_scan_details_parts = array();
+
+    if (in_array($image_scan_state_slug, array('running', 'queued'), true)) {
+        if ($image_total_batches_display > 0) {
+            $image_scan_details_parts[] = sprintf(
+                /* translators: 1: current batch number, 2: total batch count. */
+                __('Lot %1$d sur %2$d.', 'liens-morts-detector-jlg'),
+                max(1, $image_processed_batches_display),
+                max(1, $image_total_batches_display)
+            );
+        } else {
+            $image_scan_details_parts[] = __('Préparation du prochain lot…', 'liens-morts-detector-jlg');
+        }
+    } elseif ('completed' === $image_scan_state_slug) {
+        $image_scan_details_parts[] = __('Analyse terminée.', 'liens-morts-detector-jlg');
+    } elseif ('failed' === $image_scan_state_slug) {
+        $image_scan_details_parts[] = __('Dernier scan en échec.', 'liens-morts-detector-jlg');
+    } elseif ('cancelled' === $image_scan_state_slug) {
+        $image_scan_details_parts[] = __('Scan annulé.', 'liens-morts-detector-jlg');
+    }
+
+    $image_next_batch_timestamp = isset($image_scan_status['next_batch_timestamp']) ? (int) $image_scan_status['next_batch_timestamp'] : 0;
+    if ($image_next_batch_timestamp > 0 && in_array($image_scan_state_slug, array('running', 'queued'), true)) {
+        $image_scan_details_parts[] = sprintf(
+            /* translators: %s: next batch scheduled date. */
+            __('Prochain lot prévu à %s.', 'liens-morts-detector-jlg'),
+            wp_date('j M Y H:i', $image_next_batch_timestamp)
+        );
+    }
+
+    $image_scan_details = trim(implode(' ', array_filter(array_map('strval', $image_scan_details_parts))));
+
+    $image_scan_panel_classes = array_filter(
+        array(
+            'blc-scan-status',
+            'blc-scan-status--state-' . $image_scan_state_slug,
+            in_array($image_scan_state_slug, array('running', 'queued'), true) ? 'is-active' : '',
+            'completed' === $image_scan_state_slug ? 'is-completed' : '',
+            'failed' === $image_scan_state_slug ? 'is-failed' : '',
+            'cancelled' === $image_scan_state_slug ? 'is-cancelled' : '',
+        )
+    );
+
+    $image_scan_panel_class_attr = implode(' ', array_map('sanitize_html_class', $image_scan_panel_classes));
+    $image_status_message = isset($image_scan_status['message']) && is_string($image_scan_status['message'])
+        ? $image_scan_status['message']
+        : '';
 
     $list_table = new BLC_Images_List_Table();
     $list_table->prepare_items();
@@ -756,28 +888,60 @@ function blc_dashboard_images_page() {
         <?php blc_render_dashboard_tabs('images'); ?>
         <h1><?php esc_html_e('Rapport des Images Cassées', 'liens-morts-detector-jlg'); ?></h1>
         <div class="blc-stats-box">
-             <div class="blc-stat">
-                 <span class="blc-stat-value"><?php echo esc_html($broken_images_count); ?></span>
-                 <span class="blc-stat-label"><?php esc_html_e('Images cassées trouvées', 'liens-morts-detector-jlg'); ?></span>
-             </div>
-             <div class="blc-stat">
-                 <span class="blc-stat-value"><?php echo esc_html($size_display); ?></span>
-                 <span class="blc-stat-label"><?php esc_html_e('Poids des données', 'liens-morts-detector-jlg'); ?></span>
-             </div>
-             <div class="blc-stat">
-                 <span class="blc-stat-value"><?php echo esc_html($last_check_display); ?></span>
-                 <span class="blc-stat-label"><?php esc_html_e('Dernière analyse d\'images', 'liens-morts-detector-jlg'); ?></span>
-             </div>
+            <div class="blc-stat">
+                <span class="blc-stat-value"><?php echo esc_html($broken_images_count); ?></span>
+                <span class="blc-stat-label"><?php esc_html_e('Images cassées trouvées', 'liens-morts-detector-jlg'); ?></span>
+            </div>
+            <div class="blc-stat">
+                <span class="blc-stat-value"><?php echo esc_html($size_display); ?></span>
+                <span class="blc-stat-label"><?php esc_html_e('Poids des données', 'liens-morts-detector-jlg'); ?></span>
+            </div>
+            <div class="blc-stat">
+                <span class="blc-stat-value"><?php echo esc_html($last_check_display); ?></span>
+                <span class="blc-stat-label"><?php esc_html_e('Dernière analyse d\'images', 'liens-morts-detector-jlg'); ?></span>
+            </div>
         </div>
-        <form method="post" style="margin-bottom: 20px;">
+        <div
+            id="blc-image-scan-status-panel"
+            class="<?php echo esc_attr($image_scan_panel_class_attr); ?>"
+            aria-live="polite"
+            data-scan-state="<?php echo esc_attr($image_scan_state_slug); ?>"
+            data-is-full-scan="1"
+        >
+            <div class="blc-scan-status__header">
+                <h2 class="blc-scan-status__title"><?php esc_html_e('Statut du scan des images', 'liens-morts-detector-jlg'); ?></h2>
+                <span class="blc-scan-status__state"><?php echo esc_html($image_scan_state_label); ?></span>
+            </div>
+            <div
+                class="blc-scan-status__progress"
+                role="progressbar"
+                aria-label="<?php echo esc_attr__('Progression du scan manuel', 'liens-morts-detector-jlg'); ?>"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="<?php echo esc_attr($image_initial_progress); ?>"
+            >
+                <span class="blc-scan-status__progress-fill" style="width: <?php echo esc_attr($image_initial_progress); ?>%;"></span>
+            </div>
+            <p class="blc-scan-status__details"><?php echo esc_html($image_scan_details); ?></p>
+            <div class="blc-scan-status__actions">
+                <button type="button" class="button button-secondary blc-scan-status__cancel" id="blc-image-cancel-scan">
+                    <?php esc_html_e('Annuler le scan', 'liens-morts-detector-jlg'); ?>
+                </button>
+                <button type="button" class="button blc-scan-status__restart" id="blc-image-restart-scan">
+                    <?php esc_html_e('Replanifier un scan', 'liens-morts-detector-jlg'); ?>
+                </button>
+            </div>
+            <p class="blc-scan-status__message" aria-live="polite"><?php echo esc_html($image_status_message); ?></p>
+        </div>
+        <form id="blc-image-manual-scan-form" method="post" class="blc-manual-scan-form" style="margin-bottom: 20px;">
             <?php wp_nonce_field('blc_manual_image_check_nonce'); ?>
             <input type="hidden" name="blc_manual_image_check" value="1">
             <p><?php esc_html_e("L'analyse des images peut être longue et consommer des ressources. Elle s'exécute en arrière-plan sur l'ensemble du site.", 'liens-morts-detector-jlg'); ?></p>
             <input type="submit" class="button button-primary" value="<?php echo esc_attr__("Lancer l'analyse des images", 'liens-morts-detector-jlg'); ?>">
         </form>
-        <?php if ($broken_images_count === 0): ?>
-             <p><?php esc_html_e('✅ Aucune image cassée trouvée. Bravo !', 'liens-morts-detector-jlg'); ?></p>
-        <?php else: ?>
+        <?php if ($broken_images_count === 0) : ?>
+            <p><?php esc_html_e('✅ Aucune image cassée trouvée. Bravo !', 'liens-morts-detector-jlg'); ?></p>
+        <?php else : ?>
             <form method="post">
                 <?php $list_table->display(); ?>
             </form>
@@ -792,6 +956,7 @@ function blc_dashboard_images_page() {
 function blc_settings_page() {
     ?>
     <div class="wrap">
+        <?php blc_render_dashboard_tabs('settings'); ?>
         <h1><?php esc_html_e('Réglages', 'liens-morts-detector-jlg'); ?></h1>
         <?php settings_errors(); ?>
         <form method="post" action="options.php">
@@ -808,6 +973,9 @@ function blc_settings_page() {
 add_action('wp_ajax_blc_start_manual_scan', 'blc_ajax_start_manual_scan');
 add_action('wp_ajax_blc_cancel_manual_scan', 'blc_ajax_cancel_manual_scan');
 add_action('wp_ajax_blc_get_scan_status', 'blc_ajax_get_scan_status');
+add_action('wp_ajax_blc_start_manual_image_scan', 'blc_ajax_start_manual_image_scan');
+add_action('wp_ajax_blc_cancel_manual_image_scan', 'blc_ajax_cancel_manual_image_scan');
+add_action('wp_ajax_blc_get_image_scan_status', 'blc_ajax_get_image_scan_status');
 
 /**
  * AJAX handler to start a manual scan via admin-ajax.
@@ -917,6 +1085,113 @@ function blc_ajax_get_scan_status() {
     wp_send_json_success(
         array(
             'status' => blc_get_link_scan_status_payload(),
+        )
+    );
+}
+
+/**
+ * AJAX handler to start a manual image scan.
+ *
+ * @return void
+ */
+function blc_ajax_start_manual_image_scan() {
+    check_ajax_referer('blc_start_manual_image_scan');
+
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(
+            array(
+                'message' => __('Permissions insuffisantes pour lancer une analyse manuelle.', 'liens-morts-detector-jlg'),
+            ),
+            defined('BLC_HTTP_FORBIDDEN') ? (int) BLC_HTTP_FORBIDDEN : 403
+        );
+    }
+
+    $result = blc_schedule_manual_image_scan();
+
+    if (!$result['success']) {
+        wp_send_json_error(
+            array(
+                'message' => $result['message'],
+                'status'  => blc_get_image_scan_status_payload(),
+            ),
+            500
+        );
+    }
+
+    $response = array(
+        'message'               => $result['message'],
+        'status'                => blc_get_image_scan_status_payload(),
+        'manual_trigger_failed' => !empty($result['manual_trigger_failed']),
+    );
+
+    if (!empty($result['manual_trigger_failed'])) {
+        $response['warning'] = __("Le déclenchement immédiat du cron a échoué. Le système WordPress essaiera de l'exécuter automatiquement.", 'liens-morts-detector-jlg');
+    }
+
+    wp_send_json_success($response);
+}
+
+/**
+ * AJAX handler to cancel upcoming manual image scan batches.
+ *
+ * @return void
+ */
+function blc_ajax_cancel_manual_image_scan() {
+    check_ajax_referer('blc_cancel_manual_image_scan');
+
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(
+            array(
+                'message' => __('Permissions insuffisantes pour annuler une analyse manuelle.', 'liens-morts-detector-jlg'),
+            ),
+            defined('BLC_HTTP_FORBIDDEN') ? (int) BLC_HTTP_FORBIDDEN : 403
+        );
+    }
+
+    $cleared_batches = function_exists('wp_clear_scheduled_hook')
+        ? wp_clear_scheduled_hook('blc_check_image_batch')
+        : 0;
+
+    $message = __('Les lots planifiés ont été annulés. Le lot en cours peut se terminer.', 'liens-morts-detector-jlg');
+
+    blc_update_image_scan_status([
+        'state'             => 'cancelled',
+        'message'           => $message,
+        'last_error'        => '',
+        'remaining_batches' => 0,
+        'total_items'       => 0,
+        'processed_items'   => 0,
+    ]);
+
+    wp_send_json_success(
+        array(
+            'message'        => $message,
+            'status'         => blc_get_image_scan_status_payload(),
+            'cleared_batches' => (int) $cleared_batches,
+        )
+    );
+}
+
+/**
+ * AJAX handler returning the current image scan status payload.
+ *
+ * @return void
+ */
+function blc_ajax_get_image_scan_status() {
+    check_ajax_referer('blc_get_image_scan_status');
+
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(
+            array(
+                'message' => __('Permissions insuffisantes pour consulter le statut du scan.', 'liens-morts-detector-jlg'),
+            ),
+            defined('BLC_HTTP_FORBIDDEN') ? (int) BLC_HTTP_FORBIDDEN : 403
+        );
+    }
+
+    wp_send_json_success(
+        array(
+            'status' => blc_get_image_scan_status_payload(),
         )
     );
 }
