@@ -111,8 +111,19 @@ abstract class ScannerTestCase extends TestCase
         $this->wpdb = new class {
             public string $prefix = 'wp_';
 
+            public string $posts = 'wp_posts';
+
             /** @var array<int, string> */
             public array $queries = [];
+
+            /** @var array<int, array{table:string,data:array,format:?array}> */
+            public array $insertedRows = [];
+
+            /** @var array<int, array{table:string,where:array,format:?array}> */
+            public array $deletedRows = [];
+
+            /** @var int */
+            public int $insert_id = 0;
 
             public function prepare($query, ...$args)
             {
@@ -128,6 +139,31 @@ abstract class ScannerTestCase extends TestCase
             public function query($query)
             {
                 $this->queries[] = (string) $query;
+                return 0;
+            }
+
+            public function insert($table, $data, $format = null)
+            {
+                $this->queries[] = sprintf('INSERT INTO %s', (string) $table);
+                $this->insert_id++;
+                $this->insertedRows[] = [
+                    'table'  => (string) $table,
+                    'data'   => is_array($data) ? $data : [],
+                    'format' => $format,
+                ];
+
+                return true;
+            }
+
+            public function delete($table, $where, $where_format = null)
+            {
+                $this->queries[] = sprintf('DELETE FROM %s', (string) $table);
+                $this->deletedRows[] = [
+                    'table'  => (string) $table,
+                    'where'  => is_array($where) ? $where : [],
+                    'format' => $where_format,
+                ];
+
                 return 0;
             }
         };
@@ -217,6 +253,25 @@ abstract class ScannerTestCase extends TestCase
         Functions\when('wp_parse_url')->alias(fn($url, $component = -1) => parse_url($url, $component));
         Functions\when('trailingslashit')->alias(fn($value) => rtrim((string) $value, "/\\") . '/');
         Functions\when('wp_normalize_path')->alias(fn($path) => str_replace('\\', '/', (string) $path));
+        Functions\when('set_url_scheme')->alias(function ($url, $scheme = null) {
+            $url = (string) $url;
+            if ($url === '' || $scheme === null) {
+                return $url;
+            }
+
+            if (strpos($url, '://') === false) {
+                return $scheme . '://' . ltrim($url, '/');
+            }
+
+            return preg_replace('#^[a-zA-Z0-9+.-]+://#', $scheme . '://', $url);
+        });
+        Functions\when('get_bloginfo')->alias(function ($show, $filter = 'raw') {
+            if ((string) $show === 'charset') {
+                return 'UTF-8';
+            }
+
+            return '';
+        });
 
         Functions\when('wp_list_pluck')->alias(function ($input, $field) {
             $result = [];
