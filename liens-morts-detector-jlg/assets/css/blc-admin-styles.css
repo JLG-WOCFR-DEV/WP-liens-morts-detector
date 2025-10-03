@@ -105,6 +105,20 @@
     color: #50575e;
 }
 
+.blc-stat-note {
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #646970;
+    display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+    .blc-stat-note {
+        color: #b7c0cc;
+    }
+}
+
 /* Styles pour les badges de statut HTTP */
 .blc-status {
     display: inline-flex;

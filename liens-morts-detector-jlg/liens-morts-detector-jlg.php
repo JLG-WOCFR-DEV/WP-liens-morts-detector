@@ -218,6 +218,19 @@ function blc_enqueue_admin_assets($hook) {
             'getStatusNonce'  => wp_create_nonce('blc_get_scan_status'),
             'pollInterval'    => max(2000, (int) $poll_interval),
             'status'          => $scan_status,
+            'scanType'        => 'link',
+            'ajax'            => array(
+                'start'  => 'blc_start_manual_scan',
+                'cancel' => 'blc_cancel_manual_scan',
+                'status' => 'blc_get_scan_status',
+            ),
+            'selectors'       => array(
+                'panel'   => '#blc-scan-status-panel',
+                'form'    => '#blc-manual-scan-form',
+                'cancel'  => '#blc-cancel-scan',
+                'restart' => '#blc-restart-scan',
+                'fullScan'=> 'input[name="blc_full_scan"]',
+            ),
             'i18n'            => array(
                 'panelTitle'        => __('Statut du scan manuel', 'liens-morts-detector-jlg'),
                 'states'            => array(
@@ -236,11 +249,23 @@ function blc_enqueue_admin_assets($hook) {
                 'cancelSuccess'    => __('Les lots planifiés ont été annulés.', 'liens-morts-detector-jlg'),
                 'cancelError'      => __('Impossible d\'annuler l\'analyse. Veuillez réessayer.', 'liens-morts-detector-jlg'),
                 'cancelConfirm'    => __('Voulez-vous annuler les lots planifiés ?', 'liens-morts-detector-jlg'),
+                'cancelTitle'      => __('Annuler le scan', 'liens-morts-detector-jlg'),
+                'cancelConfirmLabel' => __('Annuler', 'liens-morts-detector-jlg'),
                 'restartConfirm'   => __('Voulez-vous reprogrammer immédiatement un nouveau scan ?', 'liens-morts-detector-jlg'),
+                'restartTitle'     => __('Replanifier un scan', 'liens-morts-detector-jlg'),
+                'restartConfirmLabel' => __('Replanifier', 'liens-morts-detector-jlg'),
                 'unknownState'     => __('Statut inconnu', 'liens-morts-detector-jlg'),
             ),
         )
     );
+
+    $image_rest_base = $rest_url ? $rest_url : (function_exists('rest_url') ? rest_url('blc/v1/scan-status') : '');
+    $image_rest_url = $image_rest_base ? add_query_arg('type', 'image', $image_rest_base) : '';
+    $image_scan_status = blc_get_image_scan_status_payload();
+    $image_poll_interval = apply_filters('blc_image_scan_status_poll_interval', 10000);
+    if (!is_int($image_poll_interval)) {
+        $image_poll_interval = 10000;
+    }
 
     wp_localize_script(
         'blc-admin-js',
@@ -255,6 +280,58 @@ function blc_enqueue_admin_assets($hook) {
             'errorText'              => __('Échec de l’envoi de la notification de test. Veuillez vérifier vos réglages.', 'liens-morts-detector-jlg'),
             'missingRecipientsText'  => __('Ajoutez un destinataire ou configurez un webhook avant d’envoyer un test.', 'liens-morts-detector-jlg'),
             'missingChannelText'     => __('Sélectionnez au moins un type de résumé à tester.', 'liens-morts-detector-jlg'),
+        )
+    );
+
+    wp_localize_script(
+        'blc-admin-js',
+        'blcAdminImageScanConfig',
+        array(
+            'restUrl'         => $image_rest_url ? esc_url_raw($image_rest_url) : '',
+            'restNonce'       => wp_create_nonce('wp_rest'),
+            'startScanNonce'  => wp_create_nonce('blc_start_manual_image_scan'),
+            'cancelScanNonce' => wp_create_nonce('blc_cancel_manual_image_scan'),
+            'getStatusNonce'  => wp_create_nonce('blc_get_image_scan_status'),
+            'pollInterval'    => max(2000, (int) $image_poll_interval),
+            'status'          => $image_scan_status,
+            'scanType'        => 'image',
+            'ajax'            => array(
+                'start'  => 'blc_start_manual_image_scan',
+                'cancel' => 'blc_cancel_manual_image_scan',
+                'status' => 'blc_get_image_scan_status',
+            ),
+            'selectors'       => array(
+                'panel'   => '#blc-image-scan-status-panel',
+                'form'    => '#blc-image-manual-scan-form',
+                'cancel'  => '#blc-image-cancel-scan',
+                'restart' => '#blc-image-restart-scan',
+                'fullScan'=> '',
+            ),
+            'i18n'            => array(
+                'panelTitle'        => __('Statut du scan des images', 'liens-morts-detector-jlg'),
+                'states'            => array(
+                    'idle'      => __('Inactif', 'liens-morts-detector-jlg'),
+                    'queued'    => __('En file d\'attente', 'liens-morts-detector-jlg'),
+                    'running'   => __('Analyse en cours', 'liens-morts-detector-jlg'),
+                    'completed' => __('Terminée', 'liens-morts-detector-jlg'),
+                    'failed'    => __('Échec', 'liens-morts-detector-jlg'),
+                    'cancelled' => __('Annulée', 'liens-morts-detector-jlg'),
+                ),
+                'batchSummary'     => __('Lot %1$d sur %2$d', 'liens-morts-detector-jlg'),
+                'remainingBatches' => __('Lots restants : %d', 'liens-morts-detector-jlg'),
+                'nextBatch'        => __('Prochain lot prévu à %s', 'liens-morts-detector-jlg'),
+                'queueMessage'     => __('Analyse programmée. Le premier lot démarrera sous peu.', 'liens-morts-detector-jlg'),
+                'startError'       => __('Impossible de lancer l\'analyse des images. Veuillez réessayer.', 'liens-morts-detector-jlg'),
+                'cancelSuccess'    => __('Les lots planifiés ont été annulés.', 'liens-morts-detector-jlg'),
+                'cancelError'      => __('Impossible d\'annuler l\'analyse des images. Veuillez réessayer.', 'liens-morts-detector-jlg'),
+                'cancelConfirm'    => __('Voulez-vous annuler les lots planifiés ?', 'liens-morts-detector-jlg'),
+                'cancelTitle'      => __('Annuler le scan', 'liens-morts-detector-jlg'),
+                'cancelConfirmLabel' => __('Annuler', 'liens-morts-detector-jlg'),
+                'restartConfirm'   => __('Voulez-vous reprogrammer immédiatement un nouveau scan ?', 'liens-morts-detector-jlg'),
+                'restartTitle'     => __('Replanifier un scan', 'liens-morts-detector-jlg'),
+                'restartConfirmLabel' => __('Replanifier', 'liens-morts-detector-jlg'),
+                'unknownState'     => __('Statut inconnu', 'liens-morts-detector-jlg'),
+            ),
         )
     );
 }
