@@ -789,7 +789,7 @@ class ScanQueue {
                 $bypass_rest_window,
                 $remote_request_client
             ) {
-                return function (string $original_url, string $anchor_text) use (
+                return function (string $original_url, string $anchor_text, string $context_html, string $context_excerpt) use (
                     &$link_occurrence_counters,
                     $source_post_id,
                     $storage_title,
@@ -831,6 +831,8 @@ class ScanQueue {
 
                     $url_for_storage    = blc_prepare_url_for_storage($original_url);
                     $anchor_for_storage = blc_prepare_text_field_for_storage($anchor_text);
+                    $context_html_for_storage = blc_prepare_context_html_for_storage($context_html);
+                    $context_excerpt_for_storage = blc_prepare_context_excerpt_for_storage($context_excerpt);
 
                     $normalized_url = blc_normalize_link_url($original_url, $site_url, $site_scheme, $permalink_for_links);
                     if ($normalized_url === '') {
@@ -838,8 +840,17 @@ class ScanQueue {
                     }
 
                     $metadata  = blc_get_url_metadata_for_storage($original_url, $normalized_url, $site_host);
-                    $row_bytes = blc_calculate_row_storage_footprint_bytes($url_for_storage, $anchor_for_storage, $storage_title);
+                    $row_bytes = blc_calculate_row_storage_footprint_bytes(
+                        $url_for_storage,
+                        $anchor_for_storage,
+                        $storage_title,
+                        $context_html_for_storage,
+                        $context_excerpt_for_storage
+                    );
                     $checked_at_gmt = current_time('mysql', true);
+                    $context_html_value = ($context_html_for_storage === '') ? null : $context_html_for_storage;
+                    $context_excerpt_value = ($context_excerpt_for_storage === '') ? null : $context_excerpt_for_storage;
+                    $detected_target_for_storage = blc_prepare_url_for_storage($normalized_url);
 
                     $parsed_url = parse_url($normalized_url);
                     if ($parsed_url === false) {
@@ -893,8 +904,11 @@ class ScanQueue {
                                         'is_internal'     => $metadata['is_internal'],
                                         'http_status'     => null,
                                         'last_checked_at' => $checked_at_gmt,
+                                        'redirect_target_url' => $detected_target_for_storage,
+                                        'context_html'   => $context_html_value,
+                                        'context_excerpt'=> $context_excerpt_value,
                                     ],
-                                    ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d', '%d', '%s']
+                                    ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d', '%d', '%s', '%s', '%s']
                                 );
                                 if ($inserted) {
                                     $register_pending_link_insert($source_post_id, $row_bytes);
@@ -945,26 +959,29 @@ class ScanQueue {
 
                         if (!$is_safe_remote_host) {
                             if ($debug_mode) { error_log("  -> Lien ignoré (IP non autorisée) : " . $normalized_url); }
-                                $inserted = $wpdb->insert(
-                                    $table_name,
-                                    [
-                                    'url'             => $url_for_storage,
-                                    'anchor'          => $anchor_for_storage,
-                                    'post_id'         => $source_post_id,
-                                    'post_title'      => $storage_title,
-                                    'type'            => 'link',
-                                    'occurrence_index'=> $occurrence_index,
-                                    'url_host'        => $metadata['host'],
-                                    'is_internal'     => $metadata['is_internal'],
-                                    'http_status'     => null,
-                                    'last_checked_at' => $checked_at_gmt,
+                            $inserted = $wpdb->insert(
+                                $table_name,
+                                [
+                                    'url'                 => $url_for_storage,
+                                    'anchor'              => $anchor_for_storage,
+                                    'post_id'             => $source_post_id,
+                                    'post_title'          => $storage_title,
+                                    'type'                => 'link',
+                                    'occurrence_index'    => $occurrence_index,
+                                    'url_host'            => $metadata['host'],
+                                    'is_internal'         => $metadata['is_internal'],
+                                    'http_status'         => null,
+                                    'last_checked_at'     => $checked_at_gmt,
+                                    'redirect_target_url' => $detected_target_for_storage,
+                                    'context_html'        => $context_html_value,
+                                    'context_excerpt'     => $context_excerpt_value,
                                 ],
-                                ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d', '%d', '%s']
+                                ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d', '%d', '%s', '%s', '%s']
                             );
-                                if ($inserted) {
-                                    $register_pending_link_insert($source_post_id, $row_bytes);
-                                    blc_adjust_dataset_storage_footprint('link', $row_bytes);
-                                }
+                            if ($inserted) {
+                                $register_pending_link_insert($source_post_id, $row_bytes);
+                                blc_adjust_dataset_storage_footprint('link', $row_bytes);
+                            }
                             $should_skip_remote_request = true;
                         }
                     }
@@ -1097,6 +1114,13 @@ class ScanQueue {
                             }
                         }
 
+                        if (!is_wp_error($response)) {
+                            $resolved_target_url = blc_determine_response_target_url($response, $normalized_url);
+                            if ($resolved_target_url !== '') {
+                                $detected_target_for_storage = blc_prepare_url_for_storage($resolved_target_url);
+                            }
+                        }
+
                         if (is_wp_error($response)) {
                             if ($head_request_disallowed) {
                                 $should_retry_later = true;
@@ -1202,8 +1226,11 @@ class ScanQueue {
                                 'is_internal'     => $metadata['is_internal'],
                                 'http_status'     => ($response_code !== null) ? (int) $response_code : null,
                                 'last_checked_at' => $checked_at_gmt,
+                                'redirect_target_url' => $detected_target_for_storage,
+                                'context_html'   => $context_html_value,
+                                'context_excerpt'=> $context_excerpt_value,
                             ],
-                            ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d', '%d', '%s']
+                            ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d', '%d', '%s', '%s', '%s']
                         );
                         if ($inserted) {
                             $register_pending_link_insert($source_post_id, $row_bytes);

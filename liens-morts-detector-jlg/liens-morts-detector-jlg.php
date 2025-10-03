@@ -1016,6 +1016,166 @@ function blc_ajax_ignore_link_callback() {
     ]);
 }
 
+add_action('wp_ajax_blc_recheck_link', 'blc_ajax_recheck_link_callback');
+function blc_ajax_recheck_link_callback() {
+    check_ajax_referer('blc_recheck_link_nonce');
+
+    $params = blc_require_post_params(['post_id', 'row_id']);
+
+    $post_id = absint($params['post_id']);
+    $row_id  = absint($params['row_id']);
+
+    $occurrence_input = null;
+    if (isset($_POST['occurrence_index'])) {
+        $occurrence_input = wp_unslash($_POST['occurrence_index']);
+    }
+
+    $resolution = blc_resolve_link_row($post_id, $row_id, $occurrence_input);
+    $row        = $resolution['row'];
+    $table_name = $resolution['table'];
+
+    global $wpdb;
+
+    $post = get_post($post_id);
+    if ($post) {
+        if (!current_user_can('edit_post', $post_id)) {
+            wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')], BLC_HTTP_FORBIDDEN);
+        }
+    } else {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')], BLC_HTTP_FORBIDDEN);
+        }
+    }
+
+    $stored_url = isset($row['url']) ? (string) $row['url'] : '';
+    if ($stored_url === '') {
+        wp_send_json_error([
+            'message' => __('Le lien sélectionné est introuvable. Veuillez relancer une analyse.', 'liens-morts-detector-jlg'),
+        ], BLC_HTTP_CONFLICT);
+    }
+
+    $normalized_url = $stored_url;
+
+    $timeout_constraints = blc_get_request_timeout_constraints();
+    $head_limits         = $timeout_constraints['head'];
+    $get_limits          = $timeout_constraints['get'];
+
+    $head_request_timeout = blc_normalize_timeout_option(
+        get_option('blc_head_request_timeout', $head_limits['default']),
+        $head_limits['default'],
+        $head_limits['min'],
+        $head_limits['max']
+    );
+
+    $get_request_timeout = blc_normalize_timeout_option(
+        get_option('blc_get_request_timeout', $get_limits['default']),
+        $get_limits['default'],
+        $get_limits['min'],
+        $get_limits['max']
+    );
+
+    $remote_request_client = new \JLG\BrokenLinks\Scanner\RemoteRequestClient();
+
+    $head_args = [
+        'user-agent'          => blc_get_http_user_agent(),
+        'timeout'             => $head_request_timeout,
+        'limit_response_size' => 1024,
+        'redirection'         => 5,
+    ];
+
+    $get_args = [
+        'timeout'             => $get_request_timeout,
+        'user-agent'          => blc_get_http_user_agent(),
+        'method'              => 'GET',
+        'limit_response_size' => 131072,
+    ];
+
+    $response = $remote_request_client->head($normalized_url, $head_args);
+    $response_code = null;
+    $needs_get     = false;
+
+    if (is_wp_error($response)) {
+        $needs_get = true;
+    } else {
+        $response_code = (int) $remote_request_client->responseCode($response);
+        if (in_array($response_code, [403, 405, 501], true)) {
+            $needs_get = true;
+        }
+    }
+
+    if ($needs_get) {
+        $response = $remote_request_client->get($normalized_url, $get_args);
+        if (is_wp_error($response)) {
+            $error_message = $response->get_error_message();
+            if ($error_message === '') {
+                $error_message = __('La re-vérification du lien a échoué.', 'liens-morts-detector-jlg');
+            }
+
+            wp_send_json_error(['message' => $error_message], BLC_HTTP_SERVER_ERROR);
+        }
+
+        $response_code = (int) $remote_request_client->responseCode($response);
+    }
+
+    $detected_target         = blc_determine_response_target_url($response, $normalized_url);
+    $detected_target_storage = blc_prepare_url_for_storage($detected_target);
+    if ($detected_target_storage === '') {
+        $detected_target_storage = null;
+    }
+
+    $timestamp = current_time('mysql', true);
+
+    $set_clauses = ['last_checked_at = %s'];
+    $values      = [$timestamp];
+
+    if ($detected_target_storage === null) {
+        $set_clauses[] = 'redirect_target_url = NULL';
+    } else {
+        $set_clauses[] = 'redirect_target_url = %s';
+        $values[]      = $detected_target_storage;
+    }
+
+    if ($response_code === null) {
+        $set_clauses[] = 'http_status = NULL';
+    } else {
+        $set_clauses[] = 'http_status = %d';
+        $values[]      = (int) $response_code;
+    }
+
+    $values[] = $row_id;
+
+    $update_sql = $wpdb->prepare(
+        "UPDATE $table_name SET " . implode(', ', $set_clauses) . " WHERE id = %d",
+        $values
+    );
+
+    if ($update_sql === false) {
+        wp_send_json_error([
+            'message' => __('La mise à jour du contrôle a échoué.', 'liens-morts-detector-jlg'),
+        ], BLC_HTTP_SERVER_ERROR);
+    }
+
+    $updated = $wpdb->query($update_sql);
+    if ($updated === false) {
+        $error_message = __('La mise à jour du contrôle a échoué.', 'liens-morts-detector-jlg');
+        if (!empty($wpdb->last_error)) {
+            $error_message .= ' ' . $wpdb->last_error;
+        }
+
+        wp_send_json_error(['message' => $error_message], BLC_HTTP_SERVER_ERROR);
+    }
+
+    blc_mark_link_view_counts_dirty();
+
+    $success_message = __('Le lien a été re-vérifié.', 'liens-morts-detector-jlg');
+
+    wp_send_json_success([
+        'message' => $success_message,
+        'http_status' => $response_code,
+        'redirect_target_url' => $detected_target_storage,
+    ]);
+}
+
 add_action('wp_ajax_blc_send_test_email', 'blc_ajax_send_test_email');
 function blc_ajax_send_test_email() {
     if (!current_user_can('manage_options')) {

@@ -71,6 +71,7 @@ function blc_render_action_modal() {
             </button>
             <h2 id="blc-modal-title" class="blc-modal__title"></h2>
             <p class="blc-modal__message"></p>
+            <div class="blc-modal__context" aria-live="polite"></div>
             <div class="blc-modal__error" role="alert" aria-live="assertive"></div>
             <div class="blc-modal__field">
                 <label for="blc-modal-url" class="blc-modal__label"></label>

@@ -1587,8 +1587,8 @@ function blc_create_dom_from_content($content, $charset = 'UTF-8') {
  *
  * @param string   $html     Raw HTML content.
  * @param string   $charset  Charset used to decode the snippet before DOM parsing.
- * @param callable $callback Callback receiving the original href and the normalized anchor text.
- *                           Signature: function (string $href, string $anchor_text): void.
+ * @param callable $callback Callback receiving the original href, anchor text and context information.
+ *                           Signature: function (string $href, string $anchor_text, string $context_html, string $context_excerpt): void.
  *
  * @return bool Whether the DOM could be created successfully.
  */
@@ -1610,7 +1610,24 @@ function blc_process_link_nodes_from_html($html, $charset, callable $callback) {
             $anchor_text = sprintf('[%s]', __('Lien sans texte', 'liens-morts-detector-jlg'));
         }
 
-        $callback($original_url, $anchor_text);
+        $context_html = '';
+        if ($link_node->ownerDocument instanceof DOMDocument) {
+            $rendered = $link_node->ownerDocument->saveHTML($link_node);
+            if (is_string($rendered)) {
+                $context_html = trim($rendered);
+            }
+        }
+
+        $context_excerpt = '';
+        if ($link_node->parentNode instanceof \DOMNode) {
+            $context_excerpt = trim($link_node->parentNode->textContent);
+        }
+
+        if ($context_excerpt === '') {
+            $context_excerpt = $anchor_text;
+        }
+
+        $callback($original_url, $anchor_text, $context_html, $context_excerpt);
     }
 
     return true;

@@ -666,6 +666,128 @@ function blc_prepare_text_field_for_storage($text) {
     return blc_truncate_for_storage($text, $max_length, true);
 }
 
+/**
+ * Prepare an HTML snippet captured during the scan for safe storage.
+ *
+ * @param string $html Raw HTML snippet surrounding the link.
+ *
+ * @return string Sanitized snippet trimmed to the configured size.
+ */
+function blc_prepare_context_html_for_storage($html) {
+    $html = trim((string) $html);
+
+    if ($html === '') {
+        return '';
+    }
+
+    if (function_exists('wp_kses_post')) {
+        $sanitized = wp_kses_post($html);
+        if (is_string($sanitized)) {
+            $html = $sanitized;
+        }
+    }
+
+    $max_length = (int) apply_filters('blc_context_html_max_length', 5000);
+    if ($max_length < 0) {
+        $max_length = 0;
+    }
+
+    return blc_truncate_for_storage($html, $max_length, false);
+}
+
+/**
+ * Prepare a textual excerpt surrounding a link for storage.
+ *
+ * @param string $text Raw text captured near the link.
+ *
+ * @return string Clean excerpt limited to a reasonable size.
+ */
+function blc_prepare_context_excerpt_for_storage($text) {
+    $text = trim((string) $text);
+
+    if ($text === '') {
+        return '';
+    }
+
+    if (function_exists('wp_strip_all_tags')) {
+        $stripped = wp_strip_all_tags($text);
+        if (is_string($stripped)) {
+            $text = trim($stripped);
+        }
+    }
+
+    $max_length = (int) apply_filters('blc_context_excerpt_max_length', 400);
+    if ($max_length < 0) {
+        $max_length = 0;
+    }
+
+    return blc_truncate_for_storage($text, $max_length, true);
+}
+
+/**
+ * Determine the final URL reached by a remote request.
+ *
+ * @param array|\WP_Error $response    Response returned by wp_remote_*.
+ * @param string          $fallback_url URL to use when no redirect target is available.
+ *
+ * @return string
+ */
+function blc_determine_response_target_url($response, $fallback_url) {
+    $target = is_string($fallback_url) ? $fallback_url : '';
+
+    if (is_wp_error($response)) {
+        return $target;
+    }
+
+    $candidate = null;
+
+    if (function_exists('wp_remote_retrieve_header')) {
+        $location_header = wp_remote_retrieve_header($response, 'location');
+        if (is_array($location_header) && !empty($location_header)) {
+            $location_header = end($location_header);
+        }
+
+        if (is_string($location_header) && $location_header !== '') {
+            $candidate = $location_header;
+        }
+    }
+
+    if ($candidate === null && isset($response['http_response']) && is_object($response['http_response'])) {
+        $http_response = $response['http_response'];
+
+        if (method_exists($http_response, 'get_response_object')) {
+            $requests_response = $http_response->get_response_object();
+            if (is_object($requests_response) && isset($requests_response->url)) {
+                $maybe_url = (string) $requests_response->url;
+                if ($maybe_url !== '') {
+                    $candidate = $maybe_url;
+                }
+            }
+        } elseif (method_exists($http_response, 'get_headers')) {
+            $headers = $http_response->get_headers();
+            if (is_object($headers) && method_exists($headers, 'getValues')) {
+                $locations = $headers->getValues('location');
+                if (is_array($locations) && !empty($locations)) {
+                    $candidate = (string) end($locations);
+                }
+            } elseif (is_array($headers) && isset($headers['location'])) {
+                $location_value = $headers['location'];
+                if (is_array($location_value) && !empty($location_value)) {
+                    $candidate = (string) end($location_value);
+                } elseif (is_string($location_value) && $location_value !== '') {
+                    $candidate = $location_value;
+                }
+            }
+        }
+    }
+
+    if (!is_string($candidate) || $candidate === '') {
+        $candidate = $target;
+    }
+
+    return (string) $candidate;
+}
+
 
 /**
  * Calculate the approximate storage footprint of a row based on its columns.
@@ -676,9 +798,9 @@ function blc_prepare_text_field_for_storage($text) {
  *
  * @return int Number of bytes used by the provided fields.
  */
-function blc_calculate_row_storage_footprint_bytes($url, $anchor = null, $post_title = null) {
+function blc_calculate_row_storage_footprint_bytes($url, $anchor = null, $post_title = null, $context_html = null, $context_excerpt = null) {
     $bytes = 0;
-    foreach ([$url, $anchor, $post_title] as $field) {
+    foreach ([$url, $anchor, $post_title, $context_html, $context_excerpt] as $field) {
         if ($field === null) {
             continue;
         }

@@ -243,7 +243,9 @@ class BLC_Links_List_Table extends WP_List_Table {
             'cb'           => sprintf('<input type="checkbox" aria-label="%s" />', $select_all_label),
             'url'          => __('URL Cassée', 'liens-morts-detector-jlg'),
             'anchor_text'  => __('Texte du lien', 'liens-morts-detector-jlg'),
+            'context_excerpt' => __('Contexte', 'liens-morts-detector-jlg'),
             'http_status'  => __('Statut HTTP', 'liens-morts-detector-jlg'),
+            'redirect_target_url' => __('Cible détectée', 'liens-morts-detector-jlg'),
             'last_checked_at' => __('Dernier contrôle', 'liens-morts-detector-jlg'),
             'post_title'   => __('Trouvé dans l\'article/page', 'liens-morts-detector-jlg'),
             'actions'      => __('Actions', 'liens-morts-detector-jlg')
@@ -349,6 +351,47 @@ class BLC_Links_List_Table extends WP_List_Table {
             return '<em>' . esc_html($item['anchor']) . '</em>';
         }
         return esc_html__('—', 'liens-morts-detector-jlg'); // Affiche un tiret si aucun texte de lien n'a été capturé
+    }
+
+    protected function column_context_excerpt($item) {
+        $excerpt = isset($item['context_excerpt']) ? (string) $item['context_excerpt'] : '';
+        if ($excerpt === '') {
+            return esc_html__('—', 'liens-morts-detector-jlg');
+        }
+
+        $tooltip_source = isset($item['context_html']) ? (string) $item['context_html'] : '';
+        if ($tooltip_source === '') {
+            $tooltip_source = $excerpt;
+        }
+
+        if (function_exists('wp_strip_all_tags')) {
+            $tooltip_source = wp_strip_all_tags($tooltip_source);
+        }
+
+        return sprintf(
+            '<span class="blc-context-excerpt" title="%s">%s</span>',
+            esc_attr($tooltip_source),
+            esc_html($excerpt)
+        );
+    }
+
+    protected function column_redirect_target_url($item) {
+        $target = isset($item['redirect_target_url']) ? (string) $item['redirect_target_url'] : '';
+        if ($target === '') {
+            return esc_html__('—', 'liens-morts-detector-jlg');
+        }
+
+        $sanitized_url = esc_url($target);
+        if ($sanitized_url === '') {
+            return esc_html($target);
+        }
+
+        return sprintf(
+            '<a href="%s" target="_blank" rel="noopener noreferrer" title="%s">%s</a>',
+            $sanitized_url,
+            esc_attr__('Ouvrir la cible détectée dans un nouvel onglet', 'liens-morts-detector-jlg'),
+            esc_html($target)
+        );
     }
 
     /**
@@ -462,13 +505,57 @@ class BLC_Links_List_Table extends WP_List_Table {
             $data_attributes[] = sprintf('data-occurrence-index="%d"', $occurrence_index);
         }
 
+        $detected_target = isset($item['redirect_target_url']) ? (string) $item['redirect_target_url'] : '';
+        if ($detected_target !== '') {
+            $data_attributes[] = sprintf('data-detected-target="%s"', esc_attr($detected_target));
+        }
+
+        $context_excerpt = isset($item['context_excerpt']) ? (string) $item['context_excerpt'] : '';
+        if ($context_excerpt !== '') {
+            $data_attributes[] = sprintf('data-context-excerpt="%s"', esc_attr($context_excerpt));
+        }
+
+        $context_html = isset($item['context_html']) ? (string) $item['context_html'] : '';
+        if ($context_html !== '') {
+            $data_attributes[] = sprintf('data-context-html="%s"', esc_attr($context_html));
+        }
+
+        if (isset($item['http_status']) && $item['http_status'] !== null && $item['http_status'] !== '') {
+            $data_attributes[] = sprintf('data-http-status="%s"', esc_attr((string) $item['http_status']));
+        }
+
         $data_attributes = implode(' ', $data_attributes);
+
+        $edit_nonce    = wp_create_nonce('blc_edit_link_nonce');
+        $ignore_nonce  = wp_create_nonce('blc_ignore_link_nonce');
+        $unlink_nonce  = wp_create_nonce('blc_unlink_nonce');
+        $recheck_nonce = wp_create_nonce('blc_recheck_link_nonce');
 
         $actions['edit_link'] = sprintf(
             '<button type="button" class="button button-small button-link blc-edit-link" %s data-nonce="%s">%s</button>',
             $data_attributes,
-            wp_create_nonce('blc_edit_link_nonce'),
+            $edit_nonce,
             esc_html__('Modifier', 'liens-morts-detector-jlg')
+        );
+
+        $actions['suggest_redirect'] = sprintf(
+            '<button type="button" class="button button-small button-link blc-suggest-redirect" %s data-nonce="%s">%s</button>',
+            $data_attributes,
+            $edit_nonce,
+            esc_html__('Proposer une redirection', 'liens-morts-detector-jlg')
+        );
+
+        $actions['view_context'] = sprintf(
+            '<button type="button" class="button button-small button-link blc-view-context" %s>%s</button>',
+            $data_attributes,
+            esc_html__('Voir le contexte', 'liens-morts-detector-jlg')
+        );
+
+        $actions['recheck'] = sprintf(
+            '<button type="button" class="button button-small button-link blc-recheck" %s data-nonce="%s">%s</button>',
+            $data_attributes,
+            $recheck_nonce,
+            esc_html__('Re-vérifier', 'liens-morts-detector-jlg')
         );
 
         $ignored_raw = $item['ignored_at'] ?? null;
@@ -489,13 +576,13 @@ class BLC_Links_List_Table extends WP_List_Table {
             '<button type="button" class="button button-small button-link blc-ignore" %s data-ignore-mode="%s" data-nonce="%s">%s</button>',
             $data_attributes,
             esc_attr($ignore_mode),
-            wp_create_nonce('blc_ignore_link_nonce'),
+            $ignore_nonce,
             $ignore_label
         );
         $actions['unlink'] = sprintf(
             '<button type="button" class="button button-small button-link blc-unlink" %s data-nonce="%s" style="color:#a00;">%s</button>',
             $data_attributes,
-            wp_create_nonce('blc_unlink_nonce'),
+            $unlink_nonce,
             esc_html__('Dissocier', 'liens-morts-detector-jlg')
         );
         return $actions;
@@ -591,7 +678,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         $order_by = $is_ignored_view ? 'ignored_at DESC, id DESC' : 'id DESC';
 
         $data_query = $wpdb->prepare(
-            "SELECT id, occurrence_index, url, anchor, post_id, post_title, http_status, last_checked_at, ignored_at, posts.post_type AS post_type
+            "SELECT id, occurrence_index, url, anchor, redirect_target_url, context_html, context_excerpt, post_id, post_title, http_status, last_checked_at, ignored_at, posts.post_type AS post_type
              FROM {$table_name}
              {$join_clause}
              WHERE $where_clause
@@ -1295,8 +1382,10 @@ class BLC_Links_List_Table extends WP_List_Table {
         $url = $row['url'] ?? '';
         $anchor = $row['anchor'] ?? '';
         $post_title = $row['post_title'] ?? '';
+        $context_html = $row['context_html'] ?? '';
+        $context_excerpt = $row['context_excerpt'] ?? '';
 
-        return blc_calculate_row_storage_footprint_bytes($url, $anchor, $post_title);
+        return blc_calculate_row_storage_footprint_bytes($url, $anchor, $post_title, $context_html, $context_excerpt);
     }
 
     private function normalize_occurrence_index($value) {
