@@ -106,11 +106,16 @@
 }
 
 .blc-stat:hover,
+.blc-stat:focus,
 .blc-stat:focus-visible {
     background-color: #f0f6fc;
     border-color: #2271b1;
     color: #0a4b78;
     box-shadow: 0 0 0 1px #2271b1 inset;
+}
+
+.blc-stat:focus {
+    outline: none;
 }
 
 .blc-stat:focus-visible {
@@ -119,7 +124,11 @@
 }
 
 .blc-stat:hover .blc-stat-label,
-.blc-stat:focus-visible .blc-stat-label {
+.blc-stat:focus .blc-stat-label,
+.blc-stat:focus-visible .blc-stat-label,
+.blc-stat:hover .blc-stat-value,
+.blc-stat:focus .blc-stat-value,
+.blc-stat:focus-visible .blc-stat-value {
     text-decoration: underline;
 }
 
