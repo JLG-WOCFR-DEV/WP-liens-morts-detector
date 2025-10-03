@@ -1033,10 +1033,19 @@ function blc_ajax_apply_detected_redirect_callback() {
     }
 
     $response = [
-        'message'    => $result['message'] ?? __('La redirection détectée a été appliquée.', 'liens-morts-detector-jlg'),
+        'message'      => $result['message'] ?? __('La redirection détectée a été appliquée.', 'liens-morts-detector-jlg'),
         'announcement' => $result['announcement'] ?? ($result['message'] ?? ''),
-        'rowRemoved' => !empty($result['row_removed']),
+        'rowRemoved'   => !empty($result['row_removed']),
     ];
+
+    if (empty($result['row_removed']) && class_exists('BLC_Links_List_Table')) {
+        $list_table = new BLC_Links_List_Table();
+        $row_html   = $list_table->get_single_row_html($row_id);
+
+        if ($row_html !== '') {
+            $response['rowHtml'] = $row_html;
+        }
+    }
 
     if (!empty($result['purged'])) {
         $response['purged'] = true;

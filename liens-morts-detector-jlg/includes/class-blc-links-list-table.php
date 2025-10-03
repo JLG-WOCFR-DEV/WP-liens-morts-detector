@@ -1571,6 +1571,78 @@ class BLC_Links_List_Table extends WP_List_Table {
         ];
     }
 
+    /**
+     * Render the table row HTML for the given identifier.
+     *
+     * @param int $row_id Identifier of the row to render.
+     *
+     * @return string
+     */
+    public function get_single_row_html($row_id) {
+        $row_id = absint($row_id);
+
+        if ($row_id <= 0) {
+            return '';
+        }
+
+        $item = $this->query_single_row_item($row_id);
+
+        if (!is_array($item)) {
+            return '';
+        }
+
+        return $this->render_single_row_html($item);
+    }
+
+    /**
+     * Fetch the row that corresponds to the given identifier.
+     *
+     * @param int $row_id Identifier of the row to fetch.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function query_single_row_item($row_id) {
+        global $wpdb;
+
+        $table_name  = $wpdb->prefix . 'blc_broken_links';
+        $posts_table = $wpdb->posts;
+
+        $query = $wpdb->prepare(
+            "SELECT id, occurrence_index, url, anchor, redirect_target_url, context_html, context_excerpt, post_id, post_title, http_status, last_checked_at, ignored_at, posts.post_type AS post_type
+             FROM {$table_name}
+             LEFT JOIN {$posts_table} AS posts ON {$table_name}.post_id = posts.ID
+             WHERE {$table_name}.id = %d AND {$table_name}.type = %s",
+            $row_id,
+            'link'
+        );
+
+        $row = $wpdb->get_row($query, ARRAY_A);
+
+        if (!is_array($row)) {
+            return null;
+        }
+
+        return $row;
+    }
+
+    /**
+     * Convert an item array into the HTML for a table row.
+     *
+     * @param array<string,mixed> $item Row data to render.
+     *
+     * @return string
+     */
+    private function render_single_row_html(array $item) {
+        if (empty($this->_column_headers)) {
+            $this->_column_headers = [$this->get_columns(), [], []];
+        }
+
+        ob_start();
+        $this->single_row($item);
+
+        return (string) ob_get_clean();
+    }
+
     private function user_can_manage_row($post_id) {
         $post_id = absint($post_id);
 
