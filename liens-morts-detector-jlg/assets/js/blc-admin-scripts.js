@@ -1,5 +1,5 @@
 jQuery(document).ready(function($) {
-    var ACTION_FOCUS_SELECTOR = '.blc-edit-link, .blc-unlink, .blc-ignore, .blc-suggest-redirect, .blc-view-context, .blc-recheck';
+    var ACTION_FOCUS_SELECTOR = '.blc-edit-link, .blc-unlink, .blc-ignore, .blc-suggest-redirect, .blc-apply-redirect, .blc-view-context, .blc-recheck';
 
     var defaultMessages = {
         editPromptMessage: "Entrez la nouvelle URL pour :\n%s",
@@ -42,7 +42,14 @@ jQuery(document).ready(function($) {
         contextLabel: 'Contexte',
         recheckInProgress: 'Re-vérification du lien en cours…',
         recheckSuccess: 'La re-vérification du lien est terminée.',
-        recheckError: 'Impossible de re-vérifier le lien. Veuillez réessayer.'
+        recheckError: 'Impossible de re-vérifier le lien. Veuillez réessayer.',
+        applyRedirectConfirmation: 'Appliquer la redirection détectée vers %s ?',
+        applyRedirectSuccess: 'La redirection détectée a été appliquée.',
+        applyRedirectError: 'Impossible d\'appliquer la redirection détectée.',
+        applyRedirectMissingTarget: 'Aucune redirection détectée n\'est disponible pour ce lien.',
+        applyRedirectModalTitle: 'Appliquer la redirection détectée',
+        applyRedirectModalConfirm: 'Appliquer',
+        bulkApplyRedirectModalMessage: 'Voulez-vous appliquer la redirection détectée aux %s liens sélectionnés ?'
     };
 
     var messages = $.extend({}, defaultMessages, window.blcAdminMessages || {});
@@ -737,7 +744,44 @@ jQuery(document).ready(function($) {
 
         accessibility.speak(getAnnouncementMessage(response), 'polite');
 
-        var nextFocusTarget = findNextFocusTarget($row);
+        var rowHtml = '';
+        var rowRemoved = true;
+        if (response && response.data) {
+            if (typeof response.data.rowHtml === 'string') {
+                rowHtml = response.data.rowHtml;
+            }
+
+            if (typeof response.data.rowRemoved !== 'undefined') {
+                rowRemoved = !!response.data.rowRemoved;
+            }
+        }
+
+        var $replacementRow = $();
+        if (rowHtml) {
+            var $candidate = $(rowHtml);
+            if ($candidate.length) {
+                $replacementRow = $candidate.filter('tr').first();
+                if (!$replacementRow.length) {
+                    $replacementRow = $candidate.find('tr').first();
+                }
+            }
+        }
+
+        if ($replacementRow && $replacementRow.length && response && response.data && typeof response.data.rowRemoved === 'undefined') {
+            rowRemoved = false;
+        }
+
+        var nextFocusTarget = null;
+        if ($replacementRow && $replacementRow.length) {
+            var $firstAction = $replacementRow.find(ACTION_FOCUS_SELECTOR).filter(':visible').first();
+            if ($firstAction.length) {
+                nextFocusTarget = $firstAction[0];
+            }
+        }
+
+        if (!nextFocusTarget) {
+            nextFocusTarget = findNextFocusTarget($row);
+        }
 
         if (helpers && typeof helpers.close === 'function') {
             helpers.close(nextFocusTarget);
@@ -746,6 +790,29 @@ jQuery(document).ready(function($) {
         function finalizeListUpdate($currentRow) {
             var $normalizedRow = $currentRow && $currentRow.jquery ? $currentRow : $();
             var $tbody = $normalizedRow.closest('tbody');
+
+            if (!rowRemoved && $replacementRow && $replacementRow.length && $normalizedRow.length) {
+                if (!$tbody.length) {
+                    $tbody = $('#the-list');
+                }
+
+                $normalizedRow.replaceWith($replacementRow);
+
+                $(document).trigger('blcAdmin:listUpdated', {
+                    response: response,
+                    tbody: $tbody,
+                    table: $tbody.closest('table'),
+                    messageRow: null,
+                    replacedRow: $replacementRow
+                });
+
+                return;
+            }
+
+            if (!rowRemoved) {
+                $normalizedRow.css('opacity', 1);
+                return;
+            }
 
             if ($normalizedRow.length) {
                 $normalizedRow.remove();
@@ -787,7 +854,9 @@ jQuery(document).ready(function($) {
         }
 
         if ($row && $row.length) {
-            if (prefersReducedMotion) {
+            if (!rowRemoved) {
+                finalizeListUpdate($row);
+            } else if (prefersReducedMotion) {
                 finalizeListUpdate($row);
             } else {
                 $row.fadeOut(300, function() {
@@ -862,6 +931,62 @@ jQuery(document).ready(function($) {
         });
     });
 
+    $('#the-list').on('click', '.blc-apply-redirect', function(e) {
+        e.preventDefault();
+
+        var linkElement = $(this);
+        var detectedTarget = linkElement.data('detectedTarget');
+        if (typeof detectedTarget !== 'string') {
+            detectedTarget = '';
+        }
+        detectedTarget = detectedTarget.trim();
+
+        if (!detectedTarget) {
+            var missingMessage = messages.applyRedirectMissingTarget || messages.applyRedirectError || messages.genericError;
+            accessibility.speak(missingMessage, 'assertive');
+            window.alert(missingMessage);
+            return;
+        }
+
+        var confirmationTemplate = messages.applyRedirectConfirmation || '';
+        var confirmationMessage = confirmationTemplate ? formatTemplate(confirmationTemplate, detectedTarget) : '';
+        if (confirmationMessage) {
+            if (!window.confirm(confirmationMessage)) {
+                return;
+            }
+        }
+
+        var oldUrl = linkElement.data('url');
+        if (typeof oldUrl !== 'string') {
+            oldUrl = '';
+        }
+        var postId = linkElement.data('postid');
+        var rowId = linkElement.data('rowId');
+        if (typeof rowId === 'undefined') {
+            rowId = '';
+        }
+        var occurrenceIndex = linkElement.data('occurrenceIndex');
+        if (typeof occurrenceIndex === 'undefined') {
+            occurrenceIndex = '';
+        }
+        var nonce = linkElement.data('nonce');
+
+        var helpers = createInlineActionHelpers(linkElement, {
+            errorMessage: messages.applyRedirectError
+        });
+
+        processLinkUpdate(linkElement, {
+            helpers: helpers,
+            value: detectedTarget,
+            oldUrl: oldUrl,
+            postId: postId,
+            rowId: rowId,
+            occurrenceIndex: occurrenceIndex,
+            nonce: nonce,
+            action: 'blc_apply_detected_redirect'
+        });
+    });
+
     function getSelectedBulkAction($form) {
         var action = $form.find('select[name="action"]').val();
 
@@ -891,6 +1016,10 @@ jQuery(document).ready(function($) {
             title = messages.restoreModalTitle || '';
             confirmText = messages.restoreModalConfirm || '';
             template = messages.bulkRestoreModalMessage || '';
+        } else if (action === 'apply_redirect') {
+            title = messages.applyRedirectModalTitle || messages.editModalTitle || '';
+            confirmText = messages.applyRedirectModalConfirm || messages.editModalConfirm || '';
+            template = messages.bulkApplyRedirectModalMessage || '';
         } else {
             title = messages.unlinkModalTitle || '';
             confirmText = messages.unlinkModalConfirm || '';
@@ -974,8 +1103,45 @@ jQuery(document).ready(function($) {
         return /\s/.test(value);
     }
 
+    function createInlineActionHelpers(button, options) {
+        var $button = $(button);
+        var settings = options || {};
+
+        return {
+            setSubmitting: function(state) {
+                $button.prop('disabled', !!state);
+                if (state) {
+                    $button.attr('aria-busy', 'true');
+                } else {
+                    $button.removeAttr('aria-busy');
+                }
+            },
+            showError: function(message) {
+                var fallback = settings.errorMessage || messages.applyRedirectError || messages.genericError;
+                var finalMessage = message || fallback;
+
+                accessibility.speak(finalMessage, 'assertive');
+                window.alert(finalMessage);
+            },
+            close: function(nextFocus) {
+                $button.prop('disabled', false);
+                $button.removeAttr('aria-busy');
+
+                if (nextFocus && typeof nextFocus.focus === 'function') {
+                    nextFocus.focus();
+                } else if (settings.restoreFocus !== false) {
+                    $button.focus();
+                }
+            }
+        };
+    }
+
     function processLinkUpdate(linkElement, params) {
-        var helpers = params.helpers;
+        var helpers = params.helpers || {
+            setSubmitting: function() {},
+            showError: function() {},
+            close: function() {}
+        };
         var oldUrl = params.oldUrl || '';
         var trimmedValue = (params.value || '').trim();
 
@@ -994,32 +1160,44 @@ jQuery(document).ready(function($) {
             return;
         }
 
-        helpers.setSubmitting(true);
+        if (typeof helpers.setSubmitting === 'function') {
+            helpers.setSubmitting(true);
+        }
 
         var row = linkElement.closest('tr');
         row.css('opacity', 0.5);
 
-        $.post(ajaxurl, {
-            action: 'blc_edit_link',
+        var requestData = {
+            action: params.action || 'blc_edit_link',
             post_id: params.postId,
             row_id: params.rowId,
             occurrence_index: params.occurrenceIndex,
             old_url: oldUrl,
             new_url: trimmedValue,
             _ajax_nonce: params.nonce
-        }).done(function(response) {
+        };
+
+        if (params.extraData && typeof params.extraData === 'object') {
+            $.extend(requestData, params.extraData);
+        }
+
+        $.post(ajaxurl, requestData).done(function(response) {
             if (response && response.success) {
                 handleSuccessfulResponse(response, row, helpers);
             } else {
                 var errorMessage = response && response.data && response.data.message
                     ? response.data.message
                     : messages.genericError;
-                helpers.setSubmitting(false);
+                if (typeof helpers.setSubmitting === 'function') {
+                    helpers.setSubmitting(false);
+                }
                 helpers.showError((messages.errorPrefix || '') + errorMessage);
                 row.css('opacity', 1);
             }
         }).fail(function() {
-            helpers.setSubmitting(false);
+            if (typeof helpers.setSubmitting === 'function') {
+                helpers.setSubmitting(false);
+            }
             helpers.showError(messages.genericError);
             row.css('opacity', 1);
         });
