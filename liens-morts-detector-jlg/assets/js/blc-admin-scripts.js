@@ -1246,6 +1246,424 @@ jQuery(document).ready(function($) {
         });
     });
 
+    (function setupManualScanPanel() {
+        var config = window.blcAdminScanConfig || null;
+        if (!config) {
+            return;
+        }
+
+        var $panel = $('#blc-scan-status-panel');
+        if (!$panel.length) {
+            return;
+        }
+
+        var $form = $('#blc-manual-scan-form');
+        var $submit = $form.find('input[type="submit"]');
+        var $fullScan = $form.find('input[name="blc_full_scan"]');
+        var $state = $panel.find('.blc-scan-status__state');
+        var $details = $panel.find('.blc-scan-status__details');
+        var $progress = $panel.find('.blc-scan-status__progress');
+        var $progressFill = $panel.find('.blc-scan-status__progress-fill');
+        var $message = $panel.find('.blc-scan-status__message');
+        var $cancel = $('#blc-cancel-scan');
+        var $restart = $('#blc-restart-scan');
+
+        var pollInterval = parseInt(config.pollInterval, 10);
+        if (isNaN(pollInterval) || pollInterval < 2000) {
+            pollInterval = 5000;
+        }
+
+        var currentStatus = $.extend(true, {
+            state: 'idle',
+            current_batch: 0,
+            processed_batches: 0,
+            total_batches: 0,
+            remaining_batches: 0,
+            total_items: 0,
+            processed_items: 0,
+            is_full_scan: false,
+            message: '',
+            last_error: ''
+        }, config.status || {});
+        var lastState = null;
+        var lastMessage = '';
+        var pollTimer = null;
+        var isFetching = false;
+        var lastRequestedFullScan = !!currentStatus.is_full_scan;
+
+        function canUseRest() {
+            return typeof config.restUrl === 'string' && config.restUrl.length > 0;
+        }
+
+        function canUseAjaxStatus() {
+            return !!config.getStatusNonce && window.wp && wp.ajax && typeof wp.ajax.post === 'function';
+        }
+
+        function safeInt(value) {
+            var intVal = parseInt(value, 10);
+            return isNaN(intVal) ? 0 : intVal;
+        }
+
+        function getStateLabel(state) {
+            var key = typeof state === 'string' ? state : '';
+            key = key ? key : 'idle';
+            if (config.i18n && config.i18n.states && config.i18n.states[key]) {
+                return config.i18n.states[key];
+            }
+            if (config.i18n && config.i18n.states && config.i18n.states.idle) {
+                return config.i18n.states.idle;
+            }
+            return key;
+        }
+
+        function computeProgress(status) {
+            var total = safeInt(status.total_batches);
+            var processed = safeInt(status.processed_batches);
+            if (total > 0) {
+                var percent = Math.round((processed / total) * 100);
+                if (status.state === 'completed') {
+                    percent = 100;
+                }
+                return Math.max(0, Math.min(100, percent));
+            }
+
+            if (status.state === 'completed') {
+                return 100;
+            }
+
+            if (status.state === 'running' || status.state === 'queued') {
+                return 10;
+            }
+
+            return 0;
+        }
+
+        function formatDetails(status) {
+            var details = [];
+            var state = status.state || 'idle';
+            var total = safeInt(status.total_batches);
+            var processed = safeInt(status.processed_batches);
+
+            if ((state === 'running' || state === 'queued') && total > 0) {
+                if (config.i18n && config.i18n.batchSummary) {
+                    details.push(
+                        config.i18n.batchSummary
+                            .replace('%1$d', Math.max(processed, 1))
+                            .replace('%2$d', Math.max(total, 1))
+                    );
+                } else {
+                    details.push(processed + ' / ' + total);
+                }
+            }
+
+            var remaining = safeInt(status.remaining_batches);
+            if (remaining > 0 && config.i18n && config.i18n.remainingBatches) {
+                details.push(config.i18n.remainingBatches.replace('%d', remaining));
+            }
+
+            var nextTimestamp = safeInt(status.next_batch_timestamp);
+            if (nextTimestamp > 0 && config.i18n && config.i18n.nextBatch) {
+                var nextDate = new Date(nextTimestamp * 1000);
+                details.push(config.i18n.nextBatch.replace('%s', nextDate.toLocaleString()));
+            }
+
+            if (details.length === 0) {
+                details.push(getStateLabel(state));
+            }
+
+            return details.join(' · ');
+        }
+
+        function updatePanel(data) {
+            if (!data || typeof data !== 'object') {
+                return;
+            }
+
+            currentStatus = $.extend(true, currentStatus, data);
+            var state = currentStatus.state || 'idle';
+            lastRequestedFullScan = !!currentStatus.is_full_scan;
+
+            $panel.attr('data-scan-state', state);
+            $panel.attr('data-is-full-scan', currentStatus.is_full_scan ? '1' : '0');
+
+            $panel.removeClass(function(index, className) {
+                return (className.match(/blc-scan-status--state-[^\s]+/g) || []).join(' ');
+            });
+            $panel.removeClass('is-active is-completed is-failed is-cancelled');
+            $panel.addClass('blc-scan-status--state-' + state);
+
+            if (state === 'queued' || state === 'running') {
+                $panel.addClass('is-active');
+            } else if (state === 'completed') {
+                $panel.addClass('is-completed');
+            } else if (state === 'failed') {
+                $panel.addClass('is-failed');
+            } else if (state === 'cancelled') {
+                $panel.addClass('is-cancelled');
+            }
+
+            var progress = computeProgress(currentStatus);
+            $progress.attr('aria-valuenow', progress);
+            $progressFill.css('width', progress + '%');
+
+            $state.text(getStateLabel(state));
+            $details.text(formatDetails(currentStatus));
+
+            var messageText = typeof currentStatus.message === 'string' ? currentStatus.message : '';
+            if (messageText) {
+                $message.text(messageText);
+            } else {
+                $message.text('');
+            }
+
+            if (state !== lastState) {
+                var announcement = getStateLabel(state);
+                if (announcement) {
+                    accessibility.speak(announcement, state === 'failed' ? 'assertive' : 'polite');
+                }
+                lastState = state;
+            } else if (messageText && messageText !== lastMessage) {
+                accessibility.speak(messageText, 'polite');
+            }
+
+            lastMessage = messageText;
+            toggleActionButtons(state);
+        }
+
+        function toggleActionButtons(state) {
+            var canCancel = state === 'running' || state === 'queued';
+            if ($cancel.length) {
+                $cancel.prop('disabled', !canCancel);
+            }
+
+            var canRestart = state === 'completed' || state === 'failed' || state === 'cancelled' || state === 'idle';
+            if ($restart.length) {
+                $restart.prop('disabled', !canRestart);
+            }
+        }
+
+        function shouldPoll(status) {
+            if (!canUseRest() && !canUseAjaxStatus()) {
+                return false;
+            }
+
+            var state = status.state || 'idle';
+            return state === 'running' || state === 'queued';
+        }
+
+        function stopPolling() {
+            if (pollTimer) {
+                window.clearTimeout(pollTimer);
+                pollTimer = null;
+            }
+        }
+
+        function scheduleNextPoll() {
+            stopPolling();
+            pollTimer = window.setTimeout(fetchStatus, pollInterval);
+        }
+
+        function refreshPolling(forceImmediate) {
+            if (shouldPoll(currentStatus)) {
+                if (forceImmediate) {
+                    stopPolling();
+                    fetchStatus();
+                    return;
+                }
+
+                if (!pollTimer && !isFetching) {
+                    scheduleNextPoll();
+                }
+            } else {
+                stopPolling();
+            }
+        }
+
+        function fetchStatus() {
+            if (isFetching) {
+                return;
+            }
+
+            var request = null;
+            var usingRest = canUseRest();
+
+            if (usingRest) {
+                isFetching = true;
+                request = $.ajax({
+                    url: config.restUrl,
+                    method: 'GET',
+                    dataType: 'json',
+                    headers: config.restNonce ? { 'X-WP-Nonce': config.restNonce } : {}
+                });
+            } else if (canUseAjaxStatus()) {
+                isFetching = true;
+                request = wp.ajax.post('blc_get_scan_status', {
+                    _ajax_nonce: config.getStatusNonce
+                });
+            } else {
+                return;
+            }
+
+            request.done(function(response) {
+                if (!response) {
+                    return;
+                }
+
+                if (usingRest) {
+                    if (typeof response === 'object') {
+                        updatePanel(response);
+                    }
+                    return;
+                }
+
+                if (response.status && typeof response.status === 'object') {
+                    updatePanel(response.status);
+                } else if (typeof response === 'object') {
+                    updatePanel(response);
+                }
+            }).always(function() {
+                isFetching = false;
+                refreshPolling(false);
+            });
+        }
+
+        function setFormBusy(state) {
+            if (!$submit.length) {
+                return;
+            }
+
+            $submit.prop('disabled', state);
+            if (state) {
+                $submit.attr('aria-busy', 'true');
+            } else {
+                $submit.removeAttr('aria-busy');
+            }
+        }
+
+        function startScan(isFullScan) {
+            if (!config.startScanNonce || !window.wp || !wp.ajax || typeof wp.ajax.post !== 'function') {
+                return;
+            }
+
+            setFormBusy(true);
+
+            wp.ajax.post('blc_start_manual_scan', {
+                _ajax_nonce: config.startScanNonce,
+                full_scan: isFullScan ? 1 : 0
+            }).done(function(response) {
+                lastRequestedFullScan = !!isFullScan;
+
+                if (response && response.status) {
+                    updatePanel(response.status);
+                }
+
+                if (response && response.message) {
+                    accessibility.speak(response.message, 'polite');
+                }
+
+                if (response && response.warning) {
+                    accessibility.speak(response.warning, 'assertive');
+                }
+
+                refreshPolling(false);
+            }).fail(function(error) {
+                var message = config.i18n && config.i18n.startError ? config.i18n.startError : (messages.genericError || '');
+                if (error && error.responseJSON && error.responseJSON.data && error.responseJSON.data.message) {
+                    message = error.responseJSON.data.message;
+                }
+
+                $message.text(message);
+                if (message) {
+                    accessibility.speak(message, 'assertive');
+                }
+            }).always(function() {
+                setFormBusy(false);
+                refreshPolling(false);
+            });
+        }
+
+        function cancelScan() {
+            if (!config.cancelScanNonce || !window.wp || !wp.ajax || typeof wp.ajax.post !== 'function') {
+                return;
+            }
+
+            var confirmMessage = config.i18n && config.i18n.cancelConfirm;
+            if (confirmMessage && !window.confirm(confirmMessage)) {
+                return;
+            }
+
+            $cancel.prop('disabled', true).attr('aria-busy', 'true');
+
+            wp.ajax.post('blc_cancel_manual_scan', {
+                _ajax_nonce: config.cancelScanNonce
+            }).done(function(response) {
+                if (response && response.status) {
+                    updatePanel(response.status);
+                }
+
+                var message = (response && response.message) || (config.i18n && config.i18n.cancelSuccess) || '';
+                if (message) {
+                    $message.text(message);
+                    accessibility.speak(message, 'polite');
+                }
+
+                refreshPolling(false);
+            }).fail(function(error) {
+                var message = (config.i18n && config.i18n.cancelError) || messages.genericError || '';
+                if (error && error.responseJSON && error.responseJSON.data && error.responseJSON.data.message) {
+                    message = error.responseJSON.data.message;
+                }
+
+                $message.text(message);
+                if (message) {
+                    accessibility.speak(message, 'assertive');
+                }
+            }).always(function() {
+                $cancel.prop('disabled', false).removeAttr('aria-busy');
+                refreshPolling(false);
+            });
+        }
+
+        function restartScan() {
+            var confirmMessage = config.i18n && config.i18n.restartConfirm;
+            if (confirmMessage && !window.confirm(confirmMessage)) {
+                return;
+            }
+
+            startScan(lastRequestedFullScan);
+        }
+
+        if ($form.length) {
+            $form.on('submit', function(event) {
+                if (!window.wp || !wp.ajax || typeof wp.ajax.post !== 'function' || !config.startScanNonce) {
+                    return;
+                }
+
+                event.preventDefault();
+                startScan($fullScan.length ? $fullScan.is(':checked') : false);
+            });
+        }
+
+        if ($cancel.length) {
+            $cancel.on('click', function(event) {
+                event.preventDefault();
+                cancelScan();
+            });
+        }
+
+        if ($restart.length) {
+            $restart.on('click', function(event) {
+                event.preventDefault();
+                restartScan();
+            });
+        }
+
+        lastState = currentStatus.state || 'idle';
+        lastMessage = typeof currentStatus.message === 'string' ? currentStatus.message : '';
+        updatePanel(currentStatus);
+        refreshPolling(false);
+    })();
+
     $('#the-list').on('click', '.blc-recheck', function(e) {
         e.preventDefault();
 

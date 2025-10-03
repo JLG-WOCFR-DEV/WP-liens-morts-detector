@@ -149,7 +149,7 @@ function blc_enqueue_admin_assets($hook) {
     wp_enqueue_script(
         'blc-admin-js',
         plugin_dir_url(__FILE__) . 'assets/js/blc-admin-scripts.js',
-        array('jquery'),
+        array('jquery', 'wp-util'),
         $js_version,
         true // Charger dans le pied de page pour de meilleures performances
     );
@@ -196,6 +196,48 @@ function blc_enqueue_admin_assets($hook) {
             'bulkGenericModalMessage'  => __('Voulez-vous appliquer cette action aux %s éléments sélectionnés ?', 'liens-morts-detector-jlg'),
             'bulkNoSelectionMessage'   => __('Veuillez sélectionner au moins un lien avant d\'appliquer une action groupée.', 'liens-morts-detector-jlg'),
             'bulkSuccessAnnouncement'  => __('Les actions groupées ont été appliquées avec succès.', 'liens-morts-detector-jlg'),
+        )
+    );
+
+    $rest_url = function_exists('rest_url') ? rest_url('blc/v1/scan-status') : '';
+    $scan_status = blc_get_link_scan_status_payload();
+    $poll_interval = apply_filters('blc_scan_status_poll_interval', 10000);
+    if (!is_int($poll_interval)) {
+        $poll_interval = 10000;
+    }
+
+    wp_localize_script(
+        'blc-admin-js',
+        'blcAdminScanConfig',
+        array(
+            'restUrl'         => $rest_url ? esc_url_raw($rest_url) : '',
+            'restNonce'       => wp_create_nonce('wp_rest'),
+            'startScanNonce'  => wp_create_nonce('blc_start_manual_scan'),
+            'cancelScanNonce' => wp_create_nonce('blc_cancel_manual_scan'),
+            'getStatusNonce'  => wp_create_nonce('blc_get_scan_status'),
+            'pollInterval'    => max(2000, (int) $poll_interval),
+            'status'          => $scan_status,
+            'i18n'            => array(
+                'panelTitle'        => __('Statut du scan manuel', 'liens-morts-detector-jlg'),
+                'states'            => array(
+                    'idle'      => __('Inactif', 'liens-morts-detector-jlg'),
+                    'queued'    => __('En file d\'attente', 'liens-morts-detector-jlg'),
+                    'running'   => __('Analyse en cours', 'liens-morts-detector-jlg'),
+                    'completed' => __('Terminée', 'liens-morts-detector-jlg'),
+                    'failed'    => __('Échec', 'liens-morts-detector-jlg'),
+                    'cancelled' => __('Annulée', 'liens-morts-detector-jlg'),
+                ),
+                'batchSummary'     => __('Lot %1$d sur %2$d', 'liens-morts-detector-jlg'),
+                'remainingBatches' => __('Lots restants : %d', 'liens-morts-detector-jlg'),
+                'nextBatch'        => __('Prochain lot prévu à %s', 'liens-morts-detector-jlg'),
+                'queueMessage'     => __('Analyse programmée. Le premier lot démarrera sous peu.', 'liens-morts-detector-jlg'),
+                'startError'       => __('Impossible de lancer l\'analyse. Veuillez réessayer.', 'liens-morts-detector-jlg'),
+                'cancelSuccess'    => __('Les lots planifiés ont été annulés.', 'liens-morts-detector-jlg'),
+                'cancelError'      => __('Impossible d\'annuler l\'analyse. Veuillez réessayer.', 'liens-morts-detector-jlg'),
+                'cancelConfirm'    => __('Voulez-vous annuler les lots planifiés ?', 'liens-morts-detector-jlg'),
+                'restartConfirm'   => __('Voulez-vous reprogrammer immédiatement un nouveau scan ?', 'liens-morts-detector-jlg'),
+                'unknownState'     => __('Statut inconnu', 'liens-morts-detector-jlg'),
+            ),
         )
     );
 
