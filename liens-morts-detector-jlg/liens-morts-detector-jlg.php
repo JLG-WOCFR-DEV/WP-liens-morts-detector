@@ -937,6 +937,50 @@ function blc_perform_link_update(array $args) {
     return $success_payload;
 }
 
+/**
+ * Retrieve a single broken link row with contextual data.
+ *
+ * @param int $row_id Identifier of the broken link row.
+ * @return array|null
+ */
+function blc_get_broken_link_row($row_id) {
+    global $wpdb;
+
+    $row_id = absint($row_id);
+    if ($row_id <= 0) {
+        return null;
+    }
+
+    $table_name  = $wpdb->prefix . 'blc_broken_links';
+    $posts_table = $wpdb->posts;
+
+    $query = $wpdb->prepare(
+        "SELECT links.id, links.occurrence_index, links.url, links.anchor, links.redirect_target_url, links.context_html, links.context_excerpt, links.post_id, links.post_title, links.http_status, links.last_checked_at, links.ignored_at, posts.post_type AS post_type FROM {$table_name} AS links LEFT JOIN {$posts_table} AS posts ON links.post_id = posts.ID WHERE links.id = %d AND links.type = %s",
+        $row_id,
+        'link'
+    );
+
+    $row = $wpdb->get_row($query, ARRAY_A);
+
+    return is_array($row) ? $row : null;
+}
+
+/**
+ * Render the HTML markup for a single broken link row.
+ *
+ * @param array $row Row data as returned by blc_get_broken_link_row().
+ * @return string
+ */
+function blc_render_broken_link_row_html(array $row) {
+    if (!class_exists('BLC_Links_List_Table')) {
+        require_once BLC_PLUGIN_PATH . 'includes/class-blc-links-list-table.php';
+    }
+
+    $list_table = new BLC_Links_List_Table();
+
+    return $list_table->render_row_html($row);
+}
+
 // Gère la modification d'une URL
 add_action('wp_ajax_blc_edit_link', 'blc_ajax_edit_link_callback');
 function blc_ajax_edit_link_callback() {
@@ -1033,10 +1077,17 @@ function blc_ajax_apply_detected_redirect_callback() {
     }
 
     $response = [
-        'message'    => $result['message'] ?? __('La redirection détectée a été appliquée.', 'liens-morts-detector-jlg'),
+        'message'      => $result['message'] ?? __('La redirection détectée a été appliquée.', 'liens-morts-detector-jlg'),
         'announcement' => $result['announcement'] ?? ($result['message'] ?? ''),
-        'rowRemoved' => !empty($result['row_removed']),
+        'rowRemoved'   => !empty($result['row_removed']),
     ];
+
+    if (empty($result['purged']) && empty($result['row_removed'])) {
+        $refreshed_row = blc_get_broken_link_row($row_id);
+        if (is_array($refreshed_row)) {
+            $response['rowHtml'] = blc_render_broken_link_row_html($refreshed_row);
+        }
+    }
 
     if (!empty($result['purged'])) {
         $response['purged'] = true;

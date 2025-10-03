@@ -597,11 +597,10 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         $data_attributes = implode(' ', $data_attributes);
 
-        $edit_nonce            = wp_create_nonce('blc_edit_link_nonce');
-        $ignore_nonce          = wp_create_nonce('blc_ignore_link_nonce');
-        $unlink_nonce          = wp_create_nonce('blc_unlink_nonce');
-        $recheck_nonce         = wp_create_nonce('blc_recheck_link_nonce');
-        $apply_redirect_nonce  = wp_create_nonce('blc_apply_detected_redirect_nonce');
+        $edit_nonce    = wp_create_nonce('blc_edit_link_nonce');
+        $ignore_nonce  = wp_create_nonce('blc_ignore_link_nonce');
+        $unlink_nonce  = wp_create_nonce('blc_unlink_nonce');
+        $recheck_nonce = wp_create_nonce('blc_recheck_link_nonce');
 
         $actions['edit_link'] = sprintf(
             '<button type="button" class="button button-small button-link blc-edit-link" %s data-nonce="%s">%s</button>',
@@ -618,10 +617,12 @@ class BLC_Links_List_Table extends WP_List_Table {
         );
 
         if ($detected_target !== '') {
+            $apply_redirect_nonce = wp_create_nonce('blc_apply_detected_redirect_nonce');
+
             $actions['apply_redirect'] = sprintf(
                 '<button type="button" class="button button-small button-link blc-apply-redirect" %s data-nonce="%s">%s</button>',
                 $data_attributes,
-                $apply_redirect_nonce,
+                esc_attr($apply_redirect_nonce),
                 esc_html__('Appliquer la redirection détectée', 'liens-morts-detector-jlg')
             );
         }
@@ -1775,5 +1776,21 @@ class BLC_Links_List_Table extends WP_List_Table {
         ];
 
         return $this->internal_url_condition_cache;
+    }
+
+    /**
+     * Render the HTML markup for a single row using the table's column definitions.
+     *
+     * @param array $item Row data to render.
+     * @return string
+     */
+    public function render_row_html(array $item) {
+        $this->_column_headers = [$this->get_columns(), [], []];
+        $this->items           = [$item];
+
+        ob_start();
+        $this->single_row($item);
+
+        return (string) ob_get_clean();
     }
 }
