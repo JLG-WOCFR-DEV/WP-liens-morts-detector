@@ -64,7 +64,7 @@ function blc_render_action_modal() {
 
     $rendered = true;
     ?>
-    <div id="blc-modal" class="blc-modal" role="presentation" aria-hidden="true">
+    <div id="blc-modal" class="blc-modal" aria-hidden="true">
         <div class="blc-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="blc-modal-title">
             <button type="button" class="blc-modal__close" aria-label="<?php echo esc_attr__('Fermer la fenêtre modale', 'liens-morts-detector-jlg'); ?>">
                 <span aria-hidden="true">&times;</span>
