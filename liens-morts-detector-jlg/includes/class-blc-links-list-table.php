@@ -278,9 +278,10 @@ class BLC_Links_List_Table extends WP_List_Table {
      */
     protected function get_bulk_actions() {
         $actions = [
-            'ignore'  => __('Ignorer', 'liens-morts-detector-jlg'),
-            'restore' => __('Ne plus ignorer', 'liens-morts-detector-jlg'),
-            'unlink'  => __('Dissocier', 'liens-morts-detector-jlg'),
+            'ignore'         => __('Ignorer', 'liens-morts-detector-jlg'),
+            'restore'        => __('Ne plus ignorer', 'liens-morts-detector-jlg'),
+            'unlink'         => __('Dissocier', 'liens-morts-detector-jlg'),
+            'apply_redirect' => __('Appliquer la redirection détectée', 'liens-morts-detector-jlg'),
         ];
 
         return apply_filters('blc_links_list_table_bulk_actions', $actions);
@@ -550,10 +551,11 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         $data_attributes = implode(' ', $data_attributes);
 
-        $edit_nonce    = wp_create_nonce('blc_edit_link_nonce');
-        $ignore_nonce  = wp_create_nonce('blc_ignore_link_nonce');
-        $unlink_nonce  = wp_create_nonce('blc_unlink_nonce');
-        $recheck_nonce = wp_create_nonce('blc_recheck_link_nonce');
+        $edit_nonce            = wp_create_nonce('blc_edit_link_nonce');
+        $ignore_nonce          = wp_create_nonce('blc_ignore_link_nonce');
+        $unlink_nonce          = wp_create_nonce('blc_unlink_nonce');
+        $recheck_nonce         = wp_create_nonce('blc_recheck_link_nonce');
+        $apply_redirect_nonce  = wp_create_nonce('blc_apply_detected_redirect_nonce');
 
         $actions['edit_link'] = sprintf(
             '<button type="button" class="button button-small button-link blc-edit-link" %s data-nonce="%s">%s</button>',
@@ -568,6 +570,15 @@ class BLC_Links_List_Table extends WP_List_Table {
             $edit_nonce,
             esc_html__('Proposer une redirection', 'liens-morts-detector-jlg')
         );
+
+        if ($detected_target !== '') {
+            $actions['apply_redirect'] = sprintf(
+                '<button type="button" class="button button-small button-link blc-apply-redirect" %s data-nonce="%s">%s</button>',
+                $data_attributes,
+                $apply_redirect_nonce,
+                esc_html__('Appliquer la redirection détectée', 'liens-morts-detector-jlg')
+            );
+        }
 
         $actions['view_context'] = sprintf(
             '<button type="button" class="button button-small button-link blc-view-context" %s>%s</button>',
@@ -877,7 +888,7 @@ class BLC_Links_List_Table extends WP_List_Table {
     protected function process_bulk_action() {
         $action = $this->current_action();
 
-        if (!in_array($action, ['ignore', 'restore', 'unlink'], true)) {
+        if (!in_array($action, ['ignore', 'restore', 'unlink', 'apply_redirect'], true)) {
             return;
         }
 
@@ -897,6 +908,8 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         if ($action === 'unlink') {
             $notice = $this->handle_bulk_unlink($ids);
+        } elseif ($action === 'apply_redirect') {
+            $notice = $this->handle_bulk_apply_redirect($ids);
         } else {
             $notice = $this->handle_bulk_ignore($ids, $action);
         }
@@ -1365,6 +1378,141 @@ class BLC_Links_List_Table extends WP_List_Table {
                 $type = 'warning';
             }
         } elseif ($processing_failures > 0 || $permission_denied > 0 || $missing > 0) {
+            $type = 'warning';
+        }
+
+        $announcement = $message_parts[0];
+
+        return [
+            'message'      => implode(' ', $message_parts),
+            'type'         => $type,
+            'announcement' => $announcement,
+        ];
+    }
+
+    private function handle_bulk_apply_redirect(array $ids) {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'blc_broken_links';
+
+        $placeholders = implode(', ', array_fill(0, count($ids), '%d'));
+        $query_params = array_merge($ids, ['link']);
+
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, post_id, url, anchor, post_title, occurrence_index, redirect_target_url, context_html, context_excerpt FROM $table_name WHERE id IN ($placeholders) AND type = %s",
+                $query_params
+            ),
+            ARRAY_A
+        );
+
+        $missing = max(0, count($ids) - count($rows));
+        $permission_denied = 0;
+        $missing_target = 0;
+        $processing_failures = 0;
+        $success_count = 0;
+
+        foreach ($rows as $row) {
+            $row_id = isset($row['id']) ? (int) $row['id'] : 0;
+            if ($row_id <= 0) {
+                continue;
+            }
+
+            $post_id = isset($row['post_id']) ? (int) $row['post_id'] : 0;
+
+            if (!$this->user_can_manage_row($post_id)) {
+                $permission_denied++;
+                continue;
+            }
+
+            $redirect_target = isset($row['redirect_target_url']) ? trim((string) $row['redirect_target_url']) : '';
+            if ($redirect_target === '') {
+                $missing_target++;
+                continue;
+            }
+
+            $occurrence_index = $this->normalize_occurrence_index($row['occurrence_index'] ?? null);
+
+            $row_cache = [
+                'url'             => isset($row['url']) ? (string) $row['url'] : '',
+                'anchor'          => isset($row['anchor']) ? (string) $row['anchor'] : '',
+                'post_title'      => isset($row['post_title']) ? (string) $row['post_title'] : '',
+                'context_html'    => isset($row['context_html']) ? (string) $row['context_html'] : '',
+                'context_excerpt' => isset($row['context_excerpt']) ? (string) $row['context_excerpt'] : '',
+            ];
+
+            $row_cache_footprint = $this->calculate_row_footprint($row);
+
+            $result = blc_perform_link_update([
+                'post_id'             => $post_id,
+                'row_id'              => $row_id,
+                'row'                 => $row,
+                'occurrence_index'    => $occurrence_index,
+                'table_name'          => $table_name,
+                'row_cache'           => $row_cache,
+                'row_cache_footprint' => $row_cache_footprint,
+                'old_url'             => isset($row['url']) ? (string) $row['url'] : '',
+                'new_url'             => $redirect_target,
+            ]);
+
+            if (is_wp_error($result)) {
+                $processing_failures++;
+                continue;
+            }
+
+            $success_count++;
+        }
+
+        $message_parts = [];
+
+        if ($success_count > 0) {
+            $message_parts[] = sprintf(
+                _n('%d redirection détectée a été appliquée.', '%d redirections détectées ont été appliquées.', $success_count, 'liens-morts-detector-jlg'),
+                $success_count
+            );
+        }
+
+        if ($missing_target > 0) {
+            $message_parts[] = sprintf(
+                _n('%d lien sélectionné ne dispose pas de redirection détectée.', '%d liens sélectionnés ne disposent pas de redirection détectée.', $missing_target, 'liens-morts-detector-jlg'),
+                $missing_target
+            );
+        }
+
+        if ($processing_failures > 0) {
+            $message_parts[] = sprintf(
+                _n('%d lien n\'a pas pu être mis à jour en raison d\'une erreur.', '%d liens n\'ont pas pu être mis à jour en raison d\'erreurs.', $processing_failures, 'liens-morts-detector-jlg'),
+                $processing_failures
+            );
+        }
+
+        if ($permission_denied > 0) {
+            $message_parts[] = sprintf(
+                _n('Permissions insuffisantes pour %d lien.', 'Permissions insuffisantes pour %d liens.', $permission_denied, 'liens-morts-detector-jlg'),
+                $permission_denied
+            );
+        }
+
+        if ($missing > 0) {
+            $message_parts[] = sprintf(
+                _n('%d lien sélectionné est introuvable.', '%d liens sélectionnés sont introuvables.', $missing, 'liens-morts-detector-jlg'),
+                $missing
+            );
+        }
+
+        if (empty($message_parts)) {
+            $message_parts[] = __('Aucune redirection détectée n\'a été appliquée.', 'liens-morts-detector-jlg');
+        }
+
+        $type = 'success';
+
+        if ($success_count === 0) {
+            if ($processing_failures > 0 || $permission_denied > 0 || $missing > 0 || $missing_target > 0) {
+                $type = 'error';
+            } else {
+                $type = 'warning';
+            }
+        } elseif ($processing_failures > 0 || $permission_denied > 0 || $missing > 0 || $missing_target > 0) {
             $type = 'warning';
         }
 
