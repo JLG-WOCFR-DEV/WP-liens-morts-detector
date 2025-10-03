@@ -552,6 +552,14 @@ function blc_dashboard_links_page() {
     $list_table = new BLC_Links_List_Table();
     $status_counts = $list_table->get_status_counts();
 
+    $current_link_type = 'all';
+    if (isset($_GET['link_type'])) {
+        $link_type_param = sanitize_key(wp_unslash($_GET['link_type']));
+        if ($link_type_param !== '') {
+            $current_link_type = $link_type_param;
+        }
+    }
+
     $status_counts = array_map(
         'intval',
         wp_parse_args(
@@ -655,12 +663,20 @@ function blc_dashboard_links_page() {
                     $card['label'],
                     $card['value']
                 );
+                $is_active_card = ($link_type === 'all' && $current_link_type === 'all')
+                    || ($link_type !== 'all' && $current_link_type === $link_type);
+                $card_classes = array(
+                    'blc-stat',
+                    'blc-stat--' . $card['slug'],
+                    $is_active_card ? 'is-active' : '',
+                );
                 ?>
                 <a
-                    class="blc-stat blc-stat--<?php echo esc_attr($card['slug']); ?>"
+                    class="<?php echo esc_attr(implode(' ', array_filter(array_map('sanitize_html_class', $card_classes)))); ?>"
                     href="<?php echo esc_url($card_url); ?>"
                     data-link-type="<?php echo esc_attr($link_type); ?>"
                     aria-label="<?php echo esc_attr($aria_label); ?>"
+                    <?php echo $is_active_card ? ' aria-current="page"' : ''; ?>
                 >
                     <span class="blc-stat-value"><?php echo esc_html($card['value']); ?></span>
                     <span class="blc-stat-label"><?php echo esc_html($card['label']); ?></span>
