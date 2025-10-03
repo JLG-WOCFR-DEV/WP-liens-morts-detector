@@ -73,6 +73,7 @@ class BlcDashboardLinksPageTest extends TestCase
             'blc_frequency'              => 'weekly',
             'blc_frequency_custom_hours' => 24,
             'blc_frequency_custom_time'  => '02:00',
+            'blc_recheck_interval_days'  => 7,
         ];
 
         $this->previous_wpdb = $GLOBALS['wpdb'] ?? null;
@@ -530,7 +531,8 @@ class BlcDashboardLinksPageTest extends TestCase
         unset($_GET['link_type']);
 
         $needs_recheck_snippet = 'last_checked_at IS NULL OR last_checked_at = %s OR last_checked_at <= %s';
-        $expected_threshold = gmdate('Y-m-d H:i:s', 1700000000 - (int) WEEK_IN_SECONDS);
+        $recheck_days = (int) $this->getStoredOption('blc_recheck_interval_days', 7);
+        $expected_threshold = gmdate('Y-m-d H:i:s', 1700000000 - ($recheck_days * DAY_IN_SECONDS));
 
         $matching_calls = array_filter(
             $GLOBALS['wpdb']->prepared_calls,
@@ -542,6 +544,32 @@ class BlcDashboardLinksPageTest extends TestCase
         foreach ($matching_calls as $call) {
             $this->assertContains('link', $call['params']);
             $this->assertContains('0000-00-00 00:00:00', $call['params']);
+            $this->assertContains($expected_threshold, $call['params']);
+        }
+    }
+
+    public function test_prepare_items_respects_custom_recheck_interval(): void
+    {
+        $_GET['link_type'] = 'needs_recheck';
+        $this->setStoredOption('blc_recheck_interval_days', 3);
+
+        $list_table = new \BLC_Links_List_Table();
+
+        $list_table->prepare_items();
+
+        unset($_GET['link_type']);
+
+        $needs_recheck_snippet = 'last_checked_at IS NULL OR last_checked_at = %s OR last_checked_at <= %s';
+        $expected_threshold = gmdate('Y-m-d H:i:s', 1700000000 - (3 * DAY_IN_SECONDS));
+
+        $matching_calls = array_filter(
+            $GLOBALS['wpdb']->prepared_calls,
+            static fn(array $call): bool => isset($call['query']) && is_string($call['query']) && str_contains($call['query'], $needs_recheck_snippet)
+        );
+
+        $this->assertNotEmpty($matching_calls);
+
+        foreach ($matching_calls as $call) {
             $this->assertContains($expected_threshold, $call['params']);
         }
     }

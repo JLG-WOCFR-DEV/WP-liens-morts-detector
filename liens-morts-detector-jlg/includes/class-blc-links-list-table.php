@@ -1416,13 +1416,40 @@ class BLC_Links_List_Table extends WP_List_Table {
     }
 
     private function get_recheck_interval_seconds() {
-        if (defined('WEEK_IN_SECONDS')) {
-            return (int) WEEK_IN_SECONDS;
+        $default_days = 7;
+        $min_days     = 1;
+        $max_days     = null;
+
+        if (function_exists('blc_get_recheck_interval_days_constraints')) {
+            $constraints = blc_get_recheck_interval_days_constraints();
+
+            if (isset($constraints['default']) && is_numeric($constraints['default'])) {
+                $default_days = (int) $constraints['default'];
+            }
+
+            if (isset($constraints['min']) && is_numeric($constraints['min'])) {
+                $min_days = (int) $constraints['min'];
+            }
+
+            if (isset($constraints['max']) && is_numeric($constraints['max'])) {
+                $max_days = (int) $constraints['max'];
+            }
+        }
+
+        $stored_days = get_option('blc_recheck_interval_days', $default_days);
+        $days        = is_numeric($stored_days) ? (int) $stored_days : $default_days;
+
+        if ($days < $min_days) {
+            $days = $min_days;
+        }
+
+        if (null !== $max_days && $days > $max_days) {
+            $days = $max_days;
         }
 
         $day_in_seconds = defined('DAY_IN_SECONDS') ? (int) DAY_IN_SECONDS : 86400;
 
-        return 7 * $day_in_seconds;
+        return max($day_in_seconds, $days * $day_in_seconds);
     }
 
     private function get_current_time_gmt() {

@@ -21,6 +21,7 @@ function blc_register_settings() {
     $timeout_constraints = blc_get_request_timeout_constraints();
     $head_timeout_limits = isset($timeout_constraints['head']) ? $timeout_constraints['head'] : array('default' => 5);
     $get_timeout_limits  = isset($timeout_constraints['get']) ? $timeout_constraints['get'] : array('default' => 10);
+    $recheck_constraints = blc_get_recheck_interval_days_constraints();
 
     register_setting(
         $option_group,
@@ -69,6 +70,16 @@ function blc_register_settings() {
             'type'              => 'string',
             'sanitize_callback' => 'blc_sanitize_rest_end_hour_option',
             'default'           => '20',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_recheck_interval_days',
+        array(
+            'type'              => 'integer',
+            'sanitize_callback' => 'blc_sanitize_recheck_interval_days_option',
+            'default'           => isset($recheck_constraints['default']) ? $recheck_constraints['default'] : 7,
         )
     );
 
@@ -259,6 +270,17 @@ function blc_register_settings_sections() {
         'blc_planification_section',
         array(
             'label_for' => 'blc_rest_start_hour',
+        )
+    );
+
+    add_settings_field(
+        'blc_recheck_interval_days',
+        __('🔁 Délai avant re-contrôle', 'liens-morts-detector-jlg'),
+        'blc_render_recheck_interval_field',
+        $page,
+        'blc_planification_section',
+        array(
+            'label_for' => 'blc_recheck_interval_days',
         )
     );
 
@@ -460,6 +482,21 @@ function blc_get_timezone_label() {
     }
 
     return $timezone_label;
+}
+
+/**
+ * Retourne les contraintes associées au délai de re-contrôle des liens.
+ *
+ * @since 1.1.0
+ *
+ * @return array<string, int>
+ */
+function blc_get_recheck_interval_days_constraints() {
+    return array(
+        'min'     => 1,
+        'max'     => 30,
+        'default' => 7,
+    );
 }
 
 /**
@@ -687,6 +724,64 @@ function blc_render_frequency_field() {
             });
 
             toggleCustomControls();
+        })();
+    </script>
+    <?php
+}
+
+/**
+ * Affiche le champ de délai avant re-contrôle des liens.
+ *
+ * @return void
+ */
+function blc_render_recheck_interval_field() {
+    $constraints = blc_get_recheck_interval_days_constraints();
+    $min_days    = isset($constraints['min']) ? (int) $constraints['min'] : 1;
+    $max_days    = isset($constraints['max']) ? (int) $constraints['max'] : 30;
+    $default     = isset($constraints['default']) ? (int) $constraints['default'] : $min_days;
+
+    $stored_value = get_option('blc_recheck_interval_days', $default);
+    $value        = is_numeric($stored_value) ? (int) $stored_value : $default;
+
+    if ($value < $min_days) {
+        $value = $min_days;
+    } elseif ($value > $max_days) {
+        $value = $max_days;
+    }
+
+    ?>
+    <div class="blc-recheck-interval-field">
+        <label class="screen-reader-text" for="blc_recheck_interval_days"><?php esc_html_e('Nombre de jours avant re-vérification automatique', 'liens-morts-detector-jlg'); ?></label>
+        <input
+            type="range"
+            name="blc_recheck_interval_days"
+            id="blc_recheck_interval_days"
+            value="<?php echo esc_attr($value); ?>"
+            min="<?php echo esc_attr($min_days); ?>"
+            max="<?php echo esc_attr($max_days); ?>"
+            step="1"
+        >
+        <output id="blc_recheck_interval_days_output" for="blc_recheck_interval_days"><?php echo esc_html($value); ?></output>
+        <?php esc_html_e('jours', 'liens-morts-detector-jlg'); ?>
+        <p class="description">
+            <?php esc_html_e('Détermine après combien de jours un lien non vérifié est de nouveau signalé comme à recontrôler dans la liste.', 'liens-morts-detector-jlg'); ?>
+        </p>
+    </div>
+    <script>
+        (function() {
+            var slider = document.getElementById('blc_recheck_interval_days');
+            var output = document.getElementById('blc_recheck_interval_days_output');
+
+            if (!slider || !output) {
+                return;
+            }
+
+            var update = function() {
+                output.textContent = slider.value;
+            };
+
+            slider.addEventListener('input', update);
+            update();
         })();
     </script>
     <?php
@@ -1243,6 +1338,31 @@ function blc_sanitize_rest_start_hour_option($value) {
  */
 function blc_sanitize_rest_end_hour_option($value) {
     return blc_sanitize_rest_hour_option($value, 'blc_rest_end_hour', '20');
+}
+
+/**
+ * Sanitize le délai avant re-contrôle automatique.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return int
+ */
+function blc_sanitize_recheck_interval_days_option($value) {
+    $constraints = blc_get_recheck_interval_days_constraints();
+
+    $min     = isset($constraints['min']) ? (int) $constraints['min'] : 1;
+    $max     = isset($constraints['max']) ? (int) $constraints['max'] : 30;
+    $default = isset($constraints['default']) ? (int) $constraints['default'] : $min;
+
+    $sanitized = is_scalar($value) ? (int) $value : $default;
+
+    if ($sanitized < $min) {
+        $sanitized = $min;
+    } elseif ($sanitized > $max) {
+        $sanitized = $max;
+    }
+
+    return $sanitized;
 }
 
 /**
