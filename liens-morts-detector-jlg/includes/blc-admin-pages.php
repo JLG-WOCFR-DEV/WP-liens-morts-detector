@@ -549,13 +549,64 @@ function blc_dashboard_links_page() {
     }
 
     // Préparation des données et des statistiques pour les liens
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'blc_broken_links';
-    $broken_links_count = (int) $wpdb->get_var(
-        $wpdb->prepare(
-            "SELECT COUNT(*) FROM $table_name WHERE type = %s AND ignored_at IS NULL",
-            'link'
-        )
+    $list_table = new BLC_Links_List_Table();
+    $status_counts = $list_table->get_status_counts();
+
+    $broken_links_count  = isset($status_counts['active_count']) ? (int) $status_counts['active_count'] : 0;
+    $not_found_count     = isset($status_counts['not_found_count']) ? (int) $status_counts['not_found_count'] : 0;
+    $server_error_count  = isset($status_counts['server_error_count']) ? (int) $status_counts['server_error_count'] : 0;
+    $redirect_count      = isset($status_counts['redirect_count']) ? (int) $status_counts['redirect_count'] : 0;
+    $needs_recheck_count = isset($status_counts['needs_recheck_count']) ? (int) $status_counts['needs_recheck_count'] : 0;
+
+    $dashboard_base_url = function_exists('admin_url')
+        ? admin_url('admin.php?page=blc-dashboard')
+        : 'admin.php?page=blc-dashboard';
+
+    $build_dashboard_url = static function($link_type) use ($dashboard_base_url) {
+        if ($link_type === 'all') {
+            return $dashboard_base_url;
+        }
+
+        if (function_exists('add_query_arg')) {
+            return add_query_arg('link_type', $link_type, $dashboard_base_url);
+        }
+
+        $separator = (false === strpos($dashboard_base_url, '?')) ? '?' : '&';
+
+        return $dashboard_base_url . $separator . 'link_type=' . rawurlencode($link_type);
+    };
+
+    $stats_cards = array(
+        array(
+            'slug'      => 'all',
+            'link_type' => 'all',
+            'value'     => number_format_i18n($broken_links_count),
+            'label'     => __('Liens morts trouvés', 'liens-morts-detector-jlg'),
+        ),
+        array(
+            'slug'      => '404',
+            'link_type' => 'status_404_410',
+            'value'     => number_format_i18n($not_found_count),
+            'label'     => __('Erreurs 404 / 410', 'liens-morts-detector-jlg'),
+        ),
+        array(
+            'slug'      => '5xx',
+            'link_type' => 'status_5xx',
+            'value'     => number_format_i18n($server_error_count),
+            'label'     => __('Erreurs 5xx', 'liens-morts-detector-jlg'),
+        ),
+        array(
+            'slug'      => 'redirects',
+            'link_type' => 'status_redirects',
+            'value'     => number_format_i18n($redirect_count),
+            'label'     => __('Redirections détectées', 'liens-morts-detector-jlg'),
+        ),
+        array(
+            'slug'      => 'recheck',
+            'link_type' => 'needs_recheck',
+            'value'     => number_format_i18n($needs_recheck_count),
+            'label'     => __('Liens à revérifier', 'liens-morts-detector-jlg'),
+        ),
     );
     $option_size_bytes = blc_get_dataset_storage_footprint_bytes('link');
     $last_check_time    = get_option('blc_last_check_time', 0);
@@ -567,30 +618,47 @@ function blc_dashboard_links_page() {
         ? wp_date('j M Y', $last_check_time)
         : __('Jamais', 'liens-morts-detector-jlg');
 
-    $list_table = new BLC_Links_List_Table();
     $list_table->prepare_items();
     blc_render_action_modal();
 
     ?>
-    <div class="wrap">
+    <div class="wrap blc-dashboard-links-page">
         <?php blc_render_dashboard_tabs('links'); ?>
         <h1><?php esc_html_e('Rapport des Liens Cassés', 'liens-morts-detector-jlg'); ?></h1>
         <div class="blc-stats-box">
-            <div class="blc-stat">
-                <span class="blc-stat-value"><?php echo esc_html($broken_links_count); ?></span>
-                <span class="blc-stat-label"><?php esc_html_e('Liens morts trouvés', 'liens-morts-detector-jlg'); ?></span>
+            <?php foreach ($stats_cards as $card) :
+                $link_type = $card['link_type'];
+                $card_url  = $build_dashboard_url($link_type);
+                $aria_label = sprintf(
+                    /* translators: 1: Stat label, 2: number of items. */
+                    __('Afficher %1$s (%2$s)', 'liens-morts-detector-jlg'),
+                    $card['label'],
+                    $card['value']
+                );
+                ?>
+                <a
+                    class="blc-stat blc-stat--<?php echo esc_attr($card['slug']); ?>"
+                    href="<?php echo esc_url($card_url); ?>"
+                    data-link-type="<?php echo esc_attr($link_type); ?>"
+                    aria-label="<?php echo esc_attr($aria_label); ?>"
+                >
+                    <span class="blc-stat-value"><?php echo esc_html($card['value']); ?></span>
+                    <span class="blc-stat-label"><?php echo esc_html($card['label']); ?></span>
+                </a>
+            <?php endforeach; ?>
+        </div>
+        <div class="blc-meta-box">
+            <div class="blc-meta">
+                <span class="blc-meta-value"><?php echo esc_html($size_display); ?></span>
+                <span class="blc-meta-label"><?php esc_html_e('Poids des données', 'liens-morts-detector-jlg'); ?></span>
             </div>
-            <div class="blc-stat">
-                <span class="blc-stat-value"><?php echo esc_html($size_display); ?></span>
-                <span class="blc-stat-label"><?php esc_html_e('Poids des données', 'liens-morts-detector-jlg'); ?></span>
+            <div class="blc-meta">
+                <span class="blc-meta-value"><?php echo esc_html($last_check_display); ?></span>
+                <span class="blc-meta-label"><?php esc_html_e('Dernière analyse', 'liens-morts-detector-jlg'); ?></span>
             </div>
-            <div class="blc-stat">
-                <span class="blc-stat-value"><?php echo esc_html($last_check_display); ?></span>
-                <span class="blc-stat-label"><?php esc_html_e('Dernière analyse', 'liens-morts-detector-jlg'); ?></span>
-            </div>
-            <div class="blc-stat">
-                <span class="blc-stat-value"><?php echo esc_html($next_scheduled_display); ?></span>
-                <span class="blc-stat-label"><?php esc_html_e('Prochaine analyse automatique', 'liens-morts-detector-jlg'); ?></span>
+            <div class="blc-meta">
+                <span class="blc-meta-value"><?php echo esc_html($next_scheduled_display); ?></span>
+                <span class="blc-meta-label"><?php esc_html_e('Prochaine analyse automatique', 'liens-morts-detector-jlg'); ?></span>
                 <?php if ('' !== $schedule_note) : ?>
                     <span class="blc-stat-note"><?php echo esc_html($schedule_note); ?></span>
                 <?php endif; ?>

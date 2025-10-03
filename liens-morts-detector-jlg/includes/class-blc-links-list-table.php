@@ -26,6 +26,13 @@ class BLC_Links_List_Table extends WP_List_Table {
     private static $bulk_query_args_registered = false;
 
     /**
+     * Cache local pour les compteurs agrégés des liens.
+     *
+     * @var array<string,int>|null
+     */
+    private $status_counts_cache = null;
+
+    /**
      * Constructeur de la classe.
      */
     public function __construct() {
@@ -118,35 +125,8 @@ class BLC_Links_List_Table extends WP_List_Table {
     protected function get_views() {
         $views = [];
         $current = (!empty($_GET['link_type'])) ? sanitize_text_field(wp_unslash($_GET['link_type'])) : 'all';
-        global $wpdb;
-        $table_name = $wpdb->prefix . 'blc_broken_links';
-        $internal_condition = $this->build_internal_url_condition();
-        $legacy_case        = $internal_condition['case_template'];
-        $legacy_params      = $internal_condition['case_params'];
-        $needs_recheck_clause = '(last_checked_at IS NULL OR last_checked_at = %s OR last_checked_at <= %s)';
-        $needs_recheck_params = [$this->get_unchecked_sentinel_value(), $this->get_recheck_threshold_gmt()];
 
-        $counts_query = $wpdb->prepare(
-            "SELECT
-                SUM(CASE WHEN ignored_at IS NULL THEN 1 ELSE 0 END) AS active_count,
-                SUM(CASE WHEN ignored_at IS NOT NULL THEN 1 ELSE 0 END) AS ignored_count,
-                SUM(
-                    CASE
-                        WHEN ignored_at IS NOT NULL THEN 0
-                        WHEN is_internal IS NOT NULL THEN is_internal
-                        ELSE $legacy_case
-                    END
-                ) AS internal_count,
-                SUM(CASE WHEN ignored_at IS NULL AND http_status IN (404, 410) THEN 1 ELSE 0 END) AS not_found_count,
-                SUM(CASE WHEN ignored_at IS NULL AND http_status BETWEEN 500 AND 599 THEN 1 ELSE 0 END) AS server_error_count,
-                SUM(CASE WHEN ignored_at IS NULL AND http_status BETWEEN 300 AND 399 THEN 1 ELSE 0 END) AS redirect_count,
-                SUM(CASE WHEN ignored_at IS NULL AND $needs_recheck_clause THEN 1 ELSE 0 END) AS needs_recheck_count
-             FROM $table_name
-             WHERE type = %s",
-            array_merge($legacy_params, $needs_recheck_params, ['link'])
-        );
-
-        $counts = $wpdb->get_row($counts_query, ARRAY_A);
+        $counts = $this->get_status_counts();
 
         $active_count       = isset($counts['active_count']) ? (int) $counts['active_count'] : 0;
         $ignored_count      = isset($counts['ignored_count']) ? (int) $counts['ignored_count'] : 0;
@@ -231,6 +211,66 @@ class BLC_Links_List_Table extends WP_List_Table {
         );
 
         return $views;
+    }
+
+    /**
+     * Retourne et met en cache les compteurs agrégés utilisés par la vue et le tableau de bord.
+     *
+     * @return array<string,int>
+     */
+    public function get_status_counts() {
+        if (is_array($this->status_counts_cache)) {
+            return $this->status_counts_cache;
+        }
+
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'blc_broken_links';
+        $internal_condition = $this->build_internal_url_condition();
+        $legacy_case        = $internal_condition['case_template'];
+        $legacy_params      = $internal_condition['case_params'];
+        $needs_recheck_clause = '(last_checked_at IS NULL OR last_checked_at = %s OR last_checked_at <= %s)';
+        $needs_recheck_params = [$this->get_unchecked_sentinel_value(), $this->get_recheck_threshold_gmt()];
+
+        $counts_query = $wpdb->prepare(
+            "SELECT
+                SUM(CASE WHEN ignored_at IS NULL THEN 1 ELSE 0 END) AS active_count,
+                SUM(CASE WHEN ignored_at IS NOT NULL THEN 1 ELSE 0 END) AS ignored_count,
+                SUM(
+                    CASE
+                        WHEN ignored_at IS NOT NULL THEN 0
+                        WHEN is_internal IS NOT NULL THEN is_internal
+                        ELSE $legacy_case
+                    END
+                ) AS internal_count,
+                SUM(CASE WHEN ignored_at IS NULL AND http_status IN (404, 410) THEN 1 ELSE 0 END) AS not_found_count,
+                SUM(CASE WHEN ignored_at IS NULL AND http_status BETWEEN 500 AND 599 THEN 1 ELSE 0 END) AS server_error_count,
+                SUM(CASE WHEN ignored_at IS NULL AND http_status BETWEEN 300 AND 399 THEN 1 ELSE 0 END) AS redirect_count,
+                SUM(CASE WHEN ignored_at IS NULL AND $needs_recheck_clause THEN 1 ELSE 0 END) AS needs_recheck_count
+             FROM $table_name
+             WHERE type = %s",
+            array_merge($legacy_params, $needs_recheck_params, ['link'])
+        );
+
+        $counts = $wpdb->get_row($counts_query, ARRAY_A);
+
+        if (!is_array($counts)) {
+            $counts = [];
+        }
+
+        $defaults = array(
+            'active_count'        => 0,
+            'ignored_count'       => 0,
+            'internal_count'      => 0,
+            'not_found_count'     => 0,
+            'server_error_count'  => 0,
+            'redirect_count'      => 0,
+            'needs_recheck_count' => 0,
+        );
+
+        $this->status_counts_cache = array_map('intval', wp_parse_args($counts, $defaults));
+
+        return $this->status_counts_cache;
     }
 
     /**
