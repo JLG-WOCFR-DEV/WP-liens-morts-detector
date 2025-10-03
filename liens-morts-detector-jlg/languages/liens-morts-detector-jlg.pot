@@ -261,3 +261,7 @@ msgstr ""
 #: includes/blc-cron.php:26
 msgid "Une fois par mois"
 msgstr ""
+
+#: includes/class-blc-links-list-table.php:462
+msgid "Réponse informative (1xx)"
+msgstr ""
