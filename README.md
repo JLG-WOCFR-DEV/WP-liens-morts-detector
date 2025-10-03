@@ -2,6 +2,7 @@
 
 ![Panneau de configuration du bloc][block-editor-panel]
 > Capture encodée en Base64 (voir `docs/images/block-editor-panel.b64`).
+> Pour générer une image locale : `base64 --decode docs/images/block-editor-panel.b64 > block-editor-panel.png`.
 
 
 Liens Morts Detector est une extension WordPress qui détecte les liens et images morts, les signale dans l’administration et propose des outils de réparation rapide. L’analyse des liens peut s’exécuter automatiquement via WP‑Cron, tandis que la vérification des images se lance manuellement depuis le tableau de bord avant de se poursuivre en tâche de fond.
