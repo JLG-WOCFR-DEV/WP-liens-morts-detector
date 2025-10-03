@@ -1062,4 +1062,65 @@ jQuery(document).ready(function($) {
             }
         });
     });
+
+    (function setupMobileLinkTypeFilter() {
+        var $selects = $('.blc-link-type-select');
+
+        if (!$selects.length) {
+            return;
+        }
+
+        $selects.each(function() {
+            var $select = $(this);
+            var currentView = $select.data('currentView');
+            var resolvedValue = (typeof currentView === 'string' && currentView !== '') ? currentView : null;
+
+            if (typeof window.URLSearchParams !== 'undefined') {
+                try {
+                    var params = new window.URLSearchParams(window.location.search);
+                    var paramValue = params.get('link_type');
+
+                    if (paramValue !== null && paramValue !== '') {
+                        resolvedValue = paramValue;
+                    }
+                } catch (error) {
+                    // Ignored: keep fallback value.
+                }
+            }
+
+            if (!resolvedValue || !$select.find('option[value="' + resolvedValue + '"]').length) {
+                if ($select.find('option[value="all"]').length) {
+                    resolvedValue = 'all';
+                } else if ($select.find('option').length) {
+                    resolvedValue = $select.find('option').first().val();
+                }
+            }
+
+            if (resolvedValue) {
+                $select.val(resolvedValue);
+            }
+
+            $select.on('change', function() {
+                var shouldAutoSubmit = true;
+
+                if (typeof window.matchMedia === 'function') {
+                    shouldAutoSubmit = window.matchMedia('(max-width: 782px)').matches;
+                }
+
+                if (!shouldAutoSubmit) {
+                    return;
+                }
+
+                var $form = $select.closest('form');
+                if (!$form.length) {
+                    return;
+                }
+
+                var formElement = $form.get(0);
+                if (formElement && typeof formElement.submit === 'function') {
+                    formElement.submit();
+                }
+            });
+        });
+    })();
 });

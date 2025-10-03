@@ -38,6 +38,30 @@
     color: #50575e;
 }
 
+/* Navigation et filtres pour mobiles */
+.blc-mobile-only {
+    display: none;
+}
+
+.blc-dashboard-nav {
+    margin: 16px 0 12px;
+}
+
+.blc-link-type-select-wrapper {
+    margin-bottom: 12px;
+}
+
+.blc-link-type-select {
+    width: 100%;
+    max-width: 100%;
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: 1px solid #c3c4c7;
+    background-color: #fff;
+    font-size: 14px;
+    color: #1d2327;
+}
+
 /* Styles pour les badges de statut HTTP */
 .blc-status {
     display: inline-flex;
@@ -121,6 +145,36 @@
         width: 100%;
         flex: 1 1 100%;
         padding: 12px 0;
+    }
+
+    .blc-mobile-only {
+        display: block;
+    }
+
+    .blc-dashboard-nav {
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+        padding-bottom: 4px;
+        margin: 12px 0 18px;
+    }
+
+    .blc-dashboard-nav .nav-tab {
+        flex: 1 0 auto;
+        text-align: center;
+        white-space: nowrap;
+    }
+
+    .blc-link-type-select-wrapper {
+        margin-bottom: 18px;
+    }
+
+    .blc-link-type-select {
+        min-height: 32px;
+    }
+
+    .wrap .subsubsub {
+        display: none;
     }
 }
 

@@ -269,9 +269,41 @@ function blc_dashboard_links_page() {
     $list_table->prepare_items();
     blc_render_action_modal();
 
+    $requested_page = 'blc-dashboard';
+    if (isset($_REQUEST['page']) && is_scalar($_REQUEST['page'])) {
+        $requested_page = sanitize_key((string) wp_unslash($_REQUEST['page']));
+    }
+
+    $nav_items = array(
+        'blc-dashboard'        => array(
+            'label' => __('Liens cassés', 'liens-morts-detector-jlg'),
+        ),
+        'blc-images-dashboard' => array(
+            'label' => __('Images cassées', 'liens-morts-detector-jlg'),
+        ),
+        'blc-settings'         => array(
+            'label' => __('Réglages', 'liens-morts-detector-jlg'),
+        ),
+    );
+
     ?>
     <div class="wrap">
         <h1><?php esc_html_e('Rapport des Liens Cassés', 'liens-morts-detector-jlg'); ?></h1>
+        <nav class="nav-tab-wrapper blc-dashboard-nav blc-mobile-only" aria-label="<?php echo esc_attr__('Navigation Liens morts', 'liens-morts-detector-jlg'); ?>">
+            <?php foreach ($nav_items as $slug => $item) :
+                $is_current = ($requested_page === $slug);
+                $classes    = 'nav-tab' . ($is_current ? ' nav-tab-active' : '');
+                $url        = admin_url('admin.php?page=' . $slug);
+                ?>
+                <a
+                    href="<?php echo esc_url($url); ?>"
+                    class="<?php echo esc_attr($classes); ?>"
+                    <?php echo $is_current ? 'aria-current="page"' : ''; ?>
+                >
+                    <?php echo esc_html($item['label']); ?>
+                </a>
+            <?php endforeach; ?>
+        </nav>
         <div class="blc-stats-box">
             <div class="blc-stat">
                 <span class="blc-stat-value"><?php echo esc_html($broken_links_count); ?></span>
@@ -386,6 +418,48 @@ function blc_dashboard_links_page() {
                         '<input type="hidden" name="page" value="%s" />',
                         esc_attr((string) $_REQUEST['page'])
                     );
+                }
+
+                $current_view = isset($_GET['link_type']) && is_scalar($_GET['link_type'])
+                    ? sanitize_text_field((string) wp_unslash($_GET['link_type']))
+                    : 'all';
+
+                $views_for_select = array();
+                if (method_exists($list_table, 'get_views')) {
+                    try {
+                        $reflection_method = new \ReflectionMethod($list_table, 'get_views');
+                        if (!$reflection_method->isPublic()) {
+                            $reflection_method->setAccessible(true);
+                        }
+
+                        $maybe_views = $reflection_method->invoke($list_table);
+                        if (is_array($maybe_views)) {
+                            $views_for_select = $maybe_views;
+                        }
+                    } catch (\ReflectionException $exception) {
+                        $views_for_select = array();
+                    }
+                }
+
+                if (!empty($views_for_select)) {
+                    ?>
+                    <div class="blc-link-type-select-wrapper blc-mobile-only">
+                        <label class="screen-reader-text" for="blc-link-type-select"><?php esc_html_e('Filtrer les liens cassés', 'liens-morts-detector-jlg'); ?></label>
+                        <select name="link_type" id="blc-link-type-select" class="blc-link-type-select" data-current-view="<?php echo esc_attr($current_view); ?>">
+                            <?php
+                            foreach ($views_for_select as $slug => $view_html) {
+                                $label = trim(wp_strip_all_tags($view_html));
+                                printf(
+                                    '<option value="%1$s" %3$s>%2$s</option>',
+                                    esc_attr((string) $slug),
+                                    esc_html($label),
+                                    selected($current_view, (string) $slug, false)
+                                );
+                            }
+                            ?>
+                        </select>
+                    </div>
+                    <?php
                 }
 
                 $list_table->views();
