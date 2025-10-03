@@ -179,7 +179,7 @@ class AdminListTablesTest extends TestCase
             'url'             => 'https://example.com',
         ];
 
-        $this->assertSame('<span class="blc-status blc-status--4xx blc-status--410">410</span>', $table->renderHttpStatus($item));
+        $this->assertSame('<span class="blc-status blc-status--4xx blc-status--410" aria-label="Erreur client (4xx)" title="Erreur client (4xx)">410</span>', $table->renderHttpStatus($item));
         $this->assertSame('1970-01-01 00:00', $table->renderLastChecked($item));
 
         $empty = [
@@ -191,6 +191,11 @@ class AdminListTablesTest extends TestCase
         ];
 
         $this->assertSame('—', $table->renderHttpStatus($empty));
+
+        $unknown = $item;
+        $unknown['http_status'] = 999;
+
+        $this->assertSame('<span class="blc-status blc-status--unknown blc-status--999" aria-label="Statut inconnu ou indisponible" title="Statut inconnu ou indisponible">999</span>', $table->renderHttpStatus($unknown));
         $this->assertSame('—', $table->renderLastChecked($empty));
     }
 
