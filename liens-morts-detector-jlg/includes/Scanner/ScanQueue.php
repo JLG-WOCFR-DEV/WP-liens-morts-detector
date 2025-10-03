@@ -378,7 +378,29 @@ class ScanQueue {
                 }
             }
 
-            $widget_sources = [];
+            $global_link_sources = [];
+            $register_global_source = static function (array $source) use (&$global_link_sources) {
+                $html = isset($source['html']) ? (string) $source['html'] : '';
+                if (trim($html) === '' || stripos($html, '<a') === false) {
+                    return;
+                }
+
+                $label = isset($source['debug_label']) ? (string) $source['debug_label'] : '';
+                if ($label === '') {
+                    $label = __('Source hors publication', 'liens-morts-detector-jlg');
+                }
+
+                $global_link_sources[] = [
+                    'html'          => $html,
+                    'post_id'       => isset($source['post_id']) ? (int) $source['post_id'] : 0,
+                    'permalink'     => isset($source['permalink']) ? (string) $source['permalink'] : '',
+                    'storage_title' => isset($source['storage_title']) && $source['storage_title'] !== ''
+                        ? (string) $source['storage_title']
+                        : blc_prepare_text_field_for_storage($label),
+                    'debug_label'   => $label,
+                ];
+            };
+
             if (function_exists('get_option')) {
                 $raw_widgets = get_option('widget_text', []);
                 if (is_array($raw_widgets)) {
@@ -388,7 +410,15 @@ class ScanQueue {
                         }
 
                         $widget_text = isset($widget_data['text']) ? (string) $widget_data['text'] : '';
-                        if (trim($widget_text) === '' || stripos($widget_text, '<a') === false) {
+                        if ($widget_text === '') {
+                            continue;
+                        }
+
+                        if (function_exists('do_shortcode')) {
+                            $widget_text = do_shortcode($widget_text);
+                        }
+
+                        if (trim($widget_text) === '') {
                             continue;
                         }
 
@@ -406,18 +436,135 @@ class ScanQueue {
                             $label = sprintf(__('Widget texte « %s »', 'liens-morts-detector-jlg'), $widget_title);
                         }
 
-                        $widget_sources[] = [
+                        $register_global_source([
                             'html'          => $widget_text,
-                            'post_id'       => 0,
-                            'permalink'     => '',
                             'storage_title' => blc_prepare_text_field_for_storage($label),
                             'debug_label'   => $label,
-                        ];
+                        ]);
+                    }
+                }
+
+                $custom_html_widgets = get_option('widget_custom_html', []);
+                if (is_array($custom_html_widgets)) {
+                    foreach ($custom_html_widgets as $widget_id => $widget_data) {
+                        if (!is_array($widget_data)) {
+                            continue;
+                        }
+
+                        $widget_content = isset($widget_data['content']) ? (string) $widget_data['content'] : '';
+                        if ($widget_content === '') {
+                            continue;
+                        }
+
+                        if (function_exists('do_shortcode')) {
+                            $widget_content = do_shortcode($widget_content);
+                        }
+
+                        if (trim($widget_content) === '') {
+                            continue;
+                        }
+
+                        $widget_title = '';
+                        if (isset($widget_data['title'])) {
+                            $widget_title = (string) $widget_data['title'];
+                        }
+                        if ($widget_title === '' && isset($widget_data['name'])) {
+                            $widget_title = (string) $widget_data['name'];
+                        }
+
+                        if ($widget_title === '') {
+                            $label = sprintf(__('Widget HTML personnalisé #%s', 'liens-morts-detector-jlg'), $widget_id);
+                        } else {
+                            $label = sprintf(__('Widget HTML personnalisé « %s »', 'liens-morts-detector-jlg'), $widget_title);
+                        }
+
+                        $register_global_source([
+                            'html'          => $widget_content,
+                            'storage_title' => blc_prepare_text_field_for_storage($label),
+                            'debug_label'   => $label,
+                        ]);
                     }
                 }
             }
 
-            if (!empty($widget_sources)) {
+            if (function_exists('wp_get_nav_menus') && function_exists('wp_get_nav_menu_items')) {
+                $nav_menus = wp_get_nav_menus();
+                if (!is_array($nav_menus)) {
+                    $nav_menus = [];
+                }
+
+                foreach ($nav_menus as $menu) {
+                    $menu_name = '';
+                    $menu_id   = 0;
+
+                    if (is_object($menu)) {
+                        $menu_name = isset($menu->name) ? (string) $menu->name : '';
+                        if ($menu_name === '' && isset($menu->slug)) {
+                            $menu_name = (string) $menu->slug;
+                        }
+                        $menu_id = isset($menu->term_id) ? (int) $menu->term_id : 0;
+                    } elseif (is_array($menu)) {
+                        $menu_name = isset($menu['name']) ? (string) $menu['name'] : '';
+                        if ($menu_name === '' && isset($menu['slug'])) {
+                            $menu_name = (string) $menu['slug'];
+                        }
+                        $menu_id = isset($menu['term_id']) ? (int) $menu['term_id'] : 0;
+                    }
+
+                    $menu_items = wp_get_nav_menu_items($menu_id !== 0 ? $menu_id : $menu);
+                    if (!is_array($menu_items)) {
+                        continue;
+                    }
+
+                    foreach ($menu_items as $menu_item) {
+                        $item_url = '';
+                        $item_title = '';
+
+                        if (is_object($menu_item)) {
+                            $item_url = isset($menu_item->url) ? (string) $menu_item->url : '';
+                            if ($item_title === '' && isset($menu_item->title)) {
+                                $item_title = (string) $menu_item->title;
+                            }
+                            if ($item_title === '' && isset($menu_item->post_title)) {
+                                $item_title = (string) $menu_item->post_title;
+                            }
+                        } elseif (is_array($menu_item)) {
+                            $item_url = isset($menu_item['url']) ? (string) $menu_item['url'] : '';
+                            if ($item_title === '' && isset($menu_item['title'])) {
+                                $item_title = (string) $menu_item['title'];
+                            }
+                            if ($item_title === '' && isset($menu_item['post_title'])) {
+                                $item_title = (string) $menu_item['post_title'];
+                            }
+                        }
+
+                        $item_url = trim($item_url);
+                        if ($item_url === '' || $item_url === '#') {
+                            continue;
+                        }
+
+                        if ($item_title === '') {
+                            $item_title = $item_url;
+                        }
+
+                        $link_html = sprintf('<a href="%s">%s</a>', esc_url($item_url), esc_html($item_title));
+
+                        if ($menu_name !== '') {
+                            $label = sprintf(__('Menu « %1$s » — %2$s', 'liens-morts-detector-jlg'), $menu_name, $item_title);
+                        } else {
+                            $label = sprintf(__('Menu — %s', 'liens-morts-detector-jlg'), $item_title);
+                        }
+
+                        $register_global_source([
+                            'html'          => $link_html,
+                            'storage_title' => blc_prepare_text_field_for_storage($label),
+                            'debug_label'   => $label,
+                        ]);
+                    }
+                }
+            }
+
+            if (!empty($global_link_sources)) {
                 if ($scan_run_token === '') {
                     $scan_run_token = blc_generate_scan_run_token();
                 }
@@ -1404,12 +1551,12 @@ class ScanQueue {
                     }
                 }
 
-                if ($batch_exception === null && !($batch_wp_error instanceof \WP_Error) && !empty($widget_sources)) {
+                if ($batch_exception === null && !($batch_wp_error instanceof \WP_Error) && !empty($global_link_sources)) {
                     if (!isset($link_occurrence_counters[0])) {
                         $link_occurrence_counters[0] = [];
                     }
 
-                    foreach ($widget_sources as $widget_source) {
+                    foreach ($global_link_sources as $widget_source) {
                         $html = isset($widget_source['html']) ? (string) $widget_source['html'] : '';
                         if (trim($html) === '' || stripos($html, '<a') === false) {
                             continue;
