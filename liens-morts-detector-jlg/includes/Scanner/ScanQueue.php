@@ -17,6 +17,12 @@ class ScanQueue {
             $remote_request_client = $this->remoteRequestClient;
             global $wpdb;
 
+            $total_batches = 0;
+            $processed_batches = 0;
+            $remaining_batches = 0;
+            $total_items = 0;
+            $processed_items = 0;
+
             // --- 1. Récupération des réglages ---
             $debug_mode = get_option('blc_debug_mode', false);
             if ($debug_mode) { error_log("--- Début du scan LIENS (Lot #$batch) ---"); }
@@ -58,11 +64,23 @@ class ScanQueue {
                     return;
                 }
 
+                \blc_update_link_scan_status([
+                    'state'   => 'running',
+                    'message' => \__('Une analyse des liens est déjà en cours. Veuillez réessayer plus tard.', 'liens-morts-detector-jlg'),
+                ]);
+
                 return new WP_Error(
                     'blc_link_scan_in_progress',
                     __('Une analyse des liens est déjà en cours. Veuillez réessayer plus tard.', 'liens-morts-detector-jlg')
                 );
             }
+
+            \blc_update_link_scan_status([
+                'state'         => 'running',
+                'current_batch' => (int) $batch,
+                'is_full_scan'  => (bool) $is_full_scan,
+                'message'       => \__('Analyse des liens en cours…', 'liens-morts-detector-jlg'),
+            ]);
 
             $timeout_constraints = blc_get_request_timeout_constraints();
             $head_timeout_limits = $timeout_constraints['head'];
@@ -341,6 +359,46 @@ class ScanQueue {
 
             $wp_query = new WP_Query($args);
             $posts = $wp_query->posts;
+
+            $total_items = isset($wp_query->found_posts) ? max(0, (int) $wp_query->found_posts) : 0;
+            $max_pages = isset($wp_query->max_num_pages) ? (int) $wp_query->max_num_pages : 0;
+            if ($max_pages <= 0) {
+                if ($total_items > 0 && $batch_size > 0) {
+                    $max_pages = (int) ceil($total_items / $batch_size);
+                } elseif (!empty($posts) && $batch === 0) {
+                    $max_pages = 1;
+                } else {
+                    $max_pages = max(1, $batch + 1);
+                }
+            }
+
+            $total_batches = max(1, $max_pages);
+            $processed_batches = min($total_batches, $batch + 1);
+            $remaining_batches = max(0, $total_batches - $processed_batches);
+            $posts_in_batch = is_array($posts) ? count($posts) : 0;
+            $processed_items = max(0, ($batch * $batch_size) + $posts_in_batch);
+            if ($total_items > 0) {
+                $processed_items = min($processed_items, $total_items);
+            }
+
+            $status_message = sprintf(
+                /* translators: 1: current batch number, 2: total batch count. */
+                \__('Analyse du lot %1$d sur %2$d en cours…', 'liens-morts-detector-jlg'),
+                $processed_batches,
+                $total_batches
+            );
+
+            \blc_update_link_scan_status([
+                'state'             => 'running',
+                'current_batch'     => (int) $batch,
+                'processed_batches' => $processed_batches,
+                'total_batches'     => $total_batches,
+                'remaining_batches' => $remaining_batches,
+                'total_items'       => $total_items,
+                'processed_items'   => $processed_items,
+                'is_full_scan'      => (bool) $is_full_scan,
+                'message'           => $status_message,
+            ]);
 
             $cleanup_size = 0;
             if (method_exists($wpdb, 'get_var')) {
@@ -1492,6 +1550,16 @@ class ScanQueue {
 
                 if ($temporary_retry_scheduled) {
                     if ($debug_mode) { error_log('Scan reporté : statut HTTP temporaire détecté, nouveau passage planifié.'); }
+                    \blc_update_link_scan_status([
+                        'state'             => 'running',
+                        'current_batch'     => (int) $batch,
+                        'processed_batches' => $processed_batches,
+                        'total_batches'     => $total_batches,
+                        'remaining_batches' => $remaining_batches,
+                        'total_items'       => $total_items,
+                        'processed_items'   => $processed_items,
+                        'message'           => \__('Analyse mise en pause : un nouveau passage sera tenté suite à un statut temporaire.', 'liens-morts-detector-jlg'),
+                    ]);
                     return;
                 }
 
@@ -1500,11 +1568,47 @@ class ScanQueue {
                     if (false === $scheduled) {
                         error_log(sprintf('BLC: Failed to schedule next link batch #%d.', $batch + 1));
                         do_action('blc_check_batch_schedule_failed', $batch + 1, $is_full_scan, $bypass_rest_window, 'next_batch');
+                        \blc_update_link_scan_status([
+                            'state'           => 'failed',
+                            'last_error'      => \__('Impossible de programmer le lot suivant.', 'liens-morts-detector-jlg'),
+                            'message'         => \__('Impossible de programmer le lot suivant.', 'liens-morts-detector-jlg'),
+                            'total_items'     => $total_items,
+                            'processed_items' => $processed_items,
+                        ]);
+                    }
+                    if (false !== $scheduled) {
+                        \blc_update_link_scan_status([
+                            'state'             => 'running',
+                            'current_batch'     => (int) $batch,
+                            'processed_batches' => $processed_batches,
+                            'total_batches'     => $total_batches,
+                            'remaining_batches' => max(0, $remaining_batches),
+                            'total_items'       => $total_items,
+                            'processed_items'   => $processed_items,
+                            'message'           => sprintf(
+                                /* translators: 1: completed batch number, 2: next batch number. */
+                                \__('Lot %1$d terminé. Lot %2$d planifié.', 'liens-morts-detector-jlg'),
+                                $processed_batches,
+                                min($total_batches, $processed_batches + 1)
+                            ),
+                        ]);
                     }
                 } else {
                     update_option('blc_last_check_time', current_time('timestamp', true));
                     blc_clear_scan_cache($scan_cache_context);
                     blc_maybe_send_scan_summary('link');
+                    \blc_update_link_scan_status([
+                        'state'             => 'completed',
+                        'current_batch'     => (int) $batch,
+                        'processed_batches' => $processed_batches,
+                        'total_batches'     => $total_batches,
+                        'remaining_batches' => 0,
+                        'total_items'       => $total_items,
+                        'processed_items'   => max($total_items, $processed_items),
+                        'message'           => $total_items > 0
+                            ? \__('Analyse terminée. Tous les lots ont été traités.', 'liens-morts-detector-jlg')
+                            : \__('Analyse terminée. Aucun contenu à analyser.', 'liens-morts-detector-jlg'),
+                    ]);
                 }
 
                 if ($debug_mode) { error_log("--- Fin du scan LIENS (Lot #$batch) ---"); }

@@ -4,6 +4,262 @@ if (!defined('ABSPATH')) exit;
 
 
 require_once __DIR__ . '/Scanner/RemoteRequestClient.php';
+
+if (!function_exists('blc_get_default_link_scan_status')) {
+    /**
+     * Retrieve the default link scan status structure.
+     *
+     * @return array<string, mixed>
+     */
+    function blc_get_default_link_scan_status() {
+        return [
+            'state'              => 'idle',
+            'current_batch'      => 0,
+            'processed_batches'  => 0,
+            'total_batches'      => 0,
+            'remaining_batches'  => 0,
+            'is_full_scan'       => false,
+            'message'            => '',
+            'last_error'         => '',
+            'started_at'         => 0,
+            'ended_at'           => 0,
+            'updated_at'         => 0,
+            'total_items'        => 0,
+            'processed_items'    => 0,
+        ];
+    }
+}
+
+if (!function_exists('blc_get_link_scan_status')) {
+    /**
+     * Return the current link scan status from the database.
+     *
+     * @return array<string, mixed>
+     */
+    function blc_get_link_scan_status() {
+        $status = get_option('blc_link_scan_status', []);
+        if (!is_array($status)) {
+            $status = [];
+        }
+
+        $defaults = blc_get_default_link_scan_status();
+        $status = array_merge($defaults, array_intersect_key($status, $defaults));
+
+        $allowed_states = ['idle', 'queued', 'running', 'completed', 'failed', 'cancelled'];
+        $state = isset($status['state']) ? sanitize_key((string) $status['state']) : 'idle';
+        if ($state === '' || !in_array($state, $allowed_states, true)) {
+            $state = 'idle';
+        }
+        $status['state'] = $state;
+
+        foreach (['current_batch', 'processed_batches', 'total_batches', 'remaining_batches', 'started_at', 'ended_at', 'updated_at', 'total_items', 'processed_items'] as $numeric_key) {
+            $status[$numeric_key] = isset($status[$numeric_key]) ? max(0, (int) $status[$numeric_key]) : 0;
+        }
+
+        $status['is_full_scan'] = !empty($status['is_full_scan']);
+        $status['message'] = isset($status['message']) && is_string($status['message']) ? $status['message'] : '';
+        $status['last_error'] = isset($status['last_error']) && is_string($status['last_error']) ? $status['last_error'] : '';
+
+        if ($status['state'] === 'completed' && $status['ended_at'] === 0 && $status['updated_at'] > 0) {
+            $status['ended_at'] = $status['updated_at'];
+        }
+
+        return $status;
+    }
+}
+
+if (!function_exists('blc_update_link_scan_status')) {
+    /**
+     * Persist link scan status updates.
+     *
+     * @param array<string, mixed> $changes Associative array of changes to merge into the status payload.
+     *
+     * @return array<string, mixed> Updated status payload.
+     */
+    function blc_update_link_scan_status(array $changes) {
+        $status = blc_get_link_scan_status();
+        $previous_state = $status['state'];
+
+        foreach ($changes as $key => $value) {
+            switch ($key) {
+                case 'state':
+                    $new_state = sanitize_key((string) $value);
+                    if ($new_state === '' || !in_array($new_state, ['idle', 'queued', 'running', 'completed', 'failed', 'cancelled'], true)) {
+                        $new_state = 'idle';
+                    }
+                    $status['state'] = $new_state;
+                    break;
+                case 'message':
+                    $status['message'] = is_string($value) ? $value : '';
+                    break;
+                case 'last_error':
+                    $status['last_error'] = is_string($value) ? $value : '';
+                    break;
+                case 'is_full_scan':
+                    $status['is_full_scan'] = (bool) $value;
+                    break;
+                case 'current_batch':
+                case 'processed_batches':
+                case 'total_batches':
+                case 'remaining_batches':
+                case 'started_at':
+                case 'ended_at':
+                case 'updated_at':
+                case 'total_items':
+                case 'processed_items':
+                    $status[$key] = max(0, (int) $value);
+                    break;
+                default:
+                    $status[$key] = $value;
+                    break;
+            }
+        }
+
+        $now = time();
+        if ($status['state'] === 'running' && ($status['started_at'] === 0 || $previous_state !== 'running')) {
+            $status['started_at'] = $now;
+        }
+
+        if ($status['state'] === 'completed' || $status['state'] === 'failed' || $status['state'] === 'cancelled') {
+            $status['ended_at'] = $now;
+        } elseif ($status['state'] === 'idle' && !array_key_exists('ended_at', $changes)) {
+            $status['ended_at'] = 0;
+            if (!array_key_exists('started_at', $changes)) {
+                $status['started_at'] = 0;
+            }
+        }
+
+        $status['updated_at'] = $now;
+
+        update_option('blc_link_scan_status', $status, false);
+
+        return $status;
+    }
+}
+
+if (!function_exists('blc_reset_link_scan_status')) {
+    /**
+     * Clear the stored link scan status.
+     *
+     * @return void
+     */
+    function blc_reset_link_scan_status() {
+        delete_option('blc_link_scan_status');
+    }
+}
+
+if (!function_exists('blc_get_next_link_batch_timestamp')) {
+    /**
+     * Retrieve the next scheduled timestamp for link scan batches.
+     *
+     * @return int
+     */
+    function blc_get_next_link_batch_timestamp() {
+        if (!function_exists('wp_next_scheduled')) {
+            return 0;
+        }
+
+        $candidates = [];
+
+        $next_batch = wp_next_scheduled('blc_check_batch');
+        if ($next_batch) {
+            $candidates[] = (int) $next_batch;
+        }
+
+        $manual_batch = wp_next_scheduled('blc_manual_check_batch');
+        if ($manual_batch) {
+            $candidates[] = (int) $manual_batch;
+        }
+
+        if ($candidates === []) {
+            return 0;
+        }
+
+        return (int) min($candidates);
+    }
+}
+
+if (!function_exists('blc_get_link_scan_status_payload')) {
+    /**
+     * Build the enriched scan status payload shared by REST and AJAX endpoints.
+     *
+     * @return array<string, mixed>
+     */
+    function blc_get_link_scan_status_payload() {
+        $status = blc_get_link_scan_status();
+
+        $default_lock_timeout = defined('MINUTE_IN_SECONDS') ? 15 * MINUTE_IN_SECONDS : 900;
+        $lock_timeout = apply_filters('blc_link_scan_lock_timeout', $default_lock_timeout);
+        if (!is_int($lock_timeout)) {
+            $lock_timeout = (int) $lock_timeout;
+        }
+        if ($lock_timeout < 0) {
+            $lock_timeout = 0;
+        }
+
+        $lock_state = blc_get_link_scan_lock_state();
+        $status['lock_active'] = blc_is_link_scan_lock_active($lock_state, $lock_timeout);
+        $status['lock_timestamp'] = isset($lock_state['locked_at']) ? (int) $lock_state['locked_at'] : 0;
+        $status['lock_timeout'] = $lock_timeout;
+        $status['next_batch_timestamp'] = blc_get_next_link_batch_timestamp();
+
+        if (!isset($status['lock_active'])) {
+            $status['lock_active'] = false;
+        }
+
+        return $status;
+    }
+}
+
+if (!function_exists('blc_register_scan_status_rest_route')) {
+    /**
+     * Register REST API routes for scan status retrieval.
+     *
+     * @return void
+     */
+    function blc_register_scan_status_rest_route() {
+        if (!function_exists('register_rest_route')) {
+            return;
+        }
+
+        register_rest_route(
+            'blc/v1',
+            '/scan-status',
+            [
+                'methods'             => \WP_REST_Server::READABLE,
+                'callback'            => 'blc_rest_get_scan_status',
+                'permission_callback' => 'blc_rest_scan_status_permissions',
+            ]
+        );
+    }
+}
+
+if (!function_exists('blc_rest_scan_status_permissions')) {
+    /**
+     * Check permissions for scan status REST requests.
+     *
+     * @return bool
+     */
+    function blc_rest_scan_status_permissions() {
+        return current_user_can('manage_options');
+    }
+}
+
+if (!function_exists('blc_rest_get_scan_status')) {
+    /**
+     * REST callback returning the current scan status payload.
+     *
+     * @param \WP_REST_Request $request REST request instance.
+     *
+     * @return \WP_REST_Response|array<string, mixed>
+     */
+    function blc_rest_get_scan_status(\WP_REST_Request $request) {
+        return rest_ensure_response(blc_get_link_scan_status_payload());
+    }
+}
+
+add_action('rest_api_init', 'blc_register_scan_status_rest_route');
+
 require_once __DIR__ . '/Scanner/ScanQueue.php';
 require_once __DIR__ . '/Scanner/LinkScanController.php';
 
@@ -1877,7 +2133,18 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     $queue = blc_make_scan_queue($remote_client);
     $controller = blc_make_link_scan_controller($queue);
 
-    return $controller->runBatch((int) $batch, (bool) $is_full_scan, (bool) $bypass_rest_window);
+    $result = $controller->runBatch((int) $batch, (bool) $is_full_scan, (bool) $bypass_rest_window);
+
+    if (function_exists('is_wp_error') && is_wp_error($result)) {
+        $message = $result->get_error_message();
+        blc_update_link_scan_status([
+            'state'       => 'failed',
+            'last_error'  => $message,
+            'message'     => $message,
+        ]);
+    }
+
+    return $result;
 }
 
 
