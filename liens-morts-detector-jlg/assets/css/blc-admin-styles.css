@@ -543,10 +543,17 @@
     color: #1d2327;
     font-size: 24px;
     cursor: pointer;
+    transition: color 0.2s ease, opacity 0.2s ease;
+}
+
+.blc-modal__close:focus-visible {
+    outline: 2px solid #2271b1;
+    outline-offset: 2px;
 }
 
 .blc-modal__close:disabled {
     cursor: not-allowed;
+    color: #6c7781;
     opacity: 0.6;
 }
 
@@ -590,5 +597,15 @@ body.blc-modal-open {
     .blc-modal__close {
         top: 14px;
         right: 14px;
+    }
+}
+
+@media (prefers-color-scheme: dark) {
+    .blc-modal__close {
+        color: #f0f6fc;
+    }
+
+    .blc-modal__close:disabled {
+        color: rgba(240, 246, 252, 0.65);
     }
 }
