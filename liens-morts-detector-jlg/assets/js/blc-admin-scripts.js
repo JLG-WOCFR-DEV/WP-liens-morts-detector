@@ -12,6 +12,7 @@ jQuery(document).ready(function($) {
         unlinkModalTitle: 'Supprimer le lien',
         unlinkModalConfirm: 'Supprimer',
         cancelButton: 'Annuler',
+        closeButton: 'Fermer',
         closeLabel: 'Fermer la fenêtre modale',
         emptyUrlMessage: 'Veuillez saisir une URL.',
         invalidUrlMessage: 'Veuillez saisir une URL valide.',
@@ -370,6 +371,7 @@ jQuery(document).ready(function($) {
             isOpen: false,
             onConfirm: null,
             showInput: true,
+            showCancel: true,
             isSubmitting: false
         };
 
@@ -461,6 +463,7 @@ jQuery(document).ready(function($) {
             state.isOpen = false;
             state.onConfirm = null;
             state.showInput = true;
+            state.showCancel = true;
 
             $modal.removeClass('is-open').attr('aria-hidden', 'true');
             $('body').removeClass('blc-modal-open');
@@ -501,6 +504,7 @@ jQuery(document).ready(function($) {
 
             state.onConfirm = typeof options.onConfirm === 'function' ? options.onConfirm : null;
             state.showInput = options.showInput !== false;
+            state.showCancel = options.showCancel !== false;
 
             lastFocusedElement = document.activeElement;
 
@@ -527,7 +531,14 @@ jQuery(document).ready(function($) {
             }
             $confirm.text(confirmText || messages.editModalConfirm || 'Confirmer');
 
-            $cancel.text(options.cancelText || messages.cancelButton || 'Annuler');
+            var cancelText = options.cancelText || messages.cancelButton || 'Annuler';
+            $cancel.text(cancelText);
+
+            if (state.showCancel) {
+                $cancel.show().prop('hidden', false).removeAttr('hidden').removeAttr('aria-hidden');
+            } else {
+                $cancel.hide().prop('hidden', true).attr('hidden', 'hidden').attr('aria-hidden', 'true');
+            }
             $close.attr('aria-label', options.closeLabel || messages.closeLabel || 'Fermer');
 
             clearError();
@@ -1154,8 +1165,8 @@ jQuery(document).ready(function($) {
             title: messages.contextModalTitle || '',
             message: '',
             showInput: false,
-            confirmText: messages.cancelButton || 'Fermer',
-            cancelText: messages.cancelButton || 'Fermer',
+            showCancel: false,
+            confirmText: messages.closeButton || messages.cancelButton || 'Fermer',
             closeLabel: messages.closeLabel,
             context: contextExcerpt,
             contextHtml: contextHtml,
