@@ -48,6 +48,51 @@ function blc_add_admin_menu() {
 }
 
 /**
+ * Rend la navigation principale des pages du tableau de bord du plugin.
+ *
+ * @param string $active_tab Identifiant de l'onglet actif.
+ */
+function blc_render_dashboard_tabs($active_tab) {
+    $tabs = array(
+        'links'    => array(
+            'label' => __('Liens', 'liens-morts-detector-jlg'),
+            'page'  => 'blc-dashboard',
+        ),
+        'images'   => array(
+            'label' => __('Images', 'liens-morts-detector-jlg'),
+            'page'  => 'blc-images-dashboard',
+        ),
+        'settings' => array(
+            'label' => __('Réglages', 'liens-morts-detector-jlg'),
+            'page'  => 'blc-settings',
+        ),
+    );
+
+    $navigation_label = __('Navigation du tableau de bord Liens Morts', 'liens-morts-detector-jlg');
+
+    echo '<nav class="blc-admin-tabs" aria-label="' . esc_attr($navigation_label) . '"><ul class="blc-admin-tabs__list">';
+
+    foreach ($tabs as $tab_key => $tab) {
+        $is_active      = ($tab_key === $active_tab);
+        $aria_current   = $is_active ? ' aria-current="page"' : '';
+        $active_class   = $is_active ? ' is-active' : '';
+        $tab_url        = function_exists('admin_url')
+            ? admin_url('admin.php?page=' . $tab['page'])
+            : 'admin.php?page=' . $tab['page'];
+        $link_attributes = sprintf(
+            ' class="blc-admin-tabs__link%s" href="%s"%s',
+            esc_attr($active_class),
+            esc_url($tab_url),
+            $aria_current
+        );
+
+        echo '<li class="blc-admin-tabs__item"><a' . $link_attributes . '>' . esc_html($tab['label']) . '</a></li>';
+    }
+
+    echo '</ul></nav>';
+}
+
+/**
  * Affiche la modale utilisée pour l'édition et la suppression rapides.
  *
  * Cette modale est rendue une seule fois puis réutilisée via JavaScript pour
@@ -272,6 +317,7 @@ function blc_dashboard_links_page() {
 
     ?>
     <div class="wrap">
+        <?php blc_render_dashboard_tabs('links'); ?>
         <h1><?php esc_html_e('Rapport des Liens Cassés', 'liens-morts-detector-jlg'); ?></h1>
         <div class="blc-stats-box">
             <div class="blc-stat">
@@ -503,6 +549,7 @@ function blc_dashboard_images_page() {
     $list_table->prepare_items();
     ?>
     <div class="wrap">
+        <?php blc_render_dashboard_tabs('images'); ?>
         <h1><?php esc_html_e('Rapport des Images Cassées', 'liens-morts-detector-jlg'); ?></h1>
         <div class="blc-stats-box">
              <div class="blc-stat">

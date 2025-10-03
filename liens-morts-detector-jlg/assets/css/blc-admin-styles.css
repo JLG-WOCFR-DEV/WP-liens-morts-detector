@@ -1,6 +1,73 @@
 /* Styles pour le plugin Liens morts detector - JLG */
 
 /* Amélioration de la lisibilité des descriptions dans les formulaires */
+.blc-admin-tabs {
+    margin: 0 0 24px;
+}
+
+.blc-admin-tabs__list {
+    display: flex;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.blc-admin-tabs__item {
+    margin: 0;
+}
+
+.blc-admin-tabs__link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: #f6f7f7;
+    color: #1d2327;
+    font-weight: 500;
+    text-decoration: none;
+    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.blc-admin-tabs__link:hover {
+    background: #e0f0ff;
+    color: #0a4b78;
+}
+
+.blc-admin-tabs__link:focus-visible {
+    outline: 2px solid #2271b1;
+    outline-offset: 2px;
+}
+
+.blc-admin-tabs__link.is-active {
+    background: #ffffff;
+    border-color: #2271b1;
+    color: #0a4b78;
+    box-shadow: inset 0 -2px 0 #2271b1;
+}
+
+.blc-admin-tabs__link.is-active:focus-visible {
+    outline-offset: 4px;
+}
+
+@media (max-width: 782px) {
+    .blc-admin-tabs__list {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .blc-admin-tabs__link {
+        justify-content: flex-start;
+        width: 100%;
+    }
+
+    .blc-admin-tabs__link.is-active {
+        box-shadow: none;
+    }
+}
+
 .wrap form p small {
     color: #666;
 }
