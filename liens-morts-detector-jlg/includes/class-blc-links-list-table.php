@@ -368,10 +368,34 @@ class BLC_Links_List_Table extends WP_List_Table {
             $tooltip_source = wp_strip_all_tags($tooltip_source);
         }
 
+        $row_id = isset($item['id']) ? absint($item['id']) : 0;
+        $occurrence_index = isset($item['occurrence_index']) ? absint($item['occurrence_index']) : 0;
+
+        $identifier_parts = [];
+        if ($row_id > 0) {
+            $identifier_parts[] = 'r' . $row_id;
+        }
+        if ($occurrence_index > 0) {
+            $identifier_parts[] = 'o' . $occurrence_index;
+        }
+
+        if (empty($identifier_parts)) {
+            $identifier_parts[] = 'f' . substr(md5($excerpt), 0, 8);
+        }
+
+        $description_id = 'blc-context-excerpt-desc-' . implode('-', $identifier_parts);
+
+        $description_id_attr = esc_attr($description_id);
+        $full_excerpt_attr   = esc_attr($tooltip_source);
+        $full_excerpt_text   = esc_html($tooltip_source);
+        $excerpt_text        = esc_html($excerpt);
+
         return sprintf(
-            '<span class="blc-context-excerpt" title="%s">%s</span>',
-            esc_attr($tooltip_source),
-            esc_html($excerpt)
+            '<span class="blc-context-excerpt-wrapper" aria-describedby="%1$s"><span class="blc-context-excerpt" title="%2$s" data-full-excerpt="%2$s">%3$s</span><span id="%1$s" class="screen-reader-text">%4$s</span></span>',
+            $description_id_attr,
+            $full_excerpt_attr,
+            $excerpt_text,
+            $full_excerpt_text
         );
     }
 
