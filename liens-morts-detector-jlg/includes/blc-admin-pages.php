@@ -552,11 +552,53 @@ function blc_dashboard_links_page() {
     $list_table = new BLC_Links_List_Table();
     $status_counts = $list_table->get_status_counts();
 
-    $broken_links_count  = isset($status_counts['active_count']) ? (int) $status_counts['active_count'] : 0;
-    $not_found_count     = isset($status_counts['not_found_count']) ? (int) $status_counts['not_found_count'] : 0;
-    $server_error_count  = isset($status_counts['server_error_count']) ? (int) $status_counts['server_error_count'] : 0;
-    $redirect_count      = isset($status_counts['redirect_count']) ? (int) $status_counts['redirect_count'] : 0;
-    $needs_recheck_count = isset($status_counts['needs_recheck_count']) ? (int) $status_counts['needs_recheck_count'] : 0;
+    $status_counts = array_map(
+        'intval',
+        wp_parse_args(
+            is_array($status_counts) ? $status_counts : array(),
+            array(
+                'active_count'        => 0,
+                'not_found_count'     => 0,
+                'server_error_count'  => 0,
+                'redirect_count'      => 0,
+                'needs_recheck_count' => 0,
+            )
+        )
+    );
+
+    $broken_links_count  = $status_counts['active_count'];
+    $not_found_count     = $status_counts['not_found_count'];
+    $server_error_count  = $status_counts['server_error_count'];
+    $redirect_count      = $status_counts['redirect_count'];
+    $needs_recheck_count = $status_counts['needs_recheck_count'];
+
+    $stats_card_blueprint = array(
+        'all'        => array(
+            'link_type' => 'all',
+            'label'     => __('Liens morts trouvés', 'liens-morts-detector-jlg'),
+            'count'     => $broken_links_count,
+        ),
+        '404'        => array(
+            'link_type' => 'status_404_410',
+            'label'     => __('Erreurs 404 / 410', 'liens-morts-detector-jlg'),
+            'count'     => $not_found_count,
+        ),
+        '5xx'        => array(
+            'link_type' => 'status_5xx',
+            'label'     => __('Erreurs 5xx', 'liens-morts-detector-jlg'),
+            'count'     => $server_error_count,
+        ),
+        'redirects'  => array(
+            'link_type' => 'status_redirects',
+            'label'     => __('Redirections détectées', 'liens-morts-detector-jlg'),
+            'count'     => $redirect_count,
+        ),
+        'recheck'    => array(
+            'link_type' => 'needs_recheck',
+            'label'     => __('Liens à revérifier', 'liens-morts-detector-jlg'),
+            'count'     => $needs_recheck_count,
+        ),
+    );
 
     $dashboard_base_url = function_exists('admin_url')
         ? admin_url('admin.php?page=blc-dashboard')
@@ -576,38 +618,16 @@ function blc_dashboard_links_page() {
         return $dashboard_base_url . $separator . 'link_type=' . rawurlencode($link_type);
     };
 
-    $stats_cards = array(
-        array(
-            'slug'      => 'all',
-            'link_type' => 'all',
-            'value'     => number_format_i18n($broken_links_count),
-            'label'     => __('Liens morts trouvés', 'liens-morts-detector-jlg'),
-        ),
-        array(
-            'slug'      => '404',
-            'link_type' => 'status_404_410',
-            'value'     => number_format_i18n($not_found_count),
-            'label'     => __('Erreurs 404 / 410', 'liens-morts-detector-jlg'),
-        ),
-        array(
-            'slug'      => '5xx',
-            'link_type' => 'status_5xx',
-            'value'     => number_format_i18n($server_error_count),
-            'label'     => __('Erreurs 5xx', 'liens-morts-detector-jlg'),
-        ),
-        array(
-            'slug'      => 'redirects',
-            'link_type' => 'status_redirects',
-            'value'     => number_format_i18n($redirect_count),
-            'label'     => __('Redirections détectées', 'liens-morts-detector-jlg'),
-        ),
-        array(
-            'slug'      => 'recheck',
-            'link_type' => 'needs_recheck',
-            'value'     => number_format_i18n($needs_recheck_count),
-            'label'     => __('Liens à revérifier', 'liens-morts-detector-jlg'),
-        ),
-    );
+    $stats_cards = array();
+
+    foreach ($stats_card_blueprint as $slug => $card_data) {
+        $stats_cards[] = array(
+            'slug'      => $slug,
+            'link_type' => $card_data['link_type'],
+            'value'     => number_format_i18n($card_data['count']),
+            'label'     => $card_data['label'],
+        );
+    }
     $option_size_bytes = blc_get_dataset_storage_footprint_bytes('link');
     $last_check_time    = get_option('blc_last_check_time', 0);
     $option_size_kb     = $option_size_bytes / 1024;
