@@ -426,8 +426,17 @@ function blc_activate_site() {
                 update_option('blc_activation_schedule_failure', $notice_payload);
             }
 
-            $fallback_frequency = 'daily';
-            if ($frequency !== $fallback_frequency && isset($schedules[$fallback_frequency])) {
+            $fallback_frequency   = 'daily';
+            $requested_frequency = isset($schedule_result['schedule']) && $schedule_result['schedule'] !== ''
+                ? $schedule_result['schedule']
+                : $frequency_option;
+            if (function_exists('wp_get_schedules')) {
+                $schedules = wp_get_schedules();
+            } else {
+                $schedules = array();
+            }
+
+            if ($requested_frequency !== $fallback_frequency && isset($schedules[$fallback_frequency])) {
                 $fallback_timestamp = time() + (defined('HOUR_IN_SECONDS') ? (int) HOUR_IN_SECONDS : 3600);
                 $fallback = wp_schedule_event($fallback_timestamp, $fallback_frequency, 'blc_check_links');
 

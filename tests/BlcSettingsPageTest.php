@@ -22,14 +22,39 @@ class BlcSettingsPageTest extends TestCase
      */
     private array $settingsErrors = [];
 
+    private ?string $upgradeStubPath = null;
+
+    private bool $createdUpgradeStub = false;
+
     protected function setUp(): void
     {
         parent::setUp();
         require_once __DIR__ . '/../vendor/autoload.php';
         Monkey\setUp();
 
+        $this->createdUpgradeStub = false;
+
         if (!defined('ABSPATH')) {
             define('ABSPATH', __DIR__ . '/../');
+        }
+
+        $this->upgradeStubPath = ABSPATH . 'wp-admin/includes/upgrade.php';
+        $upgradeDirectory      = dirname((string) $this->upgradeStubPath);
+
+        if (!is_dir($upgradeDirectory)) {
+            mkdir($upgradeDirectory, 0777, true);
+        }
+
+        if (!file_exists((string) $this->upgradeStubPath)) {
+            $stub  = "<?php\n";
+            $stub .= "if (!function_exists('dbDelta')) {\n";
+            $stub .= "    function dbDelta(\$sql) {\n";
+            $stub .= "        return true;\n";
+            $stub .= "    }\n";
+            $stub .= "}\n";
+
+            file_put_contents((string) $this->upgradeStubPath, $stub);
+            $this->createdUpgradeStub = true;
         }
 
         if (!defined('HOUR_IN_SECONDS')) {
@@ -142,6 +167,7 @@ class BlcSettingsPageTest extends TestCase
         Functions\when('error_log')->justReturn(null);
         Functions\when('do_action')->justReturn(null);
         Functions\when('wp_unslash')->alias(static fn($value) => $value);
+        Functions\when('set_transient')->justReturn(true);
         Functions\when('add_settings_error')->alias(function ($setting, $code, $message, $type = 'error') use ($test_case) {
             $test_case->settingsErrors[] = [
                 'setting' => $setting,
@@ -150,6 +176,7 @@ class BlcSettingsPageTest extends TestCase
                 'type'    => $type,
             ];
         });
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-activation.php';
     }
 
     protected function tearDown(): void
@@ -157,6 +184,14 @@ class BlcSettingsPageTest extends TestCase
         Monkey\tearDown();
         parent::tearDown();
         $this->settingsErrors = [];
+
+        if ($this->createdUpgradeStub && $this->upgradeStubPath && file_exists($this->upgradeStubPath)) {
+            unlink($this->upgradeStubPath);
+        }
+
+        if (isset($GLOBALS['wpdb'])) {
+            unset($GLOBALS['wpdb']);
+        }
     }
 
     public function test_settings_page_uses_settings_api_calls(): void
@@ -177,6 +212,73 @@ class BlcSettingsPageTest extends TestCase
 
         $this->assertStringContainsString('<form method="post" action="options.php">', (string) $output);
         $this->assertStringContainsString('<div class="wrap">', (string) $output);
+    }
+
+    public function test_activation_schedules_daily_fallback_when_initial_schedule_fails(): void
+    {
+        $currentTime = time();
+
+        $GLOBALS['wpdb'] = new class () {
+            public string $prefix = 'wp_';
+
+            public function get_charset_collate(): string
+            {
+                return 'utf8mb4_general_ci';
+            }
+
+            public function esc_like($text)
+            {
+                return $text;
+            }
+
+            public function prepare($query, ...$args)
+            {
+                if (!empty($args)) {
+                    return vsprintf(str_replace('%s', '%s', $query), $args);
+                }
+
+                return $query;
+            }
+
+            public function get_var($query = null)
+            {
+                return '';
+            }
+        };
+
+        Functions\expect('blc_reset_link_check_schedule')
+            ->once()
+            ->andReturn([
+                'success'       => false,
+                'error_code'    => 'missing_schedule',
+                'error_message' => '',
+                'schedule'      => 'weekly',
+            ]);
+
+        $scheduledEvents = [];
+
+        Functions\when('wp_schedule_event')->alias(function ($timestamp, $recurrence, $hook) use (&$scheduledEvents) {
+            $scheduledEvents[] = [
+                'timestamp'  => $timestamp,
+                'recurrence' => $recurrence,
+                'hook'       => $hook,
+            ];
+
+            return true;
+        });
+
+        blc_activate_site();
+
+        $this->assertCount(1, $scheduledEvents, 'Exactly one fallback event should be scheduled.');
+
+        $event = $scheduledEvents[0];
+        $upperBound = $currentTime + (defined('HOUR_IN_SECONDS') ? HOUR_IN_SECONDS : 3600) + 5;
+
+        $this->assertIsInt($event['timestamp']);
+        $this->assertGreaterThanOrEqual($currentTime, $event['timestamp']);
+        $this->assertLessThanOrEqual($upperBound, $event['timestamp']);
+        $this->assertSame('daily', $event['recurrence']);
+        $this->assertSame('blc_check_links', $event['hook']);
     }
 
     public function test_invalid_frequency_falls_back_to_previous_value(): void
