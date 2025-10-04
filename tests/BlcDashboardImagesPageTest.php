@@ -470,6 +470,95 @@ class BlcDashboardImagesPageTest extends TestCase
         $this->assertStringContainsString('Jamais', $output);
     }
 
+    public function test_prepare_items_respects_ordering_parameters(): void
+    {
+        $_GET['orderby'] = 'http_status';
+        $_GET['order'] = 'asc';
+
+        $list_table = new \BLC_Images_List_Table();
+        $list_table->prepare_items();
+
+        unset($_GET['orderby'], $_GET['order']);
+
+        $this->assertNotEmpty($this->wpdbGetResultsQueries);
+        $last_query = (string) end($this->wpdbGetResultsQueries);
+        $this->assertStringContainsString('ORDER BY wp_blc_broken_links.http_status ASC', $last_query);
+        $this->assertStringContainsString('wp_blc_broken_links.id DESC', $last_query);
+        $this->assertSame('http_status', $list_table->get_current_orderby());
+        $this->assertSame('asc', $list_table->get_current_order());
+    }
+
+    public function test_prepare_items_defaults_to_id_when_orderby_invalid(): void
+    {
+        $_GET['orderby'] = 'invalid';
+        $_GET['order'] = 'up';
+
+        $list_table = new \BLC_Images_List_Table();
+        $list_table->prepare_items();
+
+        unset($_GET['orderby'], $_GET['order']);
+
+        $this->assertNotEmpty($this->wpdbGetResultsQueries);
+        $last_query = (string) end($this->wpdbGetResultsQueries);
+        $this->assertStringContainsString('ORDER BY wp_blc_broken_links.id DESC', $last_query);
+        $this->assertSame('id', $list_table->get_current_orderby());
+        $this->assertSame('desc', $list_table->get_current_order());
+    }
+
+    public function test_images_table_form_includes_hidden_sort_fields(): void
+    {
+        $_GET['orderby'] = 'last_checked_at';
+        $_GET['order'] = 'asc';
+
+        $original_wpdb = $GLOBALS['wpdb'];
+        $this->wpdbPrepareCalls = [];
+        $this->wpdbGetVarQueries = [];
+        $this->wpdbGetResultsQueries = [];
+
+        $test_case = $this;
+        $GLOBALS['wpdb'] = new class($test_case) {
+            public $prefix = 'wp_';
+            private $test_case;
+
+            public function __construct($test_case)
+            {
+                $this->test_case = $test_case;
+            }
+
+            public function prepare($query, ...$args)
+            {
+                $this->test_case->wpdbPrepareCalls[] = [$query, $args];
+
+                return $query;
+            }
+
+            public function get_var($query)
+            {
+                $this->test_case->wpdbGetVarQueries[] = $query;
+
+                return 5;
+            }
+
+            public function get_results($query, $output = ARRAY_A)
+            {
+                $this->test_case->wpdbGetResultsQueries[] = $query;
+
+                return $this->test_case->getWpdbResults();
+            }
+        };
+
+        ob_start();
+        blc_dashboard_images_page();
+        $output = (string) ob_get_clean();
+
+        $GLOBALS['wpdb'] = $original_wpdb;
+
+        unset($_GET['orderby'], $_GET['order']);
+
+        $this->assertStringContainsString('<input type="hidden" name="orderby" value="last_checked_at" />', $output);
+        $this->assertStringContainsString('<input type="hidden" name="order" value="asc" />', $output);
+    }
+
     /**
      * @return array<int, array<string, mixed>>
      */

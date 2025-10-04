@@ -32,6 +32,10 @@ class BLC_Images_List_Table extends WP_List_Table {
         ]);
     }
 
+    private $current_orderby = 'id';
+
+    private $current_order = 'desc';
+
     /**
      * Définit les colonnes du tableau.
      */
@@ -43,6 +47,22 @@ class BLC_Images_List_Table extends WP_List_Table {
             'post_title'    => __('Trouvé dans l\'article/page', 'liens-morts-detector-jlg'),
             'actions'       => __('Actions', 'liens-morts-detector-jlg')
         ];
+    }
+
+    protected function get_sortable_columns() {
+        return [
+            'http_status'     => ['http_status', false],
+            'last_checked_at' => ['last_checked_at', false],
+            'post_title'      => ['post_title', false],
+        ];
+    }
+
+    public function get_current_orderby() {
+        return $this->current_orderby;
+    }
+
+    public function get_current_order() {
+        return $this->current_order;
     }
 
     /**
@@ -219,7 +239,7 @@ class BLC_Images_List_Table extends WP_List_Table {
      * Prépare les données pour l'affichage : récupération et pagination.
      */
     public function prepare_items($data = null, $total_items_override = null) {
-        $this->_column_headers = [$this->get_columns(), [], []];
+        $this->_column_headers = [$this->get_columns(), [], $this->get_sortable_columns()];
         $per_page     = 20;
         $current_page = max(1, (int) $this->get_pagenum());
 
@@ -260,27 +280,67 @@ class BLC_Images_List_Table extends WP_List_Table {
 
         $offset = ($current_page - 1) * $per_page;
 
+        $requested_orderby = '';
+        if (isset($_GET['orderby'])) {
+            $requested_orderby = sanitize_key(wp_unslash($_GET['orderby']));
+        }
+
+        $requested_order = '';
+        if (isset($_GET['order'])) {
+            $requested_order = sanitize_key(wp_unslash($_GET['order']));
+        }
+
+        $allowed_orders = ['asc', 'desc'];
+        if (!in_array($requested_order, $allowed_orders, true)) {
+            $requested_order = 'desc';
+        }
+
+        $order_columns = [
+            'id'              => $table_name . '.id',
+            'http_status'     => $table_name . '.http_status',
+            'last_checked_at' => $table_name . '.last_checked_at',
+            'post_title'      => $table_name . '.post_title',
+        ];
+
+        if (!isset($order_columns[$requested_orderby])) {
+            $requested_orderby = 'id';
+        }
+
+        $this->current_orderby = $requested_orderby;
+        $this->current_order = $requested_order;
+
+        $direction_sql = ($requested_order === 'asc') ? 'ASC' : 'DESC';
+        $order_by_parts = [];
+        $order_by_parts[] = $order_columns[$requested_orderby] . ' ' . $direction_sql;
+
+        if ($requested_orderby !== 'id') {
+            $order_by_parts[] = $order_columns['id'] . ' DESC';
+        }
+
+        $order_by = implode(', ', $order_by_parts);
+
         if (count($image_row_types) === 1) {
             $data_query = $wpdb->prepare(
-                "SELECT url, anchor, post_id, post_title, http_status, last_checked_at
-                 FROM $table_name
-                 WHERE type = %s
-                 ORDER BY id DESC
-                 LIMIT %d OFFSET %d",
+                "SELECT url, anchor, post_id, post_title, http_status, last_checked_at"
+                . " FROM $table_name"
+                . " WHERE type = %s"
+                . " ORDER BY $order_by"
+                . " LIMIT %d OFFSET %d",
                 [reset($image_row_types), $per_page, $offset]
             );
         } else {
             $placeholders = implode(',', array_fill(0, count($image_row_types), '%s'));
             $args = array_merge($image_row_types, [$per_page, $offset]);
             $data_query = $wpdb->prepare(
-                "SELECT url, anchor, post_id, post_title, http_status, last_checked_at
-                 FROM $table_name
-                 WHERE type IN ($placeholders)
-                 ORDER BY id DESC
-                 LIMIT %d OFFSET %d",
+                "SELECT url, anchor, post_id, post_title, http_status, last_checked_at"
+                . " FROM $table_name"
+                . " WHERE type IN ($placeholders)"
+                . " ORDER BY $order_by"
+                . " LIMIT %d OFFSET %d",
                 $args
             );
         }
+
         $items = $wpdb->get_results($data_query, ARRAY_A);
 
         $this->set_pagination_args(['total_items' => $total_items, 'per_page' => $per_page]);

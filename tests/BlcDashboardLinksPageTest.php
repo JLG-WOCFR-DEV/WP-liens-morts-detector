@@ -457,6 +457,21 @@ class BlcDashboardLinksPageTest extends TestCase
         $this->assertStringNotContainsString('<input type="hidden" name="page"', $output);
     }
 
+    public function test_links_table_form_includes_hidden_sort_fields(): void
+    {
+        $_GET['orderby'] = 'post_title';
+        $_GET['order'] = 'asc';
+
+        ob_start();
+        blc_dashboard_links_page();
+        $output = (string) ob_get_clean();
+
+        unset($_GET['orderby'], $_GET['order']);
+
+        $this->assertStringContainsString('<input type="hidden" name="orderby" value="post_title" />', $output);
+        $this->assertStringContainsString('<input type="hidden" name="order" value="asc" />', $output);
+    }
+
     public function test_prepare_items_filters_by_post_type_joins_posts_table(): void
     {
         $_GET['post_type'] = 'page';
@@ -485,6 +500,39 @@ class BlcDashboardLinksPageTest extends TestCase
         foreach ($matching_calls as $call) {
             $this->assertContains('page', $call['params']);
         }
+    }
+
+    public function test_prepare_items_respects_ordering_parameters(): void
+    {
+        $_GET['orderby'] = 'http_status';
+        $_GET['order'] = 'asc';
+
+        $list_table = new \BLC_Links_List_Table();
+        $list_table->prepare_items();
+
+        unset($_GET['orderby'], $_GET['order']);
+
+        $this->assertNotNull($GLOBALS['wpdb']->last_get_results_query);
+        $this->assertStringContainsString('ORDER BY wp_blc_broken_links.http_status ASC', $GLOBALS['wpdb']->last_get_results_query);
+        $this->assertStringContainsString('wp_blc_broken_links.id DESC', $GLOBALS['wpdb']->last_get_results_query);
+        $this->assertSame('http_status', $list_table->get_current_orderby());
+        $this->assertSame('asc', $list_table->get_current_order());
+    }
+
+    public function test_prepare_items_defaults_to_id_when_orderby_invalid(): void
+    {
+        $_GET['orderby'] = 'not_a_column';
+        $_GET['order'] = 'up';
+
+        $list_table = new \BLC_Links_List_Table();
+        $list_table->prepare_items();
+
+        unset($_GET['orderby'], $_GET['order']);
+
+        $this->assertNotNull($GLOBALS['wpdb']->last_get_results_query);
+        $this->assertStringContainsString('ORDER BY wp_blc_broken_links.id DESC', $GLOBALS['wpdb']->last_get_results_query);
+        $this->assertSame('id', $list_table->get_current_orderby());
+        $this->assertSame('desc', $list_table->get_current_order());
     }
 
     /**

@@ -809,7 +809,7 @@ function blc_dashboard_links_page() {
                 }
 
                 foreach ($current_get_params as $key => $value) {
-                    if (in_array($key, ['s', 'post_type', 'paged'], true)) {
+                    if (in_array($key, ['s', 'post_type', 'paged', 'orderby', 'order'], true)) {
                         continue;
                     }
 
@@ -830,6 +830,22 @@ function blc_dashboard_links_page() {
                     printf(
                         '<input type="hidden" name="page" value="%s" />',
                         esc_attr((string) $_REQUEST['page'])
+                    );
+                }
+
+                $current_orderby = $list_table->get_current_orderby();
+                if (is_string($current_orderby) && $current_orderby !== '') {
+                    printf(
+                        '<input type="hidden" name="orderby" value="%s" />',
+                        esc_attr($current_orderby)
+                    );
+                }
+
+                $current_order = $list_table->get_current_order();
+                if (is_string($current_order) && $current_order !== '') {
+                    printf(
+                        '<input type="hidden" name="order" value="%s" />',
+                        esc_attr($current_order)
                     );
                 }
 
@@ -1154,7 +1170,25 @@ function blc_dashboard_images_page() {
             <p><?php esc_html_e('✅ Aucune image cassée trouvée. Bravo !', 'liens-morts-detector-jlg'); ?></p>
         <?php else : ?>
             <form method="post">
-                <?php $list_table->display(); ?>
+                <?php
+                $images_orderby = $list_table->get_current_orderby();
+                if (is_string($images_orderby) && $images_orderby !== '') {
+                    printf(
+                        '<input type="hidden" name="orderby" value="%s" />',
+                        esc_attr($images_orderby)
+                    );
+                }
+
+                $images_order = $list_table->get_current_order();
+                if (is_string($images_order) && $images_order !== '') {
+                    printf(
+                        '<input type="hidden" name="order" value="%s" />',
+                        esc_attr($images_order)
+                    );
+                }
+
+                $list_table->display();
+                ?>
             </form>
         <?php endif; ?>
     </div>
