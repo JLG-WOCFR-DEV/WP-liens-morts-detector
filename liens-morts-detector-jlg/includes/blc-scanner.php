@@ -571,7 +571,45 @@ if (!class_exists('ImageScanQueue')) {
                 'message'       => __('Analyse des images en cours…', 'liens-morts-detector-jlg'),
             ]);
 
-            $batch_size = 20;
+            $batch_size_limits = function_exists('blc_get_batch_size_constraints')
+                ? blc_get_batch_size_constraints()
+                : array('min' => 5, 'max' => 100, 'default' => 20);
+
+            $batch_min = isset($batch_size_limits['min']) ? (int) $batch_size_limits['min'] : 5;
+            $batch_max = isset($batch_size_limits['max']) ? (int) $batch_size_limits['max'] : 100;
+            $batch_default = isset($batch_size_limits['default']) ? (int) $batch_size_limits['default'] : 20;
+
+            if ($batch_min <= 0) {
+                $batch_min = 1;
+            }
+
+            if ($batch_max < $batch_min) {
+                $batch_max = $batch_min;
+            }
+
+            $stored_batch_size = get_option('blc_batch_size', $batch_default);
+            $batch_size = is_scalar($stored_batch_size) ? (int) $stored_batch_size : $batch_default;
+
+            if ($batch_size < $batch_min) {
+                $batch_size = $batch_min;
+            } elseif ($batch_size > $batch_max) {
+                $batch_size = $batch_max;
+            }
+
+            $batch_size = (int) apply_filters(
+                'blc_batch_size',
+                $batch_size,
+                array(
+                    'context'      => 'image',
+                    'batch'        => (int) $batch,
+                    'is_full_scan' => true,
+                    'constraints'  => $batch_size_limits,
+                )
+            );
+
+            if ($batch_size < 1) {
+                $batch_size = $batch_min;
+            }
             $public_post_types = get_post_types(['public' => true], 'names');
             if (!is_array($public_post_types)) {
                 $public_post_types = [];
