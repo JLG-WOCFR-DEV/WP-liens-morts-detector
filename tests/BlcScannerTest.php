@@ -189,6 +189,9 @@ class BlcScannerTest extends TestCase
     /** @var array<string, bool> */
     private array $filesystemEntries = [];
 
+    /** @var array<int, array<string, array<int, string>>> */
+    private array $parallelBatches = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -233,6 +236,7 @@ class BlcScannerTest extends TestCase
         $this->transients = [];
         $this->sentEmails = [];
         $this->serverLoad = [0.5, 0.4, 0.3];
+        $this->parallelBatches = [];
         $GLOBALS['__translation_calls'] = [];
         $this->translationCalls = &$GLOBALS['__translation_calls'];
         $this->currentHour = '00';
@@ -263,7 +267,13 @@ class BlcScannerTest extends TestCase
             unset($this->transients[$key]);
             return true;
         });
-        Functions\when('apply_filters')->alias(fn(string $hook, $value, ...$args) => $value);
+        Functions\when('apply_filters')->alias(function (string $hook, $value, ...$args) {
+            if ($hook === 'blc_parallel_requests_dispatcher') {
+                return [$this, 'dispatchParallelRequests'];
+            }
+
+            return $value;
+        });
         Functions\when('home_url')->alias(function ($path = '', $scheme = null) {
             $base = 'https://example.com';
             if ($path !== '') {
@@ -659,6 +669,63 @@ class BlcScannerTest extends TestCase
     {
         $key = $method . ' ' . $url;
         $this->httpResponses[$key] = $response;
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $requests
+     * @return array<string, mixed>
+     */
+    public function dispatchParallelRequests(array $requests): array
+    {
+        $batchRecord = [
+            'methods' => [],
+            'urls'    => [],
+        ];
+
+        foreach ($requests as $request) {
+            $batchRecord['methods'][] = strtoupper((string) ($request['type'] ?? 'GET'));
+            $batchRecord['urls'][]    = (string) ($request['url'] ?? '');
+        }
+
+        $this->parallelBatches[] = $batchRecord;
+
+        $responses = [];
+        foreach ($requests as $key => $request) {
+            $method = strtoupper((string) ($request['type'] ?? 'GET'));
+            $url    = (string) ($request['url'] ?? '');
+            $args   = $this->convertParallelRequestArgs($request);
+            $responses[$key] = $this->mockHttpRequest($method, $url, $args);
+        }
+
+        return $responses;
+    }
+
+    /**
+     * @param array<string, mixed> $request
+     * @return array<string, mixed>
+     */
+    private function convertParallelRequestArgs(array $request): array
+    {
+        $args = [];
+        $options = $request['options'] ?? [];
+        if (isset($options['timeout'])) {
+            $args['timeout'] = (float) $options['timeout'];
+        }
+        if (isset($options['max_bytes'])) {
+            $args['limit_response_size'] = (int) $options['max_bytes'];
+        }
+        if (isset($options['redirects'])) {
+            $args['redirection'] = (int) $options['redirects'];
+        }
+
+        $headers = $request['headers'] ?? [];
+        if (isset($headers['user-agent'])) {
+            $args['user-agent'] = (string) $headers['user-agent'];
+        } else {
+            $args['user-agent'] = \blc_get_http_user_agent();
+        }
+
+        return $args;
     }
 
     private function createWpdbStub(): object
@@ -1777,6 +1844,37 @@ class BlcScannerTest extends TestCase
         $this->assertCount(0, $wpdb->inserted, 'Successful GET fallback should prevent false positives.');
     }
 
+    public function test_blc_perform_check_groups_parallel_requests_by_configured_limit(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_concurrent_requests'] = 2;
+
+        $post = (object) [
+            'ID' => 101,
+            'post_title' => 'Parallel Batch',
+            'post_content' => '<a href="http://parallel.test/first">One</a><a href="http://parallel.test/second">Two</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        $this->setHttpResponse('HEAD', 'http://parallel.test/first', ['response' => ['code' => 404]]);
+        $this->setHttpResponse('HEAD', 'http://parallel.test/second', ['response' => ['code' => 404]]);
+
+        blc_perform_check(0, false);
+
+        $this->assertNotEmpty($this->parallelBatches, 'At least one parallel batch should be recorded.');
+        $firstBatch = $this->parallelBatches[0] ?? ['methods' => [], 'urls' => []];
+        $this->assertSame(['HEAD', 'HEAD'], $firstBatch['methods'], 'HEAD requests should be grouped together in the first batch.');
+        $this->assertContains('http://parallel.test/first', $firstBatch['urls']);
+        $this->assertContains('http://parallel.test/second', $firstBatch['urls']);
+        $this->assertCount(2, array_filter($this->httpRequests, static fn($request) => $request['method'] === 'HEAD'), 'Two HEAD requests should be issued for the parallel batch.');
+    }
+
     public function test_blc_perform_check_fast_mode_handles_head_method_not_allowed(): void
     {
         global $wpdb;
@@ -2277,6 +2375,10 @@ class BlcScannerTest extends TestCase
 
         $this->serverLoad = [3.5, 2.0, 1.0];
         Functions\when('apply_filters')->alias(function (string $hook, $value, ...$args) {
+            if ($hook === 'blc_parallel_requests_dispatcher') {
+                return [$this, 'dispatchParallelRequests'];
+            }
+
             if ($hook === 'blc_max_load_threshold') {
                 return 4.0;
             }
@@ -2297,6 +2399,10 @@ class BlcScannerTest extends TestCase
 
         $this->serverLoad = [3.5, 2.0, 1.0];
         Functions\when('apply_filters')->alias(function (string $hook, $value, ...$args) {
+            if ($hook === 'blc_parallel_requests_dispatcher') {
+                return [$this, 'dispatchParallelRequests'];
+            }
+
             if ($hook === 'blc_load_retry_delay') {
                 return 600;
             }
@@ -3335,6 +3441,10 @@ class BlcScannerTest extends TestCase
         $this->options['blc_image_scan_lock_token'] = $stale_token;
 
         Functions\when('apply_filters')->alias(function (string $hook, $value, ...$args) {
+            if ($hook === 'blc_parallel_requests_dispatcher') {
+                return [$this, 'dispatchParallelRequests'];
+            }
+
             if ($hook === 'blc_image_scan_lock_timeout') {
                 return 0;
             }

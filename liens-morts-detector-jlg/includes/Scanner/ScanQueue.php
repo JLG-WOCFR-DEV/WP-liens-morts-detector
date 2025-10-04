@@ -2,6 +2,8 @@
 
 namespace JLG\BrokenLinks\Scanner;
 
+use Requests_Exception;
+use Requests_Response;
 use WP_Error;
 use WP_Query;
 
@@ -100,6 +102,46 @@ class ScanQueue {
             );
             $scan_method     = get_option('blc_scan_method', 'precise');
             $excluded_domains_raw = get_option('blc_excluded_domains', '');
+            $max_concurrent_requests_option = get_option('blc_concurrent_requests', 3);
+            if (!is_int($max_concurrent_requests_option)) {
+                $max_concurrent_requests_option = (int) $max_concurrent_requests_option;
+            }
+            if ($max_concurrent_requests_option < 1) {
+                $max_concurrent_requests_option = 1;
+            }
+
+            $max_concurrent_requests = apply_filters(
+                'blc_concurrent_requests',
+                $max_concurrent_requests_option,
+                $batch,
+                $is_full_scan
+            );
+            if (!is_int($max_concurrent_requests)) {
+                $max_concurrent_requests = (int) $max_concurrent_requests;
+            }
+            if ($max_concurrent_requests < 1) {
+                $max_concurrent_requests = 1;
+            }
+
+            $parallel_requests_dispatcher = apply_filters('blc_parallel_requests_dispatcher', null);
+            if (!is_callable($parallel_requests_dispatcher)) {
+                $parallel_requests_dispatcher = static function (array $requests) {
+                    if (empty($requests)) {
+                        return [];
+                    }
+
+                    if (!class_exists('Requests')) {
+                        if (defined('ABSPATH') && defined('WPINC')) {
+                            $requests_class_path = trailingslashit(ABSPATH) . WPINC . '/class-requests.php';
+                            if (file_exists($requests_class_path)) {
+                                require_once $requests_class_path;
+                            }
+                        }
+                    }
+
+                    return \Requests::request_multiple($requests);
+                };
+            }
             $last_remote_request_completed_at = 0.0;
 
             $wait_for_remote_slot = static function () use (&$last_remote_request_completed_at, $link_delay_ms) {
@@ -931,6 +973,259 @@ class ScanQueue {
 
             $temporary_retry_scheduled = false;
 
+            $remote_request_queue = new class (
+                $remote_request_client,
+                $max_concurrent_requests,
+                $wait_for_remote_slot,
+                $mark_remote_request_complete,
+                $parallel_requests_dispatcher
+            ) {
+                /** @var RemoteRequestClient */
+                private $client;
+
+                /** @var int */
+                private $concurrency;
+
+                /** @var callable */
+                private $waitCallback;
+
+                /** @var callable */
+                private $completeCallback;
+
+                /** @var callable */
+                private $dispatcher;
+
+                /** @var array<int, array<string, mixed>> */
+                private $pending = [];
+
+                public function __construct(
+                    RemoteRequestClient $client,
+                    int $concurrency,
+                    callable $waitCallback,
+                    callable $completeCallback,
+                    callable $dispatcher
+                ) {
+                    $this->client = $client;
+                    $this->concurrency = max(1, $concurrency);
+                    $this->waitCallback = $waitCallback;
+                    $this->completeCallback = $completeCallback;
+                    $this->dispatcher = $dispatcher;
+                }
+
+                public function enqueue(
+                    string $url,
+                    array $headArgs,
+                    array $getArgs,
+                    string $scanMethod,
+                    array $temporaryStatuses,
+                    callable $callback
+                ): void {
+                    $this->pending[] = [
+                        'url'                => $url,
+                        'head_args'          => $headArgs,
+                        'get_args'           => $getArgs,
+                        'scan_method'        => $scanMethod,
+                        'temporary_statuses' => $temporaryStatuses,
+                        'callback'           => $callback,
+                    ];
+
+                    $this->dispatch(false);
+                }
+
+                public function drain(): void
+                {
+                    $this->dispatch(true);
+                }
+
+                private function dispatch(bool $force): void
+                {
+                    while (!empty($this->pending) && ($force || count($this->pending) >= $this->concurrency)) {
+                        $batch = array_splice($this->pending, 0, min($this->concurrency, count($this->pending)));
+                        $this->executeBatch($batch);
+                    }
+                }
+
+                /**
+                 * @param array<int, array<string, mixed>> $batch
+                 */
+                private function executeBatch(array $batch): void
+                {
+                    if (empty($batch)) {
+                        return;
+                    }
+
+                    $headRequests = [];
+                    foreach ($batch as $index => $job) {
+                        $requestKey = 'head-' . $index;
+                        $headRequests[$requestKey] = $this->buildRequest($job['url'], 'HEAD', $job['head_args']);
+                    }
+
+                    $headResponses = $this->sendRequests($headRequests);
+
+                    $getJobs = [];
+
+                    foreach ($batch as $index => $job) {
+                        $requestKey = 'head-' . $index;
+                        $headResponse = $headResponses[$requestKey] ?? new WP_Error('blc_missing_head_response', 'Missing HEAD response.');
+
+                        $needsGetFallback = false;
+                        $fallbackDueToTemporaryStatus = false;
+                        $headRequestDisallowed = false;
+
+                        if ($job['scan_method'] === 'precise') {
+                            if (is_wp_error($headResponse)) {
+                                $needsGetFallback = true;
+                            } else {
+                                $headStatus = (int) $this->client->responseCode($headResponse);
+                                if (in_array($headStatus, $job['temporary_statuses'], true)) {
+                                    $needsGetFallback = true;
+                                    $fallbackDueToTemporaryStatus = true;
+                                } elseif (in_array($headStatus, [403, 405, 501], true)) {
+                                    $needsGetFallback = true;
+                                }
+                            }
+                        } else {
+                            if (!is_wp_error($headResponse)) {
+                                $headStatus = (int) $this->client->responseCode($headResponse);
+                                if (in_array($headStatus, [403, 405, 501], true)) {
+                                    $needsGetFallback = true;
+                                    $headRequestDisallowed = true;
+                                }
+                            }
+                        }
+
+                        if ($needsGetFallback) {
+                            $getJobs[] = [
+                                'index'                      => $index,
+                                'job'                        => $job,
+                                'fallback_due_to_temporary'  => $fallbackDueToTemporaryStatus,
+                                'head_request_disallowed'    => $headRequestDisallowed,
+                            ];
+                        } else {
+                            $this->triggerCallback($job, $headResponse, $headRequestDisallowed, $fallbackDueToTemporaryStatus);
+                        }
+                    }
+
+                    if (empty($getJobs)) {
+                        return;
+                    }
+
+                    $getRequests = [];
+                    foreach ($getJobs as $entry) {
+                        $requestKey = 'get-' . $entry['index'];
+                        $getRequests[$requestKey] = $this->buildRequest($entry['job']['url'], 'GET', $entry['job']['get_args']);
+                    }
+
+                    $getResponses = $this->sendRequests($getRequests);
+
+                    foreach ($getJobs as $entry) {
+                        $requestKey = 'get-' . $entry['index'];
+                        $response = $getResponses[$requestKey] ?? new WP_Error('blc_missing_get_response', 'Missing GET response.');
+                        $this->triggerCallback(
+                            $entry['job'],
+                            $response,
+                            $entry['head_request_disallowed'],
+                            $entry['fallback_due_to_temporary']
+                        );
+                    }
+                }
+
+                private function triggerCallback(array $job, $response, bool $headRequestDisallowed, bool $fallbackDueToTemporaryStatus): void
+                {
+                    $callback = $job['callback'];
+                    $callback($response, $headRequestDisallowed, $fallbackDueToTemporaryStatus);
+                }
+
+                private function buildRequest(string $url, string $method, array $args): array
+                {
+                    $headers = [];
+                    if (isset($args['user-agent'])) {
+                        $headers['user-agent'] = (string) $args['user-agent'];
+                    }
+
+                    $options = [];
+                    if (isset($args['timeout'])) {
+                        $options['timeout'] = (float) $args['timeout'];
+                    }
+                    if (isset($args['redirection'])) {
+                        $options['redirects'] = (int) $args['redirection'];
+                    }
+                    if (isset($args['limit_response_size'])) {
+                        $options['max_bytes'] = (int) $args['limit_response_size'];
+                    }
+
+                    return [
+                        'url'     => $url,
+                        'type'    => $method,
+                        'headers' => $headers,
+                        'data'    => $args['body'] ?? null,
+                        'options' => $options,
+                    ];
+                }
+
+                /**
+                 * @param array<string, array<string, mixed>> $requests
+                 * @return array<string, mixed>
+                 */
+                private function sendRequests(array $requests): array
+                {
+                    if (empty($requests)) {
+                        return [];
+                    }
+
+                    $wait = $this->waitCallback;
+                    foreach ($requests as $_) {
+                        $wait();
+                    }
+
+                    $dispatcher = $this->dispatcher;
+                    $responses = $dispatcher($requests);
+
+                    $normalized = [];
+                    foreach ($requests as $key => $_request) {
+                        $raw = $responses[$key] ?? null;
+                        $normalized[$key] = $this->normalizeResponse($raw);
+                        $complete = $this->completeCallback;
+                        $complete();
+                    }
+
+                    return $normalized;
+                }
+
+                private function normalizeResponse($raw)
+                {
+                    if ($raw instanceof WP_Error) {
+                        return $raw;
+                    }
+
+                    if ($raw instanceof Requests_Response) {
+                        return [
+                            'headers'  => $raw->headers->getAll(),
+                            'body'     => $raw->body,
+                            'response' => [
+                                'code'    => $raw->status_code,
+                                'message' => $raw->status_text,
+                            ],
+                        ];
+                    }
+
+                    if ($raw instanceof Requests_Exception) {
+                        $code = method_exists($raw, 'getCode') ? (int) $raw->getCode() : 0;
+                        return new WP_Error('http_request_failed', $raw->getMessage(), ['status' => $code]);
+                    }
+
+                    if (is_array($raw)) {
+                        return $raw;
+                    }
+
+                    if ($raw === null) {
+                        return new WP_Error('http_request_failed', 'Empty HTTP response.');
+                    }
+
+                    return $raw;
+                }
+            };
+
             $batch_exception = null;
             $batch_wp_error = null;
 
@@ -980,8 +1275,6 @@ class ScanQueue {
                 &$temporary_retry_scheduled,
                 $temporary_http_statuses,
                 $batch_delay_s,
-                $wait_for_remote_slot,
-                $mark_remote_request_complete,
                 $head_request_timeout,
                 $get_request_timeout,
                 $scan_method,
@@ -992,7 +1285,8 @@ class ScanQueue {
                 $batch,
                 $is_full_scan,
                 $bypass_rest_window,
-                $remote_request_client
+                $remote_request_client,
+                $remote_request_queue
             ) {
                 return function (string $original_url, string $anchor_text, string $context_html, string $context_excerpt) use (
                     &$link_occurrence_counters,
@@ -1015,8 +1309,6 @@ class ScanQueue {
                     &$temporary_retry_scheduled,
                     $temporary_http_statuses,
                     $batch_delay_s,
-                    $wait_for_remote_slot,
-                    $mark_remote_request_complete,
                     $head_request_timeout,
                     $get_request_timeout,
                     $scan_method,
@@ -1027,7 +1319,8 @@ class ScanQueue {
                     $batch,
                     $is_full_scan,
                     $bypass_rest_window,
-                    $remote_request_client
+                    $remote_request_client,
+                    $remote_request_queue
                 ) {
                     if (!isset($link_occurrence_counters[$source_post_id])) {
                         $link_occurrence_counters[$source_post_id] = [];
@@ -1258,8 +1551,108 @@ class ScanQueue {
                         }
                     }
 
-                    $fallback_due_to_temporary_status = false;
-                    $head_request_disallowed = false;
+                    $finalize_remote_outcome = function () use (
+                        &$should_retry_later,
+                        &$should_insert_broken_link,
+                        &$response_code,
+                        &$temporary_retry_scheduled,
+                        $batch_delay_s,
+                        $normalized_url,
+                        $batch,
+                        $is_full_scan,
+                        $bypass_rest_window,
+                        $wpdb,
+                        $table_name,
+                        $url_for_storage,
+                        $anchor_for_storage,
+                        $source_post_id,
+                        $storage_title,
+                        $occurrence_index,
+                        $metadata,
+                        $checked_at_gmt,
+                        &$detected_target_for_storage,
+                        $context_html_value,
+                        $context_excerpt_value,
+                        $register_pending_link_insert,
+                        $row_bytes,
+                        &$scan_cache_data,
+                        &$scan_cache_dirty,
+                        $cache_entry_key,
+                        $should_use_cache
+                    ) {
+                        if ($should_retry_later) {
+                            if (!$temporary_retry_scheduled) {
+                                $retry_delay = (int) apply_filters(
+                                    'blc_temporary_retry_delay',
+                                    max(60, $batch_delay_s),
+                                    $normalized_url,
+                                    $response_code
+                                );
+                                if ($retry_delay < 0) {
+                                    $retry_delay = 0;
+                                }
+
+                                $scheduled = wp_schedule_single_event(
+                                    time() + $retry_delay,
+                                    'blc_check_batch',
+                                    array($batch, $is_full_scan, $bypass_rest_window)
+                                );
+                                if (false === $scheduled) {
+                                    error_log(sprintf('BLC: Failed to schedule temporary retry for link batch #%d.', $batch));
+                                    do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'temporary_retry');
+                                } else {
+                                    $temporary_retry_scheduled = true;
+                                }
+                            }
+                        } elseif ($should_insert_broken_link) {
+                            $inserted = $wpdb->insert(
+                                $table_name,
+                                [
+                                    'url'             => $url_for_storage,
+                                    'anchor'          => $anchor_for_storage,
+                                    'post_id'         => $source_post_id,
+                                    'post_title'      => $storage_title,
+                                    'type'            => 'link',
+                                    'occurrence_index'=> $occurrence_index,
+                                    'url_host'        => $metadata['host'],
+                                    'is_internal'     => $metadata['is_internal'],
+                                    'http_status'     => ($response_code !== null) ? (int) $response_code : null,
+                                    'last_checked_at' => $checked_at_gmt,
+                                    'redirect_target_url' => $detected_target_for_storage,
+                                    'context_html'   => $context_html_value,
+                                    'context_excerpt'=> $context_excerpt_value,
+                                ],
+                                ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d', '%d', '%s', '%s', '%s']
+                            );
+                            if ($inserted) {
+                                $register_pending_link_insert($source_post_id, $row_bytes);
+                                blc_adjust_dataset_storage_footprint('link', $row_bytes);
+                            }
+                        }
+
+                        if (!$should_use_cache && $cache_entry_key !== '') {
+                            $cache_timestamp = time();
+                            $cache_action = 'ok';
+                            if ($should_retry_later) {
+                                $cache_action = 'retry';
+                            } elseif ($should_insert_broken_link) {
+                                $cache_action = 'broken';
+                            }
+
+                            $new_cache_entry = [
+                                'action'     => $cache_action,
+                                'checked_at' => $cache_timestamp,
+                            ];
+
+                            if ($response_code !== null) {
+                                $new_cache_entry['response_code'] = $response_code;
+                            }
+
+                            $scan_cache_data[$cache_entry_key] = $new_cache_entry;
+                            $scan_cache_dirty = true;
+                        }
+                    };
+
                     if (!$should_use_cache && !$skip_remote_check) {
                         $head_request_args = [
                             'user-agent'          => blc_get_http_user_agent(),
@@ -1275,195 +1668,101 @@ class ScanQueue {
                             'limit_response_size' => 131072,
                         ];
 
-                        if ($scan_method === 'precise') {
-                            $response = null;
-                            $wait_for_remote_slot();
-                            $head_response = $remote_request_client->head($normalized_url, $head_request_args);
-                            $mark_remote_request_complete();
-                            $needs_get_fallback = false;
-
-                            if (is_wp_error($head_response)) {
-                                $needs_get_fallback = true;
-                            } else {
-                                $head_status = (int) $remote_request_client->responseCode($head_response);
-                                if (in_array($head_status, $temporary_http_statuses, true)) {
-                                    $needs_get_fallback = true;
-                                    $fallback_due_to_temporary_status = true;
-                                } elseif ($head_status === 403) {
-                                    $needs_get_fallback = true;
-                                } elseif ($head_status === 405 || $head_status === 501) {
-                                    $needs_get_fallback = true;
-                                } else {
-                                    $response = $head_response;
-                                }
-                            }
-
-                            if ($needs_get_fallback) {
-                                $wait_for_remote_slot();
-                                $response = $remote_request_client->get($normalized_url, $get_request_args);
-                                $mark_remote_request_complete();
-                            }
-                        } else {
-                            $wait_for_remote_slot();
-                            $response = $remote_request_client->head($normalized_url, $head_request_args);
-                            $mark_remote_request_complete();
-
-                            if (!is_wp_error($response)) {
-                                $head_status = (int) $remote_request_client->responseCode($response);
-                                if (in_array($head_status, [403, 405, 501], true)) {
-                                    $head_request_disallowed = true;
-                                    $wait_for_remote_slot();
-                                    $response = $remote_request_client->get($normalized_url, $get_request_args);
-                                    $mark_remote_request_complete();
-                                }
-                            }
-                        }
-
-                        if (!is_wp_error($response)) {
-                            $resolved_target_url = blc_determine_response_target_url($response, $normalized_url);
-                            if ($resolved_target_url !== '') {
-                                $detected_target_for_storage = blc_prepare_url_for_storage($resolved_target_url);
-                            }
-                        }
-
-                        if (is_wp_error($response)) {
-                            if ($head_request_disallowed) {
-                                $should_retry_later = true;
-                            } elseif ($fallback_due_to_temporary_status) {
-                                $should_retry_later = true;
-                            } else {
-                                $temporary_wp_error_codes = apply_filters(
-                                    'blc_temporary_wp_error_codes',
-                                    ['request_timed_out', 'connect_timeout', 'could_not_resolve_host', 'dns_unresolved_hostname', 'timeout']
-                                );
-                                if (!is_array($temporary_wp_error_codes)) {
-                                    $temporary_wp_error_codes = [];
-                                }
-                                $temporary_wp_error_codes = array_values(array_unique(array_filter(array_map('strval', $temporary_wp_error_codes))));
-
-                                $error_code = method_exists($response, 'get_error_code') ? (string) $response->get_error_code() : '';
-                                if ($error_code !== '' && in_array($error_code, $temporary_wp_error_codes, true)) {
-                                    $should_retry_later = true;
-                                } else {
-                                    $temporary_wp_error_indicators = apply_filters(
-                                        'blc_temporary_wp_error_indicators',
-                                        ['timed out', 'timeout', 'temporarily unavailable', 'temporary failure', 'could not resolve host']
-                                    );
-                                    if (!is_array($temporary_wp_error_indicators)) {
-                                        $temporary_wp_error_indicators = [];
+                        $remote_request_queue->enqueue(
+                            $normalized_url,
+                            $head_request_args,
+                            $get_request_args,
+                            $scan_method,
+                            $temporary_http_statuses,
+                            function ($response, bool $head_request_disallowed, bool $fallback_due_to_temporary_status) use (
+                                &$should_retry_later,
+                                &$should_insert_broken_link,
+                                &$response_code,
+                                &$detected_target_for_storage,
+                                $remote_request_client,
+                                $temporary_http_statuses,
+                                $normalized_url,
+                                $finalize_remote_outcome
+                            ) {
+                                if (!is_wp_error($response)) {
+                                    $resolved_target_url = blc_determine_response_target_url($response, $normalized_url);
+                                    if ($resolved_target_url !== '') {
+                                        $detected_target_for_storage = blc_prepare_url_for_storage($resolved_target_url);
                                     }
+                                }
 
-                                    $error_message = method_exists($response, 'get_error_message') ? (string) $response->get_error_message() : '';
-                                    foreach ($temporary_wp_error_indicators as $indicator) {
-                                        $indicator = (string) $indicator;
-                                        if ($indicator === '') {
-                                            continue;
+                                if (is_wp_error($response)) {
+                                    if ($head_request_disallowed || $fallback_due_to_temporary_status) {
+                                        $should_retry_later = true;
+                                    } else {
+                                        $temporary_wp_error_codes = apply_filters(
+                                            'blc_temporary_wp_error_codes',
+                                            ['request_timed_out', 'connect_timeout', 'could_not_resolve_host', 'dns_unresolved_hostname', 'timeout']
+                                        );
+                                        if (!is_array($temporary_wp_error_codes)) {
+                                            $temporary_wp_error_codes = [];
                                         }
+                                        $temporary_wp_error_codes = array_values(array_unique(array_filter(array_map('strval', $temporary_wp_error_codes))));
 
-                                        if ($error_message !== '' && stripos($error_message, $indicator) !== false) {
+                                        $error_code = method_exists($response, 'get_error_code') ? (string) $response->get_error_code() : '';
+                                        if ($error_code !== '' && in_array($error_code, $temporary_wp_error_codes, true)) {
                                             $should_retry_later = true;
-                                            break;
-                                        }
-                                    }
+                                        } else {
+                                            $temporary_wp_error_indicators = apply_filters(
+                                                'blc_temporary_wp_error_indicators',
+                                                ['timed out', 'timeout', 'temporarily unavailable', 'temporary failure', 'could not resolve host']
+                                            );
+                                            if (!is_array($temporary_wp_error_indicators)) {
+                                                $temporary_wp_error_indicators = [];
+                                            }
 
-                                    if (!$should_retry_later && method_exists($response, 'get_error_data')) {
-                                        $error_data = $response->get_error_data();
-                                        if (is_array($error_data) && isset($error_data['status'])) {
-                                            $maybe_status = (int) $error_data['status'];
-                                            if (in_array($maybe_status, $temporary_http_statuses, true)) {
-                                                $should_retry_later = true;
+                                            $error_message = method_exists($response, 'get_error_message') ? (string) $response->get_error_message() : '';
+                                            foreach ($temporary_wp_error_indicators as $indicator) {
+                                                $indicator = (string) $indicator;
+                                                if ($indicator === '') {
+                                                    continue;
+                                                }
+
+                                                if ($error_message !== '' && stripos($error_message, $indicator) !== false) {
+                                                    $should_retry_later = true;
+                                                    break;
+                                                }
+                                            }
+
+                                            if (!$should_retry_later && method_exists($response, 'get_error_data')) {
+                                                $error_data = $response->get_error_data();
+                                                if (is_array($error_data) && isset($error_data['status'])) {
+                                                    $maybe_status = (int) $error_data['status'];
+                                                    if (in_array($maybe_status, $temporary_http_statuses, true)) {
+                                                        $should_retry_later = true;
+                                                    }
+                                                }
                                             }
                                         }
+
+                                        if (!$should_retry_later) {
+                                            $should_insert_broken_link = true;
+                                        }
+                                    }
+                                } else {
+                                    $response_code = (int) $remote_request_client->responseCode($response);
+                                    if ($response_code >= 400) {
+                                        if (in_array($response_code, $temporary_http_statuses, true)) {
+                                            $should_retry_later = true;
+                                        } else {
+                                            $should_insert_broken_link = true;
+                                        }
                                     }
                                 }
 
-                                if (!$should_retry_later) {
-                                    $should_insert_broken_link = true;
-                                }
+                                $finalize_remote_outcome();
                             }
-                        } else {
-                            $response_code = (int) $remote_request_client->responseCode($response);
-                            if ($response_code >= 400) {
-                                if (in_array($response_code, $temporary_http_statuses, true)) {
-                                    $should_retry_later = true;
-                                } else {
-                                    $should_insert_broken_link = true;
-                                }
-                            }
-                        }
-                    }
-
-                    if ($should_retry_later) {
-                        if (!$temporary_retry_scheduled) {
-                            $retry_delay = (int) apply_filters(
-                                'blc_temporary_retry_delay',
-                                max(60, $batch_delay_s),
-                                $normalized_url,
-                                $response_code
-                            );
-                            if ($retry_delay < 0) {
-                                $retry_delay = 0;
-                            }
-
-                            $scheduled = wp_schedule_single_event(
-                                time() + $retry_delay,
-                                'blc_check_batch',
-                                array($batch, $is_full_scan, $bypass_rest_window)
-                            );
-                            if (false === $scheduled) {
-                                error_log(sprintf('BLC: Failed to schedule temporary retry for link batch #%d.', $batch));
-                                do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'temporary_retry');
-                            } else {
-                                $temporary_retry_scheduled = true;
-                            }
-                        }
-                    } elseif ($should_insert_broken_link) {
-                        $inserted = $wpdb->insert(
-                            $table_name,
-                            [
-                                'url'             => $url_for_storage,
-                                'anchor'          => $anchor_for_storage,
-                                'post_id'         => $source_post_id,
-                                'post_title'      => $storage_title,
-                                'type'            => 'link',
-                                'occurrence_index'=> $occurrence_index,
-                                'url_host'        => $metadata['host'],
-                                'is_internal'     => $metadata['is_internal'],
-                                'http_status'     => ($response_code !== null) ? (int) $response_code : null,
-                                'last_checked_at' => $checked_at_gmt,
-                                'redirect_target_url' => $detected_target_for_storage,
-                                'context_html'   => $context_html_value,
-                                'context_excerpt'=> $context_excerpt_value,
-                            ],
-                            ['%s', '%s', '%d', '%s', '%s', '%d', '%s', '%d', '%d', '%s', '%s', '%s']
                         );
-                        if ($inserted) {
-                            $register_pending_link_insert($source_post_id, $row_bytes);
-                            blc_adjust_dataset_storage_footprint('link', $row_bytes);
-                        }
+
+                        return;
                     }
 
-                    if (!$should_use_cache && $cache_entry_key !== '') {
-                        $cache_timestamp = time();
-                        $cache_action = 'ok';
-                        if ($should_retry_later) {
-                            $cache_action = 'retry';
-                        } elseif ($should_insert_broken_link) {
-                            $cache_action = 'broken';
-                        }
-
-                        $new_cache_entry = [
-                            'action'     => $cache_action,
-                            'checked_at' => $cache_timestamp,
-                        ];
-
-                        if ($response_code !== null) {
-                            $new_cache_entry['response_code'] = $response_code;
-                        }
-
-                        $scan_cache_data[$cache_entry_key] = $new_cache_entry;
-                        $scan_cache_dirty = true;
-                    }
+                    $finalize_remote_outcome();
                 };
             };
 
@@ -1581,6 +1880,7 @@ class ScanQueue {
 
                             $processor = $create_link_processor($source_post_id, $storage_title, $permalink_for_links);
                             $dom_processed = blc_process_link_nodes_from_html($html, $blog_charset, $processor);
+                            $remote_request_queue->drain();
 
                             if (!$dom_processed) {
                                 if (!empty($source['restore_on_failure']) && $scan_run_token !== '') {
@@ -1608,6 +1908,8 @@ class ScanQueue {
                         }
                     }
                 }
+
+                $remote_request_queue->drain();
 
                 if ($batch_exception === null && !($batch_wp_error instanceof \WP_Error) && !empty($global_link_sources)) {
                     if (!isset($link_occurrence_counters[0])) {
@@ -1642,6 +1944,7 @@ class ScanQueue {
 
                         $processor = $create_link_processor($source_post_id, $storage_title, $permalink_for_links);
                         blc_process_link_nodes_from_html($html, $blog_charset, $processor);
+                        $remote_request_queue->drain();
                     }
 
                     if ($scan_run_token !== '') {
