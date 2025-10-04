@@ -430,26 +430,29 @@ function blc_activate_site() {
             $requested_frequency = isset($schedule_result['schedule']) && $schedule_result['schedule'] !== ''
                 ? $schedule_result['schedule']
                 : $frequency_option;
-            if (function_exists('wp_get_schedules')) {
+
+            if ($requested_frequency !== $fallback_frequency) {
                 $schedules = wp_get_schedules();
-            } else {
-                $schedules = array();
-            }
 
-            if ($requested_frequency !== $fallback_frequency && isset($schedules[$fallback_frequency])) {
-                $fallback_timestamp = time() + (defined('HOUR_IN_SECONDS') ? (int) HOUR_IN_SECONDS : 3600);
-                $fallback = wp_schedule_event($fallback_timestamp, $fallback_frequency, 'blc_check_links');
+                if (!is_array($schedules)) {
+                    $schedules = array();
+                }
 
-                if (false === $fallback) {
-                    error_log(
-                        sprintf(
-                            'BLC: Failed to schedule fallback automatic link check during activation (frequency: %s, timestamp: %d).',
-                            $fallback_frequency,
-                            $fallback_timestamp
-                        )
-                    );
-                } else {
-                    error_log('BLC: Fallback automatic link check schedule created after activation failure.');
+                if (isset($schedules[$fallback_frequency])) {
+                    $fallback_timestamp = time() + (defined('HOUR_IN_SECONDS') ? (int) HOUR_IN_SECONDS : 3600);
+                    $fallback = wp_schedule_event($fallback_timestamp, $fallback_frequency, 'blc_check_links');
+
+                    if (false === $fallback) {
+                        error_log(
+                            sprintf(
+                                'BLC: Failed to schedule fallback automatic link check during activation (frequency: %s, timestamp: %d).',
+                                $fallback_frequency,
+                                $fallback_timestamp
+                            )
+                        );
+                    } else {
+                        error_log('BLC: Fallback automatic link check schedule created after activation failure.');
+                    }
                 }
             }
         }
