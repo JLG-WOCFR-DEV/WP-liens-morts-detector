@@ -205,6 +205,7 @@ class BlcScannerTest extends TestCase
             'blc_rest_end_hour'    => '00',
             'blc_link_delay'       => 0,
             'blc_batch_delay'      => 60,
+            'blc_batch_size'       => 20,
             'blc_head_request_timeout' => 5,
             'blc_get_request_timeout'  => 10,
             'blc_scan_method'      => 'precise',
@@ -2768,7 +2769,7 @@ class BlcScannerTest extends TestCase
         $this->assertCount(1, $GLOBALS['wp_query_last_args'], 'WP_Query should be executed once.');
         $args = $GLOBALS['wp_query_last_args'][0];
         $this->assertSame(1, $args['paged']);
-        $this->assertSame(20, $args['posts_per_page']);
+        $this->assertSame($this->options['blc_batch_size'], $args['posts_per_page']);
 
         $markQueryFound = false;
         $deleteQueryFound = false;
@@ -2792,6 +2793,46 @@ class BlcScannerTest extends TestCase
         $cacheKeyOptions = $this->updatedOptions;
         unset($cacheKeyOptions['blc_active_link_scan_key']);
         $this->assertSame([], $cacheKeyOptions, 'Last check time should not be updated before the final batch.');
+    }
+
+    public function test_blc_perform_check_uses_custom_batch_size_option(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_batch_size'] = 37;
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [],
+            'max_num_pages' => 0,
+        ];
+
+        blc_perform_check(0, true);
+
+        $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should capture arguments for assertions.');
+        $args = $GLOBALS['wp_query_last_args'][0];
+        $this->assertSame(37, $args['posts_per_page'], 'Custom batch size option must be propagated to the query.');
+    }
+
+    public function test_blc_perform_check_applies_batch_size_bounds(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $constraints = function_exists('blc_get_batch_size_constraints') ? blc_get_batch_size_constraints() : ['min' => 5, 'max' => 100, 'default' => 20];
+
+        $this->options['blc_batch_size'] = $constraints['max'] + 50;
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [],
+            'max_num_pages' => 0,
+        ];
+
+        blc_perform_check(0, true);
+
+        $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should capture arguments for assertions.');
+        $args = $GLOBALS['wp_query_last_args'][0];
+        $this->assertSame($constraints['max'], $args['posts_per_page'], 'Batch size should be clamped to the configured maximum.');
     }
 
     public function test_blc_perform_check_reschedules_initial_batch_when_lock_is_held(): void
