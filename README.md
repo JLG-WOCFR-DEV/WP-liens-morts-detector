@@ -26,6 +26,7 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 - La cadence peut être ajustée via un champ combinant intervalles prédéfinis et intervalle personnalisé (slider toutes les X heures + heure de départ). Une action sur le tableau de bord permet de forcer la reprogrammation selon les réglages en cas de blocage de WP‑Cron.
 - Les liens ou images détectés comme cassés apparaissent dans une table permettant la modification rapide de l’URL ou la suppression du lien.
 - Des réglages avancés permettent d’exclure certains domaines, de limiter l’analyse à des plages horaires et d’activer un mode debug pour le suivi.
+- La taille des lots (contenus analysés en parallèle) est configurable pour ajuster la charge du scan automatique.
 - L’analyse des images distantes (CDN, sous-domaines médias) peut être activée dans les réglages. Cette vérification reste basée sur les fichiers présents dans `wp-content/uploads` et peut rallonger la durée du scan ou consommer davantage de quotas côté CDN.
 
 ## Commandes WP-CLI
@@ -74,6 +75,30 @@ Définit le délai (en secondes) avant la reprise d’un scan suspendu pour caus
 ```php
 add_filter('blc_load_retry_delay', function (int $delay): int {
     return 600; // Reprogrammer le scan dans 10 minutes au lieu de 5.
+});
+```
+
+### `blc_batch_size`
+Permet d’ajuster dynamiquement la taille des lots analysés pour les scans de liens et d’images. La valeur reçue a déjà été bornée selon les réglages, et le tableau de contexte inclut notamment le type de scan (`link` ou `image`), le numéro de lot courant, le flag de scan complet et les contraintes applicables.
+
+```php
+add_filter('blc_batch_size', function (int $batch_size, array $context): int {
+    if ($context['context'] === 'link') {
+        return min(50, $batch_size); // Limiter les lots de liens à 50 éléments maximum.
+    }
+
+    return $batch_size;
+}, 10, 2);
+```
+
+### `blc_batch_size_constraints`
+Autorise la modification des bornes min/max utilisées par le champ d’options. Utile si l’hébergement supporte des lots plus importants (ou, au contraire, plus restreints).
+
+```php
+add_filter('blc_batch_size_constraints', function (array $constraints): array {
+    $constraints['max'] = 150; // Autoriser jusqu’à 150 contenus par lot dans l’interface.
+
+    return $constraints;
 });
 ```
 

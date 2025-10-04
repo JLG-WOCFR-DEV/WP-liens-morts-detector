@@ -22,6 +22,7 @@ function blc_register_settings() {
     $head_timeout_limits = isset($timeout_constraints['head']) ? $timeout_constraints['head'] : array('default' => 5);
     $get_timeout_limits  = isset($timeout_constraints['get']) ? $timeout_constraints['get'] : array('default' => 10);
     $recheck_constraints = blc_get_recheck_interval_days_constraints();
+    $batch_size_constraints = blc_get_batch_size_constraints();
 
     register_setting(
         $option_group,
@@ -100,6 +101,16 @@ function blc_register_settings() {
             'type'              => 'integer',
             'sanitize_callback' => 'blc_sanitize_batch_delay_option',
             'default'           => 60,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_batch_size',
+        array(
+            'type'              => 'integer',
+            'sanitize_callback' => 'blc_sanitize_batch_size_option',
+            'default'           => isset($batch_size_constraints['default']) ? $batch_size_constraints['default'] : 20,
         )
     );
 
@@ -323,6 +334,35 @@ function blc_register_settings_sections() {
         )
     );
 
+    $batch_size_limits = blc_get_batch_size_constraints();
+    $batch_size_min = isset($batch_size_limits['min']) ? (int) $batch_size_limits['min'] : 5;
+    $batch_size_max = isset($batch_size_limits['max']) ? (int) $batch_size_limits['max'] : 100;
+    $batch_size_default = isset($batch_size_limits['default']) ? (int) $batch_size_limits['default'] : 20;
+
+    if ($batch_size_max < $batch_size_min) {
+        $batch_size_max = $batch_size_min;
+    }
+
+    add_settings_field(
+        'blc_batch_size',
+        __('⚙️ Taille des lots', 'liens-morts-detector-jlg'),
+        'blc_render_number_field',
+        $page,
+        'blc_performance_section',
+        array(
+            'option_name' => 'blc_batch_size',
+            'min'         => $batch_size_min,
+            'max'         => $batch_size_max,
+            'step'        => 1,
+            'description' => sprintf(
+                /* translators: %d: default batch size. */
+                __('Nombre de contenus analysés par lot. (Défaut : %d)', 'liens-morts-detector-jlg'),
+                $batch_size_default
+            ),
+            'label_for'   => 'blc_batch_size',
+        )
+    );
+
     add_settings_field(
         'blc_head_request_timeout',
         __('⏱️ Timeout requêtes HEAD', 'liens-morts-detector-jlg'),
@@ -497,6 +537,56 @@ function blc_get_recheck_interval_days_constraints() {
         'max'     => 30,
         'default' => 7,
     );
+}
+
+/**
+ * Retourne les contraintes associées à la taille des lots analysés.
+ *
+ * @since 1.2.0
+ *
+ * @return array<string, int>
+ */
+function blc_get_batch_size_constraints() {
+    $constraints = array(
+        'min'     => 5,
+        'max'     => 100,
+        'default' => 20,
+    );
+
+    /**
+     * Permet de personnaliser les limites appliquées à la taille des lots.
+     *
+     * @since 1.2.0
+     *
+     * @param array<string, int> $constraints Tableau contenant les clés `min`, `max` et `default`.
+     */
+    $filtered = apply_filters('blc_batch_size_constraints', $constraints);
+
+    if (!is_array($filtered)) {
+        return $constraints;
+    }
+
+    $normalized = array(
+        'min'     => isset($filtered['min']) ? (int) $filtered['min'] : $constraints['min'],
+        'max'     => isset($filtered['max']) ? (int) $filtered['max'] : $constraints['max'],
+        'default' => isset($filtered['default']) ? (int) $filtered['default'] : $constraints['default'],
+    );
+
+    if ($normalized['min'] <= 0) {
+        $normalized['min'] = 1;
+    }
+
+    if ($normalized['max'] < $normalized['min']) {
+        $normalized['max'] = $normalized['min'];
+    }
+
+    if ($normalized['default'] < $normalized['min']) {
+        $normalized['default'] = $normalized['min'];
+    } elseif ($normalized['default'] > $normalized['max']) {
+        $normalized['default'] = $normalized['max'];
+    }
+
+    return $normalized;
 }
 
 /**
@@ -1385,6 +1475,37 @@ function blc_sanitize_link_delay_option($value) {
  */
 function blc_sanitize_batch_delay_option($value) {
     return max(0, (int) $value);
+}
+
+/**
+ * Sanitize la taille des lots à analyser.
+ *
+ * @since 1.2.0
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return int
+ */
+function blc_sanitize_batch_size_option($value) {
+    $constraints = blc_get_batch_size_constraints();
+
+    $min     = isset($constraints['min']) ? (int) $constraints['min'] : 5;
+    $max     = isset($constraints['max']) ? (int) $constraints['max'] : 100;
+    $default = isset($constraints['default']) ? (int) $constraints['default'] : 20;
+
+    if ($max < $min) {
+        $max = $min;
+    }
+
+    $sanitized = is_scalar($value) ? (int) $value : $default;
+
+    if ($sanitized < $min) {
+        $sanitized = $min;
+    } elseif ($sanitized > $max) {
+        $sanitized = $max;
+    }
+
+    return $sanitized;
 }
 
 /**
