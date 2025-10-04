@@ -49,6 +49,9 @@ jQuery(document).ready(function($) {
         applyRedirectMissingTarget: 'Aucune redirection détectée n\'est disponible pour ce lien.',
         applyRedirectModalTitle: 'Appliquer la redirection détectée',
         applyRedirectModalConfirm: 'Appliquer',
+        applyRedirectModalMessage: 'Appliquer la redirection détectée vers %s ?',
+        applyRedirectMissingModalTitle: 'Redirection indisponible',
+        applyRedirectMissingModalMessage: 'Aucune redirection détectée n\'est disponible pour ce lien.',
         bulkApplyRedirectModalMessage: 'Voulez-vous appliquer la redirection détectée aux %s liens sélectionnés ?'
     };
 
@@ -320,15 +323,24 @@ jQuery(document).ready(function($) {
         var $modal = $('#blc-modal');
 
         if (!$modal.length) {
+            var fallbackHelpers = {
+                showError: function() {},
+                clearError: function() {},
+                setSubmitting: function() {},
+                close: function() {}
+            };
+
+            var resolvedPayload = { value: '', helpers: fallbackHelpers };
+
             return {
-                open: function() {},
+                open: function() {
+                    return Promise.resolve(resolvedPayload);
+                },
                 close: function() {},
-                helpers: {
-                    showError: function() {},
-                    clearError: function() {},
-                    setSubmitting: function() {},
-                    close: function() {}
-                }
+                confirm: function() {
+                    return Promise.resolve(resolvedPayload);
+                },
+                helpers: fallbackHelpers
             };
         }
 
@@ -379,8 +391,30 @@ jQuery(document).ready(function($) {
             onConfirm: null,
             showInput: true,
             showCancel: true,
-            isSubmitting: false
+            isSubmitting: false,
+            confirmPromise: null,
+            resolvePromise: null,
+            rejectPromise: null,
+            wasConfirmed: false
         };
+
+        function resetPromiseState() {
+            state.confirmPromise = null;
+            state.resolvePromise = null;
+            state.rejectPromise = null;
+            state.wasConfirmed = false;
+        }
+
+        function createConfirmationPromise() {
+            state.confirmPromise = new Promise(function(resolve, reject) {
+                state.resolvePromise = resolve;
+                state.rejectPromise = reject;
+            });
+
+            state.confirmPromise.catch(function() {});
+
+            return state.confirmPromise;
+        }
 
         function clearError() {
             $error.removeClass('is-visible').text('');
@@ -471,6 +505,8 @@ jQuery(document).ready(function($) {
             state.onConfirm = null;
             state.showInput = true;
             state.showCancel = true;
+            var shouldReject = !state.wasConfirmed && typeof state.rejectPromise === 'function';
+            var rejectFn = state.rejectPromise;
 
             $modal.removeClass('is-open').attr('aria-hidden', 'true');
             $('body').removeClass('blc-modal-open');
@@ -478,6 +514,8 @@ jQuery(document).ready(function($) {
             setSubmitting(false);
             clearError();
             clearContext();
+
+            resetPromiseState();
 
             $title.text('');
             $message.text('');
@@ -500,11 +538,15 @@ jQuery(document).ready(function($) {
             }
 
             lastFocusedElement = null;
+
+            if (shouldReject) {
+                rejectFn(new Error('modal_dismissed'));
+            }
         }
 
         function open(options) {
             if (!$modal.length) {
-                return;
+                return Promise.resolve({ value: '', helpers: helpers });
             }
 
             options = options || {};
@@ -512,6 +554,8 @@ jQuery(document).ready(function($) {
             state.onConfirm = typeof options.onConfirm === 'function' ? options.onConfirm : null;
             state.showInput = options.showInput !== false;
             state.showCancel = options.showCancel !== false;
+            resetPromiseState();
+            var promise = createConfirmationPromise();
 
             lastFocusedElement = document.activeElement;
 
@@ -563,6 +607,8 @@ jQuery(document).ready(function($) {
                     $confirm.trigger('focus');
                 }
             }, 10);
+
+            return promise;
         }
 
         var helpers = {
@@ -578,6 +624,11 @@ jQuery(document).ready(function($) {
             }
 
             var value = state.showInput ? $input.val() : '';
+            state.wasConfirmed = true;
+
+            if (typeof state.resolvePromise === 'function') {
+                state.resolvePromise({ value: value, helpers: helpers });
+            }
 
             if (state.onConfirm) {
                 state.onConfirm(value, helpers);
@@ -586,24 +637,40 @@ jQuery(document).ready(function($) {
 
         $cancel.on('click', function() {
             if (!state.isSubmitting) {
+                if (typeof state.rejectPromise === 'function') {
+                    state.rejectPromise(new Error('modal_cancelled'));
+                }
+                resetPromiseState();
                 close();
             }
         });
 
         $close.on('click', function() {
             if (!state.isSubmitting) {
+                if (typeof state.rejectPromise === 'function') {
+                    state.rejectPromise(new Error('modal_cancelled'));
+                }
+                resetPromiseState();
                 close();
             }
         });
 
         $modal.on('click', function(event) {
             if (event.target === $modal[0] && !state.isSubmitting) {
+                if (typeof state.rejectPromise === 'function') {
+                    state.rejectPromise(new Error('modal_cancelled'));
+                }
+                resetPromiseState();
                 close();
             }
         });
 
         $(document).on('keydown', function(event) {
             if (event.key === 'Escape' && state.isOpen && !state.isSubmitting) {
+                if (typeof state.rejectPromise === 'function') {
+                    state.rejectPromise(new Error('modal_cancelled'));
+                }
+                resetPromiseState();
                 close();
             }
         });
@@ -652,9 +719,22 @@ jQuery(document).ready(function($) {
             }
         });
 
+        function confirm(options) {
+            var config = $.extend({}, options, {
+                showInput: false
+            });
+
+            if (typeof config.showCancel === 'undefined') {
+                config.showCancel = true;
+            }
+
+            return open(config);
+        }
+
         return {
             open: open,
             close: close,
+            confirm: confirm,
             helpers: helpers
         };
     })();
@@ -942,18 +1022,36 @@ jQuery(document).ready(function($) {
         detectedTarget = detectedTarget.trim();
 
         if (!detectedTarget) {
-            var missingMessage = messages.applyRedirectMissingTarget || messages.applyRedirectError || messages.genericError;
-            accessibility.speak(missingMessage, 'assertive');
-            window.alert(missingMessage);
-            return;
-        }
+            var missingMessage = messages.applyRedirectMissingModalMessage
+                || messages.applyRedirectMissingTarget
+                || messages.applyRedirectError
+                || messages.genericError;
 
-        var confirmationTemplate = messages.applyRedirectConfirmation || '';
-        var confirmationMessage = confirmationTemplate ? formatTemplate(confirmationTemplate, detectedTarget) : '';
-        if (confirmationMessage) {
-            if (!window.confirm(confirmationMessage)) {
-                return;
+            if (missingMessage) {
+                accessibility.speak(missingMessage, 'assertive');
             }
+
+            var missingTitle = messages.applyRedirectMissingModalTitle || messages.applyRedirectModalTitle || '';
+            var missingPromise = modal.confirm({
+                title: missingTitle,
+                message: missingMessage,
+                confirmText: messages.closeButton || messages.cancelButton || 'Fermer',
+                closeLabel: messages.closeLabel,
+                showCancel: false
+            });
+
+            if (missingPromise && typeof missingPromise.then === 'function') {
+                missingPromise.then(function(result) {
+                    var modalHelpers = result && result.helpers ? result.helpers : modal.helpers;
+                    if (modalHelpers && typeof modalHelpers.close === 'function') {
+                        modalHelpers.close();
+                    } else {
+                        modal.close();
+                    }
+                }).catch(function() {});
+            }
+
+            return;
         }
 
         var oldUrl = linkElement.data('url');
@@ -971,20 +1069,35 @@ jQuery(document).ready(function($) {
         }
         var nonce = linkElement.data('nonce');
 
-        var helpers = createInlineActionHelpers(linkElement, {
-            errorMessage: messages.applyRedirectError
+        var confirmationTemplate = messages.applyRedirectModalMessage
+            || messages.applyRedirectConfirmation
+            || '';
+        var confirmationMessage = confirmationTemplate ? formatTemplate(confirmationTemplate, detectedTarget) : '';
+
+        var promise = modal.confirm({
+            title: messages.applyRedirectModalTitle || messages.editModalTitle,
+            message: confirmationMessage,
+            confirmText: messages.applyRedirectModalConfirm || messages.editModalConfirm,
+            cancelText: messages.cancelButton,
+            closeLabel: messages.closeLabel,
+            showCancel: true,
+            onConfirm: function(_value, helpers) {
+                processLinkUpdate(linkElement, {
+                    helpers: helpers,
+                    value: detectedTarget,
+                    oldUrl: oldUrl,
+                    postId: postId,
+                    rowId: rowId,
+                    occurrenceIndex: occurrenceIndex,
+                    nonce: nonce,
+                    action: 'blc_apply_detected_redirect'
+                });
+            }
         });
 
-        processLinkUpdate(linkElement, {
-            helpers: helpers,
-            value: detectedTarget,
-            oldUrl: oldUrl,
-            postId: postId,
-            rowId: rowId,
-            occurrenceIndex: occurrenceIndex,
-            nonce: nonce,
-            action: 'blc_apply_detected_redirect'
-        });
+        if (promise && typeof promise.catch === 'function') {
+            promise.catch(function() {});
+        }
     });
 
     function getSelectedBulkAction($form) {

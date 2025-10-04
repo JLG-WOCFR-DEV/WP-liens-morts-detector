@@ -51,6 +51,16 @@ describe('blc-admin-scripts modal interactions', () => {
                 data-occurrence-index="0"
                 data-nonce="nonce"
               >Supprimer</button>
+              <button
+                type="button"
+                class="blc-apply-redirect"
+                data-url="https://old.example"
+                data-postid="42"
+                data-row-id="row-1"
+                data-occurrence-index="0"
+                data-nonce="nonce"
+                data-detected-target="https://detected.example"
+              >Appliquer la redirection</button>
             </td>
           </tr>
         </tbody>
@@ -255,5 +265,55 @@ describe('blc-admin-scripts modal interactions', () => {
     expect(confirm.prop('disabled')).toBe(false);
     expect(row.css('opacity')).toBe('1');
     expect(modal.find('.blc-modal__error').text()).toBe(defaultMessages.genericError);
+  });
+
+  test('applies a detected redirect after confirming the modal', () => {
+    const ajax = mockAjaxHandlers();
+    const button = $('#the-list .blc-apply-redirect');
+
+    button.trigger('click');
+    jest.advanceTimersByTime(20);
+
+    const modal = $('#blc-modal');
+    expect(modal.hasClass('is-open')).toBe(true);
+    expect(modal.find('.blc-modal__field').hasClass('is-hidden')).toBe(true);
+    expect(modal.find('.blc-modal__message').text()).toBe('Appliquer la redirection détectée vers https://detected.example ?');
+
+    modal.find('.blc-modal__confirm').trigger('click');
+    expect(modal.hasClass('is-submitting')).toBe(true);
+
+    ajax.triggerSuccess({ success: true });
+
+    expect($.post).toHaveBeenCalledWith(
+      'admin-ajax.php',
+      expect.objectContaining({
+        action: 'blc_apply_detected_redirect',
+        new_url: 'https://detected.example'
+      })
+    );
+    expect(modal.hasClass('is-open')).toBe(false);
+  });
+
+  test('shows an informational modal when no detected redirect is available', async () => {
+    const button = $('#the-list .blc-apply-redirect');
+    button.attr('data-detected-target', '');
+    button.data('detectedTarget', '');
+    $.post.mockClear();
+
+    button.trigger('click');
+    jest.advanceTimersByTime(20);
+
+    const modal = $('#blc-modal');
+    expect(modal.hasClass('is-open')).toBe(true);
+    expect(modal.find('.blc-modal__field').hasClass('is-hidden')).toBe(true);
+    const cancelButton = modal.find('.blc-modal__cancel');
+    expect(cancelButton.prop('hidden')).toBe(true);
+
+    modal.find('.blc-modal__confirm').trigger('click');
+    jest.advanceTimersByTime(20);
+    await Promise.resolve();
+
+    expect(modal.hasClass('is-open')).toBe(false);
+    expect($.post).not.toHaveBeenCalled();
   });
 });
