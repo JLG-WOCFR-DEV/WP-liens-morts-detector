@@ -88,6 +88,7 @@ class BlcSettingsPageTest extends TestCase
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-settings-fields.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-admin-pages.php';
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-cron.php';
 
         $test_case = $this;
 
