@@ -9,6 +9,10 @@ if (!function_exists('blc_normalize_hour_option')) {
     require_once __DIR__ . '/blc-utils.php';
 }
 
+if (!function_exists('blc_reset_link_check_schedule')) {
+    require_once __DIR__ . '/blc-cron.php';
+}
+
 /**
  * Crée le menu principal et les sous-menus pour les rapports et les réglages.
  */
@@ -239,7 +243,9 @@ function blc_schedule_manual_link_scan($is_full_scan = false) {
  * @return array{success:bool,message:string,manual_trigger_failed:bool}
  */
 function blc_schedule_manual_image_scan() {
-    if (function_exists('wp_clear_scheduled_hook')) {
+    $automatic_enabled = (bool) get_option('blc_image_scan_schedule_enabled', false);
+
+    if (!$automatic_enabled && function_exists('wp_clear_scheduled_hook')) {
         wp_clear_scheduled_hook('blc_check_image_batch');
     }
 
@@ -842,6 +848,73 @@ function blc_dashboard_links_page() {
 function blc_dashboard_images_page() {
     blc_render_action_modal();
 
+    if (isset($_POST['blc_reschedule_image_cron'])) {
+        check_admin_referer('blc_reschedule_image_cron_nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__("Permissions insuffisantes pour reprogrammer l'analyse automatique des images.", 'liens-morts-detector-jlg'));
+        }
+
+        $automatic_enabled = (bool) get_option('blc_image_scan_schedule_enabled', false);
+
+        if (!$automatic_enabled) {
+            printf(
+                '<div class="notice notice-warning is-dismissible"><p>%s</p></div>',
+                esc_html__("La planification automatique des images est désactivée. Activez-la dans les réglages pour reprogrammer le cron.", 'liens-morts-detector-jlg')
+            );
+        } else {
+            $schedule_result = blc_reset_image_check_schedule(
+                array(
+                    'context' => 'dashboard_reschedule',
+                )
+            );
+
+            if (!$schedule_result['success']) {
+                if (!empty($schedule_result['error_message'])) {
+                    error_log($schedule_result['error_message']);
+                }
+
+                printf(
+                    '<div class="notice notice-error is-dismissible"><p>%s</p></div>',
+                    esc_html__("La planification automatique des images n'a pas pu être reprogrammée. Vérifiez la configuration de WP-Cron.", 'liens-morts-detector-jlg')
+                );
+
+                if (!empty($schedule_result['restore_attempted'])) {
+                    $restore_notice = !empty($schedule_result['restored'])
+                        ? esc_html__("La planification précédente des images a été restaurée automatiquement.", 'liens-morts-detector-jlg')
+                        : esc_html__("La planification précédente des images n'a pas pu être restaurée. Une intervention manuelle est nécessaire.", 'liens-morts-detector-jlg');
+
+                    printf('<div class="notice notice-warning is-dismissible"><p>%s</p></div>', $restore_notice);
+                } else {
+                    printf(
+                        '<div class="notice notice-warning is-dismissible"><p>%s</p></div>',
+                        esc_html__("Aucune planification précédente n'a été trouvée. Configurez manuellement la vérification automatique si nécessaire.", 'liens-morts-detector-jlg')
+                    );
+                }
+            } else {
+                $next_timestamp = 0;
+                if (function_exists('wp_next_scheduled')) {
+                    $next_event = wp_next_scheduled('blc_check_image_batch', array(0, true));
+                    if ($next_event) {
+                        $next_timestamp = (int) $next_event;
+                    }
+                }
+
+                $success_message = esc_html__("Le scan automatique des images a été reprogrammé selon les réglages actuels.", 'liens-morts-detector-jlg');
+
+                if ($next_timestamp > 0) {
+                    $success_message .= ' ' . sprintf(
+                        /* translators: %s: formatted date for next automatic scan. */
+                        esc_html__('Prochaine exécution prévue : %s.', 'liens-morts-detector-jlg'),
+                        esc_html(wp_date('j M Y H:i', $next_timestamp))
+                    );
+                }
+
+                printf('<div class="notice notice-success is-dismissible"><p>%s</p></div>', $success_message);
+            }
+        }
+    }
+
     if (isset($_POST['blc_manual_image_check'])) {
         check_admin_referer('blc_manual_image_check_nonce');
 
@@ -985,6 +1058,23 @@ function blc_dashboard_images_page() {
         ? $image_scan_status['message']
         : '';
 
+    $automatic_image_scan_enabled = (bool) get_option('blc_image_scan_schedule_enabled', false);
+    $next_automatic_image_scan    = 0;
+    if ($automatic_image_scan_enabled && function_exists('wp_next_scheduled')) {
+        $next_event = wp_next_scheduled('blc_check_image_batch', array(0, true));
+        if ($next_event) {
+            $next_automatic_image_scan = (int) $next_event;
+        }
+    }
+
+    if ($automatic_image_scan_enabled) {
+        $next_image_scan_display = ($next_automatic_image_scan > 0)
+            ? wp_date('j M Y H:i', $next_automatic_image_scan)
+            : esc_html__('Aucune exécution planifiée', 'liens-morts-detector-jlg');
+    } else {
+        $next_image_scan_display = esc_html__('Planification automatique désactivée', 'liens-morts-detector-jlg');
+    }
+
     $list_table = new BLC_Images_List_Table();
     $list_table->prepare_items();
     ?>
@@ -1004,6 +1094,23 @@ function blc_dashboard_images_page() {
                 <span class="blc-stat-value"><?php echo esc_html($last_check_display); ?></span>
                 <span class="blc-stat-label"><?php esc_html_e('Dernière analyse d\'images', 'liens-morts-detector-jlg'); ?></span>
             </div>
+        </div>
+        <div class="blc-automatic-scan-summary">
+            <p>
+                <strong><?php esc_html_e('Prochain scan automatique', 'liens-morts-detector-jlg'); ?> :</strong>
+                <span><?php echo esc_html($next_image_scan_display); ?></span>
+            </p>
+            <?php if ($automatic_image_scan_enabled) : ?>
+                <form method="post" class="blc-reschedule-image-cron-form">
+                    <?php wp_nonce_field('blc_reschedule_image_cron_nonce'); ?>
+                    <input type="hidden" name="blc_reschedule_image_cron" value="1">
+                    <button type="submit" class="button button-secondary">
+                        <?php esc_html_e('Reprogrammer le scan automatique', 'liens-morts-detector-jlg'); ?>
+                    </button>
+                </form>
+            <?php else : ?>
+                <p class="description"><?php esc_html_e('Activez la planification automatique dans les réglages pour programmer des analyses récurrentes.', 'liens-morts-detector-jlg'); ?></p>
+            <?php endif; ?>
         </div>
         <div
             id="blc-image-scan-status-panel"
