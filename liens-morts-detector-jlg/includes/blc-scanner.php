@@ -1215,6 +1215,15 @@ function blc_generate_scan_summary_email($dataset_type) {
         return null;
     }
 
+    $top_issues = [];
+    $top_issues_limit = 5;
+    if (function_exists('apply_filters')) {
+        $maybe_limit = apply_filters('blc_scan_summary_top_issue_limit', $top_issues_limit, $dataset_type);
+        if (is_numeric($maybe_limit)) {
+            $top_issues_limit = max(0, (int) $maybe_limit);
+        }
+    }
+
     if (method_exists($wpdb, 'prepare') && method_exists($wpdb, 'get_var')) {
         if (count($row_types) === 1) {
             $query = $wpdb->prepare(
@@ -1232,6 +1241,53 @@ function blc_generate_scan_summary_email($dataset_type) {
         if (is_string($query)) {
             $broken_count = (int) $wpdb->get_var($query);
         }
+
+        if ($top_issues_limit > 0 && method_exists($wpdb, 'get_results')) {
+            if (count($row_types) === 1) {
+                $top_query = $wpdb->prepare(
+                    "SELECT url, http_status, post_title, COUNT(*) AS occurrence_count " .
+                    "FROM $table_name WHERE type = %s AND ignored_at IS NULL " .
+                    "GROUP BY url, http_status, post_title " .
+                    "ORDER BY occurrence_count DESC, http_status DESC, url ASC " .
+                    "LIMIT %d",
+                    reset($row_types),
+                    $top_issues_limit
+                );
+            } else {
+                $placeholders = implode(',', array_fill(0, count($row_types), '%s'));
+                $params = $row_types;
+                $params[] = $top_issues_limit;
+                $top_query = call_user_func_array(
+                    [$wpdb, 'prepare'],
+                    array_merge([
+                        "SELECT url, http_status, post_title, COUNT(*) AS occurrence_count " .
+                        "FROM $table_name WHERE type IN ($placeholders) AND ignored_at IS NULL " .
+                        "GROUP BY url, http_status, post_title " .
+                        "ORDER BY occurrence_count DESC, http_status DESC, url ASC " .
+                        "LIMIT %d",
+                    ],
+                    $params)
+                );
+            }
+
+            if (isset($top_query) && is_string($top_query)) {
+                $raw_issues = $wpdb->get_results($top_query, ARRAY_A);
+                if (is_array($raw_issues)) {
+                    foreach ($raw_issues as $issue) {
+                        $top_issues[] = [
+                            'url'              => isset($issue['url']) ? (string) $issue['url'] : '',
+                            'http_status'      => isset($issue['http_status']) && $issue['http_status'] !== null
+                                ? (int) $issue['http_status']
+                                : null,
+                            'post_title'       => isset($issue['post_title']) ? (string) $issue['post_title'] : '',
+                            'occurrence_count' => isset($issue['occurrence_count'])
+                                ? max(0, (int) $issue['occurrence_count'])
+                                : 0,
+                        ];
+                    }
+                }
+            }
+        }
     }
 
     $site_name = get_bloginfo('name');
@@ -1244,6 +1300,20 @@ function blc_generate_scan_summary_email($dataset_type) {
                 : parse_url($home_url, PHP_URL_HOST);
         }
         $site_name = is_string($parsed_host) && $parsed_host !== '' ? $parsed_host : 'WordPress';
+    }
+
+    $previous_counts = [];
+    $previous_count = null;
+    $difference = null;
+    if (function_exists('get_option')) {
+        $stored_counts = get_option('blc_last_scan_summary_counts', []);
+        if (is_array($stored_counts)) {
+            $previous_counts = $stored_counts;
+        }
+        if (array_key_exists($dataset_type, $previous_counts)) {
+            $previous_count = max(0, (int) $previous_counts[$dataset_type]);
+            $difference = $broken_count - $previous_count;
+        }
     }
 
     if ($dataset_type === 'link') {
@@ -1264,13 +1334,6 @@ function blc_generate_scan_summary_email($dataset_type) {
                 __('- Liens cassés détectés : %d', 'liens-morts-detector-jlg'),
                 $broken_count
             ),
-            '',
-            sprintf(
-                __('Consulter le rapport complet : %s', 'liens-morts-detector-jlg'),
-                $report_url
-            ),
-            '',
-            __('— Liens Morts Detector', 'liens-morts-detector-jlg'),
         ];
     } else {
         $dataset_label = __('analyse des images', 'liens-morts-detector-jlg');
@@ -1290,26 +1353,75 @@ function blc_generate_scan_summary_email($dataset_type) {
                 __('- Images cassées détectées : %d', 'liens-morts-detector-jlg'),
                 $broken_count
             ),
-            '',
-            sprintf(
-                __('Consulter le rapport complet : %s', 'liens-morts-detector-jlg'),
-                $report_url
-            ),
-            '',
-            __('— Liens Morts Detector', 'liens-morts-detector-jlg'),
         ];
     }
 
+    if ($previous_count === null) {
+        $message_lines[] = __('- Première mesure disponible : comparaison à venir lors du prochain scan.', 'liens-morts-detector-jlg');
+    } else {
+        $difference_formatted = $difference > 0 ? '+' . $difference : (string) $difference;
+        $message_lines[] = sprintf(
+            __('- Évolution depuis le précédent scan : %1$s (précédent : %2$d)', 'liens-morts-detector-jlg'),
+            $difference_formatted,
+            $previous_count
+        );
+    }
+
+    if ($top_issues !== []) {
+        $message_lines[] = '';
+        $message_lines[] = $dataset_type === 'link'
+            ? __('Liens les plus problématiques :', 'liens-morts-detector-jlg')
+            : __('Images les plus problématiques :', 'liens-morts-detector-jlg');
+
+        foreach ($top_issues as $issue) {
+            $url = $issue['url'];
+            $http_status = $issue['http_status'];
+            $post_title = $issue['post_title'];
+            $occurrence_count = $issue['occurrence_count'];
+
+            $status_label = $http_status !== null
+                ? (string) $http_status
+                : __('inconnu', 'liens-morts-detector-jlg');
+
+            $details = [
+                sprintf(__('statut HTTP : %s', 'liens-morts-detector-jlg'), $status_label),
+                sprintf(__('occurrences : %d', 'liens-morts-detector-jlg'), $occurrence_count),
+            ];
+
+            if ($post_title !== '') {
+                $details[] = sprintf(__('contenu : %s', 'liens-morts-detector-jlg'), $post_title);
+            }
+
+            $message_lines[] = sprintf('- %s — %s', $url, implode(' — ', $details));
+        }
+    }
+
+    $message_lines[] = '';
+    $message_lines[] = sprintf(
+        __('Consulter le rapport complet : %s', 'liens-morts-detector-jlg'),
+        $report_url
+    );
+    $message_lines[] = '';
+    $message_lines[] = __('— Liens Morts Detector', 'liens-morts-detector-jlg');
+
     $message = implode(PHP_EOL, $message_lines);
 
+    if (function_exists('update_option')) {
+        $previous_counts[$dataset_type] = $broken_count;
+        update_option('blc_last_scan_summary_counts', $previous_counts);
+    }
+
     return [
-        'subject'       => $subject,
-        'message'       => $message,
-        'dataset_type'  => $dataset_type,
-        'dataset_label' => $dataset_label,
-        'broken_count'  => $broken_count,
-        'report_url'    => $report_url,
-        'site_name'     => $site_name,
+        'subject'        => $subject,
+        'message'        => $message,
+        'dataset_type'   => $dataset_type,
+        'dataset_label'  => $dataset_label,
+        'broken_count'   => $broken_count,
+        'report_url'     => $report_url,
+        'site_name'      => $site_name,
+        'top_issues'     => $top_issues,
+        'previous_count' => $previous_count,
+        'difference'     => $difference,
     ];
 }
 
