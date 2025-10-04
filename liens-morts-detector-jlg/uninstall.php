@@ -45,7 +45,7 @@ $cleanup_site = static function () use ($options_to_delete) {
     wp_clear_scheduled_hook('blc_check_links');
     wp_clear_scheduled_hook('blc_check_batch');
     wp_clear_scheduled_hook('blc_manual_check_batch');
-    wp_clear_scheduled_hook('blc_check_image_batch');
+    wp_clear_scheduled_hook('blc_check_image_batch', array(0, true));
 };
 
 if (is_multisite()) {
