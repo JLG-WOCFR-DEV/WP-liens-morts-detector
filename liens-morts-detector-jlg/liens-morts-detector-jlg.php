@@ -204,6 +204,10 @@ function blc_enqueue_admin_assets($hook) {
             'applyRedirectMissingTarget' => __('Aucune redirection détectée n\'est disponible pour ce lien.', 'liens-morts-detector-jlg'),
             'applyRedirectModalTitle'   => __('Appliquer la redirection détectée', 'liens-morts-detector-jlg'),
             'applyRedirectModalConfirm' => __('Appliquer', 'liens-morts-detector-jlg'),
+            /* translators: %s: detected redirect target URL. */
+            'applyRedirectModalMessage' => __('Voulez-vous appliquer la redirection détectée vers %s ?', 'liens-morts-detector-jlg'),
+            'applyRedirectMissingModalTitle' => __('Redirection indisponible', 'liens-morts-detector-jlg'),
+            'applyRedirectMissingModalMessage' => __('Aucune redirection détectée n\'est disponible pour ce lien.', 'liens-morts-detector-jlg'),
             /* translators: %s: number of selected links. */
             'bulkApplyRedirectModalMessage' => __('Voulez-vous appliquer la redirection détectée aux %s liens sélectionnés ?', 'liens-morts-detector-jlg'),
         )
