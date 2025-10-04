@@ -9,6 +9,10 @@ if (!function_exists('blc_normalize_hour_option')) {
     require_once __DIR__ . '/blc-utils.php';
 }
 
+if (!function_exists('blc_reset_link_check_schedule')) {
+    require_once __DIR__ . '/blc-cron.php';
+}
+
 add_action('admin_init', 'blc_register_settings');
 
 /**
@@ -130,6 +134,46 @@ function blc_register_settings() {
             'type'              => 'string',
             'sanitize_callback' => 'blc_sanitize_scan_method_option',
             'default'           => 'precise',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_image_scan_schedule_enabled',
+        array(
+            'type'              => 'boolean',
+            'sanitize_callback' => 'blc_sanitize_image_scan_schedule_enabled_option',
+            'default'           => false,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_image_scan_frequency',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_image_frequency_option',
+            'default'           => 'weekly',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_image_scan_frequency_custom_hours',
+        array(
+            'type'              => 'integer',
+            'sanitize_callback' => 'blc_sanitize_image_frequency_custom_hours_option',
+            'default'           => 168,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_image_scan_frequency_custom_time',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_image_frequency_custom_time_option',
+            'default'           => '02:00',
         )
     );
 
@@ -400,6 +444,17 @@ function blc_register_settings_sections() {
     );
 
     add_settings_field(
+        'blc_image_scan_schedule',
+        __('Planification automatique des images', 'liens-morts-detector-jlg'),
+        'blc_render_image_scan_schedule_field',
+        $page,
+        'blc_images_section',
+        array(
+            'label_for' => 'blc_image_scan_schedule_enabled',
+        )
+    );
+
+    add_settings_field(
         'blc_remote_image_scan_enabled',
         __('Analyse des images CDN', 'liens-morts-detector-jlg'),
         'blc_render_remote_image_scan_field',
@@ -536,6 +591,73 @@ function blc_get_frequency_preset_options() {
      * @param array $base_options Tableau associatif de valeurs => libellés ou définitions.
      */
     $options = apply_filters('blc_frequency_preset_options', $base_options);
+
+    $normalized_options = array();
+
+    foreach ($options as $value => $definition) {
+        if (!is_scalar($value)) {
+            continue;
+        }
+
+        $value = (string) $value;
+        if ('' === $value) {
+            continue;
+        }
+
+        if (is_array($definition)) {
+            if (isset($definition['label']) && is_scalar($definition['label'])) {
+                $label = (string) $definition['label'];
+            } elseif (isset($definition['display']) && is_scalar($definition['display'])) {
+                $label = (string) $definition['display'];
+            } else {
+                continue;
+            }
+        } else {
+            $label = (string) $definition;
+        }
+
+        if ('' === $label) {
+            continue;
+        }
+
+        $normalized_options[$value] = $label;
+    }
+
+    return $normalized_options;
+}
+
+/**
+ * Retourne la liste des options prédéfinies pour la fréquence des scans d'images.
+ *
+ * @return array<string, string>
+ */
+function blc_get_image_frequency_preset_options() {
+    $default_displays = blc_get_default_cron_schedules();
+
+    $base_options = array(
+        'blc_six_hours'    => isset($default_displays['blc_six_hours']['display'])
+            ? $default_displays['blc_six_hours']['display']
+            : __('Toutes les 6 heures', 'liens-morts-detector-jlg'),
+        'blc_twelve_hours' => isset($default_displays['blc_twelve_hours']['display'])
+            ? $default_displays['blc_twelve_hours']['display']
+            : __('Toutes les 12 heures', 'liens-morts-detector-jlg'),
+        'daily'            => __('Quotidienne', 'liens-morts-detector-jlg'),
+        'weekly'           => isset($default_displays['weekly']['display'])
+            ? $default_displays['weekly']['display']
+            : __('Hebdomadaire', 'liens-morts-detector-jlg'),
+        'monthly'          => isset($default_displays['monthly']['display'])
+            ? $default_displays['monthly']['display']
+            : __('Mensuelle', 'liens-morts-detector-jlg'),
+    );
+
+    /**
+     * Permet de personnaliser les options affichées dans le sélecteur de fréquence des scans d'images.
+     *
+     * @since 1.4.0
+     *
+     * @param array $base_options Tableau associatif de valeurs => libellés ou définitions.
+     */
+    $options = apply_filters('blc_image_frequency_preset_options', $base_options);
 
     $normalized_options = array();
 
@@ -1037,6 +1159,103 @@ function blc_render_excluded_domains_field() {
 }
 
 /**
+ * Affiche le champ de planification automatique pour les scans d'images.
+ *
+ * @return void
+ */
+function blc_render_image_scan_schedule_field() {
+    $automatic_enabled = (bool) get_option('blc_image_scan_schedule_enabled', false);
+    $frequency         = get_option('blc_image_scan_frequency', 'weekly');
+    $custom_hours_raw  = get_option('blc_image_scan_frequency_custom_hours', 168);
+    $custom_hours      = blc_get_image_custom_frequency_hours($custom_hours_raw);
+    $custom_time_raw   = get_option('blc_image_scan_frequency_custom_time', '02:00');
+    $custom_time_value = blc_prepare_time_input_value($custom_time_raw, '02:00');
+    $max_hours         = (int) apply_filters('blc_image_custom_frequency_max_hours', 24 * 90);
+
+    if ($max_hours < 1) {
+        $max_hours = 1;
+    }
+
+    $is_custom_selected = ('custom' === $frequency);
+    $frequency_disabled = !$automatic_enabled;
+    $custom_disabled    = !$automatic_enabled || !$is_custom_selected;
+
+    $preset_options = blc_get_image_frequency_preset_options();
+
+    if (empty($preset_options)) {
+        $preset_options = array(
+            'weekly' => __('Hebdomadaire', 'liens-morts-detector-jlg'),
+        );
+    }
+    ?>
+    <fieldset id="blc_image_scan_schedule_fieldset" class="blc-frequency-field">
+        <legend class="screen-reader-text"><?php esc_html_e('Planification automatique des images', 'liens-morts-detector-jlg'); ?></legend>
+        <label for="blc_image_scan_schedule_enabled" class="blc-toggle">
+            <input type="checkbox" name="blc_image_scan_schedule_enabled" id="blc_image_scan_schedule_enabled" value="1" <?php checked($automatic_enabled, true); ?>>
+            <?php esc_html_e('Activer l’analyse automatique des images', 'liens-morts-detector-jlg'); ?>
+        </label>
+        <p class="description"><?php esc_html_e('Planifie des analyses complètes des images en arrière-plan sans action manuelle.', 'liens-morts-detector-jlg'); ?></p>
+        <div class="blc-frequency-options" aria-live="polite">
+            <?php foreach ($preset_options as $value => $label) : ?>
+                <label class="blc-frequency-option">
+                    <input type="radio" name="blc_image_scan_frequency" value="<?php echo esc_attr($value); ?>" <?php checked($frequency, $value); ?> <?php echo $frequency_disabled ? 'disabled' : ''; ?>>
+                    <span><?php echo esc_html($label); ?></span>
+                </label>
+            <?php endforeach; ?>
+            <label class="blc-frequency-option blc-frequency-option--custom">
+                <input type="radio" name="blc_image_scan_frequency" value="custom" <?php checked($is_custom_selected); ?> <?php echo $frequency_disabled ? 'disabled' : ''; ?>>
+                <span><?php esc_html_e('Intervalle personnalisé', 'liens-morts-detector-jlg'); ?></span>
+            </label>
+        </div>
+        <div class="blc-frequency-custom-controls" aria-live="polite">
+            <div class="blc-frequency-custom-row">
+                <label for="blc_image_scan_frequency_custom_hours" class="blc-frequency-custom-label">
+                    <?php esc_html_e('Toutes les', 'liens-morts-detector-jlg'); ?>
+                </label>
+                <input
+                    type="range"
+                    min="1"
+                    max="<?php echo esc_attr($max_hours); ?>"
+                    step="1"
+                    id="blc_image_scan_frequency_custom_hours_slider"
+                    value="<?php echo esc_attr($custom_hours); ?>"
+                    <?php echo $custom_disabled ? 'disabled' : ''; ?>
+                    aria-labelledby="blc_image_scan_frequency_custom_hours_label"
+                >
+                <label id="blc_image_scan_frequency_custom_hours_label" class="screen-reader-text" for="blc_image_scan_frequency_custom_hours">
+                    <?php esc_html_e('Nombre d’heures entre deux analyses automatiques des images', 'liens-morts-detector-jlg'); ?>
+                </label>
+                <input
+                    type="number"
+                    min="1"
+                    max="<?php echo esc_attr($max_hours); ?>"
+                    step="1"
+                    id="blc_image_scan_frequency_custom_hours"
+                    name="blc_image_scan_frequency_custom_hours"
+                    value="<?php echo esc_attr($custom_hours); ?>"
+                    <?php echo $custom_disabled ? 'disabled' : ''; ?>
+                >
+                <span class="blc-frequency-custom-unit"><?php esc_html_e('heures', 'liens-morts-detector-jlg'); ?></span>
+            </div>
+            <div class="blc-frequency-custom-row">
+                <label class="blc-frequency-custom-label" for="blc_image_scan_frequency_custom_time">
+                    <?php esc_html_e('Départ à', 'liens-morts-detector-jlg'); ?>
+                </label>
+                <input
+                    type="time"
+                    id="blc_image_scan_frequency_custom_time"
+                    name="blc_image_scan_frequency_custom_time"
+                    value="<?php echo esc_attr($custom_time_value); ?>"
+                    <?php echo $custom_disabled ? 'disabled' : ''; ?>
+                    step="60"
+                >
+            </div>
+        </div>
+    </fieldset>
+    <?php
+}
+
+/**
  * Affiche le champ d'activation de l'analyse des images distantes.
  *
  * @return void
@@ -1181,6 +1400,34 @@ function blc_normalize_custom_frequency_time($value, $fallback) {
 }
 
 /**
+ * Normalise la valeur d'heures soumise pour l'intervalle personnalisé des scans d'images.
+ *
+ * @param mixed $value    Valeur brute.
+ * @param int   $fallback Valeur de repli.
+ *
+ * @return int
+ */
+function blc_normalize_image_custom_frequency_hours($value, $fallback) {
+    $fallback_hours = blc_get_image_custom_frequency_hours($fallback);
+
+    return blc_get_image_custom_frequency_hours(null === $value ? $fallback_hours : $value);
+}
+
+/**
+ * Normalise l'heure de départ soumise pour l'intervalle personnalisé des scans d'images.
+ *
+ * @param mixed  $value    Valeur brute.
+ * @param string $fallback Valeur de repli.
+ *
+ * @return string
+ */
+function blc_normalize_image_custom_frequency_time($value, $fallback) {
+    $candidate = (null === $value || '' === $value) ? $fallback : $value;
+
+    return blc_get_image_custom_frequency_time($candidate);
+}
+
+/**
  * Sanitize le nombre d'heures pour la fréquence personnalisée.
  *
  * @param mixed $value Valeur brute.
@@ -1204,6 +1451,32 @@ function blc_sanitize_frequency_custom_time_option($value) {
     $previous = get_option('blc_frequency_custom_time', '00:00');
 
     return blc_normalize_custom_frequency_time($value, $previous);
+}
+
+/**
+ * Sanitize le nombre d'heures pour la fréquence personnalisée des images.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return int
+ */
+function blc_sanitize_image_frequency_custom_hours_option($value) {
+    $previous = get_option('blc_image_scan_frequency_custom_hours', 168);
+
+    return blc_normalize_image_custom_frequency_hours($value, $previous);
+}
+
+/**
+ * Sanitize l'heure de départ pour la fréquence personnalisée des images.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string
+ */
+function blc_sanitize_image_frequency_custom_time_option($value) {
+    $previous = get_option('blc_image_scan_frequency_custom_time', '02:00');
+
+    return blc_normalize_image_custom_frequency_time($value, $previous);
 }
 
 /**
@@ -1305,6 +1578,166 @@ function blc_sanitize_frequency_option($value) {
         }
     } else {
         add_settings_error('blc_settings', 'blc_settings_saved', esc_html__('Réglages enregistrés !', 'liens-morts-detector-jlg'), 'updated');
+    }
+
+    return $frequency;
+}
+
+/**
+ * Gère les notices d'administration suite à une tentative de programmation du scan d'images.
+ *
+ * @param array $schedule_result Résultat de `blc_reset_image_check_schedule()`.
+ * @param bool  $add_success_notice Indique si une notice de succès doit être ajoutée.
+ *
+ * @return bool
+ */
+function blc_handle_image_schedule_result(array $schedule_result, $add_success_notice = true) {
+    static $success_notice_added = false;
+
+    $is_success = isset($schedule_result['success']) ? (bool) $schedule_result['success'] : false;
+
+    if ($is_success) {
+        if ($add_success_notice && !$success_notice_added) {
+            add_settings_error('blc_settings', 'blc_settings_saved', esc_html__('Réglages enregistrés !', 'liens-morts-detector-jlg'), 'updated');
+            $success_notice_added = true;
+        }
+
+        return true;
+    }
+
+    $error_message = isset($schedule_result['error_message']) ? (string) $schedule_result['error_message'] : '';
+    if ($error_message !== '') {
+        error_log($error_message);
+    }
+
+    $admin_error = esc_html__(
+        "La planification du scan des images n'a pas pu être programmée. Vérifiez la configuration de WP-Cron.",
+        'liens-morts-detector-jlg'
+    );
+    add_settings_error('blc_settings', 'blc_image_schedule_error', $admin_error, 'error');
+
+    $restore_attempted = !empty($schedule_result['restore_attempted']);
+    $restored          = !empty($schedule_result['restored']);
+
+    if ($restore_attempted) {
+        if ($restored) {
+            $notice = esc_html__(
+                'La planification précédente des images a été restaurée automatiquement. Vérifiez que les prochaines analyses se lanceront correctement.',
+                'liens-morts-detector-jlg'
+            );
+            add_settings_error('blc_settings', 'blc_image_schedule_restored', $notice, 'warning');
+        } else {
+            $warning = esc_html__(
+                "L'ancienne planification des images n'a pas pu être restaurée. Une intervention manuelle est nécessaire.",
+                'liens-morts-detector-jlg'
+            );
+            add_settings_error('blc_settings', 'blc_image_schedule_restore_failed', $warning, 'warning');
+        }
+    } else {
+        $warning = esc_html__(
+            "Aucune ancienne planification d'images n'a été trouvée. Veuillez configurer manuellement la vérification automatique.",
+            'liens-morts-detector-jlg'
+        );
+        add_settings_error('blc_settings', 'blc_image_schedule_restore_missing', $warning, 'warning');
+    }
+
+    return false;
+}
+
+/**
+ * Sanitize l'activation de la planification automatique des images.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return bool
+ */
+function blc_sanitize_image_scan_schedule_enabled_option($value) {
+    $enabled = (bool) $value;
+
+    if (!$enabled) {
+        if (function_exists('wp_clear_scheduled_hook')) {
+            wp_clear_scheduled_hook('blc_check_image_batch', array(0, true));
+        }
+
+        blc_handle_image_schedule_result(array('success' => true), true);
+    }
+
+    return $enabled;
+}
+
+/**
+ * Valide et normalise la fréquence de vérification des images.
+ *
+ * @param mixed $value Valeur brute soumise.
+ *
+ * @return string
+ */
+function blc_sanitize_image_frequency_option($value) {
+    $preset_options      = blc_get_image_frequency_preset_options();
+    $allowed_frequencies = array_keys($preset_options);
+    $allowed_frequencies[] = 'custom';
+
+    $previous_frequency_option    = get_option('blc_image_scan_frequency', 'weekly');
+    $previous_frequency_sanitized = sanitize_text_field($previous_frequency_option);
+    $fallback_frequency           = in_array($previous_frequency_sanitized, $allowed_frequencies, true)
+        ? $previous_frequency_sanitized
+        : 'weekly';
+
+    $frequency_raw       = is_scalar($value) ? (string) $value : '';
+    $submitted_frequency = sanitize_text_field($frequency_raw);
+
+    if (in_array($submitted_frequency, $allowed_frequencies, true)) {
+        $frequency = $submitted_frequency;
+    } else {
+        $frequency        = $fallback_frequency;
+        $frequency_labels = $preset_options;
+        $frequency_labels['custom'] = __('Intervalle personnalisé', 'liens-morts-detector-jlg');
+        $frequency_label = isset($frequency_labels[$frequency]) ? $frequency_labels[$frequency] : $frequency;
+        $message         = sprintf(
+            /* translators: %s: fallback frequency label. */
+            esc_html__('La fréquence choisie pour les images est invalide. La valeur "%s" a été conservée.', 'liens-morts-detector-jlg'),
+            esc_html($frequency_label)
+        );
+        add_settings_error('blc_settings', 'blc_image_frequency_warning', $message, 'warning');
+    }
+
+    $custom_hours_option = get_option('blc_image_scan_frequency_custom_hours', 168);
+    $custom_time_option  = get_option('blc_image_scan_frequency_custom_time', '02:00');
+
+    $custom_hours_override = null;
+    if (isset($_POST['blc_image_scan_frequency_custom_hours'])) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- géré via l'API Settings.
+        $custom_hours_override = blc_normalize_image_custom_frequency_hours(
+            wp_unslash($_POST['blc_image_scan_frequency_custom_hours']),
+            $custom_hours_option
+        );
+    }
+
+    $custom_time_override = null;
+    if (isset($_POST['blc_image_scan_frequency_custom_time'])) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- géré via l'API Settings.
+        $custom_time_override = blc_normalize_image_custom_frequency_time(
+            wp_unslash($_POST['blc_image_scan_frequency_custom_time']),
+            $custom_time_option
+        );
+    }
+
+    $schedule_enabled = (bool) get_option('blc_image_scan_schedule_enabled', false);
+    if (isset($_POST['option_page']) && is_scalar($_POST['option_page']) && 'blc_settings' === (string) wp_unslash($_POST['option_page'])) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+        $schedule_enabled = isset($_POST['blc_image_scan_schedule_enabled']);
+    }
+
+    if ($schedule_enabled) {
+        $schedule_result = blc_reset_image_check_schedule(
+            array(
+                'frequency'    => $frequency,
+                'custom_hours' => $custom_hours_override,
+                'custom_time'  => $custom_time_override,
+                'context'      => 'settings',
+            )
+        );
+
+        blc_handle_image_schedule_result($schedule_result, true);
+    } else {
+        blc_handle_image_schedule_result(array('success' => true), true);
     }
 
     return $frequency;

@@ -67,6 +67,10 @@ class BlcDashboardImagesPageTest extends TestCase
 
         $this->options = [
             'blc_last_image_check_time' => 0,
+            'blc_image_scan_schedule_enabled' => false,
+            'blc_image_scan_frequency' => 'weekly',
+            'blc_image_scan_frequency_custom_hours' => 168,
+            'blc_image_scan_frequency_custom_time' => '02:00',
         ];
 
         $this->previous_wpdb = $GLOBALS['wpdb'] ?? null;
@@ -125,6 +129,8 @@ class BlcDashboardImagesPageTest extends TestCase
         Functions\when('wp_kses_post')->alias(static fn($string) => $string);
         Functions\when('wp_unslash')->alias(static fn($value) => $value);
         Functions\when('sanitize_text_field')->alias(static fn($value) => is_scalar($value) ? (string) $value : '');
+        Functions\when('sanitize_key')->alias(static fn($value) => is_scalar($value) ? strtolower((string) $value) : '');
+        Functions\when('sanitize_html_class')->alias(static fn($value) => is_scalar($value) ? (string) $value : '');
         Functions\when('number_format_i18n')->alias(static function ($number, $decimals = 0) {
             return number_format((float) $number, (int) $decimals);
         });
@@ -140,6 +146,19 @@ class BlcDashboardImagesPageTest extends TestCase
 
             return gmdate($format, (int) $timestamp);
         });
+        Functions\when('wp_next_scheduled')->justReturn(false);
+        Functions\when('blc_update_image_scan_status')->justReturn(true);
+        Functions\when('blc_get_image_scan_status_payload')->justReturn([
+            'state'             => 'idle',
+            'message'           => '',
+            'total_batches'     => 0,
+            'processed_batches' => 0,
+            'remaining_batches' => 0,
+            'is_full_scan'      => true,
+            'last_error'        => '',
+            'started_at'        => 0,
+            'ended_at'          => 0,
+        ]);
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-admin-pages.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/class-blc-images-list-table.php';
@@ -224,6 +243,77 @@ class BlcDashboardImagesPageTest extends TestCase
         $this->assertSame(1, $calls);
         $this->assertStringContainsString("La vérification des images a été programmée", $output);
         $this->assertStringContainsString("Le déclenchement immédiat du cron a échoué", $output);
+    }
+
+    public function test_dashboard_images_page_shows_reschedule_description_when_schedule_disabled(): void
+    {
+        $this->setStoredOption('blc_image_scan_schedule_enabled', false);
+
+        ob_start();
+        blc_dashboard_images_page();
+        $output = (string) ob_get_clean();
+
+        $this->assertStringContainsString('Activez la planification automatique', $output);
+        $this->assertStringNotContainsString('Reprogrammer le scan automatique', $output);
+    }
+
+    public function test_dashboard_images_page_shows_next_schedule_when_enabled(): void
+    {
+        $this->setStoredOption('blc_image_scan_schedule_enabled', true);
+
+        $timestamp = 1700000000;
+        $calls = 0;
+
+        Functions\when('wp_next_scheduled')->alias(static function ($hook, $args = array()) use ($timestamp, &$calls) {
+            if ('blc_check_image_batch' === $hook && $args === array(0, true)) {
+                $calls++;
+
+                return $timestamp;
+            }
+
+            return false;
+        });
+
+        ob_start();
+        blc_dashboard_images_page();
+        $output = (string) ob_get_clean();
+
+        $this->assertGreaterThan(0, $calls);
+        $this->assertStringContainsString('Prochain scan automatique', $output);
+        $this->assertStringContainsString(gmdate('j M Y H:i', $timestamp), $output);
+    }
+
+    public function test_reschedule_image_cron_triggers_schedule_when_enabled(): void
+    {
+        $this->setStoredOption('blc_image_scan_schedule_enabled', true);
+        $_POST['blc_reschedule_image_cron'] = '1';
+
+        $timestamp = 1700003600;
+
+        Functions\expect('blc_reset_image_check_schedule')->once()->withArgs(static function ($args) {
+            return isset($args['context']) && 'dashboard_reschedule' === $args['context'];
+        })->andReturn([
+            'success' => true,
+        ]);
+
+        $calls = 0;
+        Functions\when('wp_next_scheduled')->alias(static function ($hook, $args = array()) use ($timestamp, &$calls) {
+            if ('blc_check_image_batch' === $hook && $args === array(0, true)) {
+                $calls++;
+
+                return $timestamp;
+            }
+
+            return false;
+        });
+
+        ob_start();
+        blc_dashboard_images_page();
+        $output = (string) ob_get_clean();
+
+        $this->assertSame(2, $calls);
+        $this->assertStringContainsString('Le scan automatique des images a été reprogrammé selon les réglages actuels.', $output);
+        $this->assertStringContainsString(gmdate('j M Y H:i', $timestamp), $output);
     }
 
     public function test_dashboard_images_page_displays_thumbnail_preview_when_available(): void

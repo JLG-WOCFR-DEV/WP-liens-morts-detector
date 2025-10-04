@@ -457,6 +457,23 @@ function blc_activate_site() {
             }
         }
     }
+
+    $image_schedule_enabled = (bool) get_option('blc_image_scan_schedule_enabled', false);
+    if ($image_schedule_enabled) {
+        $existing_image_schedule = wp_next_scheduled('blc_check_image_batch', array(0, true));
+
+        if (!$existing_image_schedule) {
+            $image_schedule_result = blc_reset_image_check_schedule(
+                array(
+                    'context' => 'activation',
+                )
+            );
+
+            if (!$image_schedule_result['success'] && !empty($image_schedule_result['error_message'])) {
+                error_log($image_schedule_result['error_message']);
+            }
+        }
+    }
 }
 
 /**
