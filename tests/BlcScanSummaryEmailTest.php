@@ -124,9 +124,17 @@ class BlcScanSummaryEmailTest extends TestCase
 
     public function test_summary_includes_top_issues_and_trend(): void
     {
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-settings-fields.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-scanner.php';
 
-        OptionsStore::$options['blc_last_scan_summary_counts'] = ['link' => 2];
+        $default_filters = blc_get_default_notification_status_filters();
+        $default_signature = implode('|', $default_filters);
+        OptionsStore::$options['blc_last_scan_summary_counts'] = [
+            'link' => [
+                'count'   => 2,
+                'filters' => $default_signature,
+            ],
+        ];
 
         $wpdb = $GLOBALS['wpdb'];
         $wpdb->get_var_result = 5;
@@ -152,6 +160,7 @@ class BlcScanSummaryEmailTest extends TestCase
         $this->assertSame(3, $summary['difference']);
         $this->assertSame(2, $summary['previous_count']);
         $this->assertCount(2, $summary['top_issues']);
+        $this->assertSame($default_filters, $summary['status_filters']);
 
         $message = $summary['message'];
         $this->assertStringContainsString('- Liens cassés détectés : 5', $message);
@@ -162,12 +171,17 @@ class BlcScanSummaryEmailTest extends TestCase
 
         $this->assertSame(
             5,
-            OptionsStore::$options['blc_last_scan_summary_counts']['link']
+            OptionsStore::$options['blc_last_scan_summary_counts']['link']['count']
+        );
+        $this->assertSame(
+            $default_signature,
+            OptionsStore::$options['blc_last_scan_summary_counts']['link']['filters']
         );
     }
 
     public function test_summary_handles_first_measure_without_top_issues(): void
     {
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-settings-fields.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-scanner.php';
 
         $wpdb = $GLOBALS['wpdb'];
@@ -188,7 +202,55 @@ class BlcScanSummaryEmailTest extends TestCase
 
         $this->assertSame(
             1,
-            OptionsStore::$options['blc_last_scan_summary_counts']['image']
+            OptionsStore::$options['blc_last_scan_summary_counts']['image']['count']
         );
+    }
+
+    public function test_summary_ignores_previous_trend_when_filters_change(): void
+    {
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-settings-fields.php';
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-scanner.php';
+
+        $wpdb = $GLOBALS['wpdb'];
+        $wpdb->get_var_result = 4;
+        $wpdb->get_results_result = [];
+
+        OptionsStore::$options['blc_notification_status_filters'] = ['status_404_410'];
+        OptionsStore::$options['blc_last_scan_summary_counts'] = [
+            'link' => [
+                'count'   => 7,
+                'filters' => 'status_404_410|status_5xx',
+            ],
+        ];
+
+        $summary = blc_generate_scan_summary_email('link');
+
+        $this->assertNull($summary['previous_count']);
+        $this->assertNull($summary['difference']);
+        $this->assertSame(
+            4,
+            OptionsStore::$options['blc_last_scan_summary_counts']['link']['count']
+        );
+        $this->assertSame(
+            'status_404_410',
+            OptionsStore::$options['blc_last_scan_summary_counts']['link']['filters']
+        );
+    }
+
+    public function test_summary_accepts_status_filter_override(): void
+    {
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-settings-fields.php';
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-scanner.php';
+
+        $wpdb = $GLOBALS['wpdb'];
+        $wpdb->get_var_result = 2;
+        $wpdb->get_results_result = [];
+
+        $summary = blc_generate_scan_summary_email('link', ['status_filters' => ['status_5xx']]);
+
+        $this->assertNotNull($summary);
+        $this->assertSame(['status_5xx'], $summary['status_filters']);
+        $this->assertStringContainsString('http_status BETWEEN 500 AND 599', (string) $wpdb->last_get_var_query);
+        $this->assertStringNotContainsString('http_status IN (404, 410)', (string) $wpdb->last_get_var_query);
     }
 }

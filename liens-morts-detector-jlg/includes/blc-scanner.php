@@ -1194,10 +1194,11 @@ function blc_is_notification_channel_enabled($dataset_type) {
  * Build the scan summary email payload for a dataset type.
  *
  * @param string $dataset_type Dataset type ('link' or 'image').
+ * @param array<string,mixed>|null $args    Optional overrides (ex: status_filters).
  *
  * @return array<string, mixed>|null
  */
-function blc_generate_scan_summary_email($dataset_type) {
+function blc_generate_scan_summary_email($dataset_type, $args = null) {
     global $wpdb;
     if (!isset($wpdb) || !is_object($wpdb) || !isset($wpdb->prefix)) {
         return null;
@@ -1208,12 +1209,22 @@ function blc_generate_scan_summary_email($dataset_type) {
         return null;
     }
 
+    if (!is_array($args)) {
+        $args = array();
+    }
+
     $table_name = $wpdb->prefix . 'blc_broken_links';
     $broken_count = 0;
     $row_types = blc_get_dataset_row_types($dataset_type);
     if ($row_types === []) {
         return null;
     }
+
+    $status_override = array_key_exists('status_filters', $args) ? $args['status_filters'] : null;
+    $status_filters = blc_get_notification_status_filters($status_override);
+    $status_clause = blc_get_notification_status_filter_sql_clause($status_filters, 'http_status');
+    $status_condition = ($status_clause !== '') ? ' AND ' . $status_clause : '';
+    $status_signature = implode('|', $status_filters);
 
     $top_issues = [];
     $top_issues_limit = 5;
@@ -1227,13 +1238,14 @@ function blc_generate_scan_summary_email($dataset_type) {
     if (method_exists($wpdb, 'prepare') && method_exists($wpdb, 'get_var')) {
         if (count($row_types) === 1) {
             $query = $wpdb->prepare(
-                "SELECT COUNT(*) FROM $table_name WHERE type = %s",
+                "SELECT COUNT(*) FROM $table_name WHERE type = %s$status_condition",
                 reset($row_types)
             );
         } else {
             $placeholders = implode(',', array_fill(0, count($row_types), '%s'));
+            $base_query = "SELECT COUNT(*) FROM $table_name WHERE type IN ($placeholders)$status_condition";
             $query = $wpdb->prepare(
-                "SELECT COUNT(*) FROM $table_name WHERE type IN ($placeholders)",
+                $base_query,
                 $row_types
             );
         }
@@ -1246,7 +1258,7 @@ function blc_generate_scan_summary_email($dataset_type) {
             if (count($row_types) === 1) {
                 $top_query = $wpdb->prepare(
                     "SELECT url, http_status, post_title, COUNT(*) AS occurrence_count " .
-                    "FROM $table_name WHERE type = %s AND ignored_at IS NULL " .
+                    "FROM $table_name WHERE type = %s$status_condition AND ignored_at IS NULL " .
                     "GROUP BY url, http_status, post_title " .
                     "ORDER BY occurrence_count DESC, http_status DESC, url ASC " .
                     "LIMIT %d",
@@ -1257,14 +1269,16 @@ function blc_generate_scan_summary_email($dataset_type) {
                 $placeholders = implode(',', array_fill(0, count($row_types), '%s'));
                 $params = $row_types;
                 $params[] = $top_issues_limit;
+                $base_query =
+                    "SELECT url, http_status, post_title, COUNT(*) AS occurrence_count " .
+                    "FROM $table_name WHERE type IN ($placeholders)$status_condition AND ignored_at IS NULL " .
+                    "GROUP BY url, http_status, post_title " .
+                    "ORDER BY occurrence_count DESC, http_status DESC, url ASC " .
+                    "LIMIT %d";
                 $top_query = call_user_func_array(
                     [$wpdb, 'prepare'],
                     array_merge([
-                        "SELECT url, http_status, post_title, COUNT(*) AS occurrence_count " .
-                        "FROM $table_name WHERE type IN ($placeholders) AND ignored_at IS NULL " .
-                        "GROUP BY url, http_status, post_title " .
-                        "ORDER BY occurrence_count DESC, http_status DESC, url ASC " .
-                        "LIMIT %d",
+                        $base_query,
                     ],
                     $params)
                 );
@@ -1311,8 +1325,26 @@ function blc_generate_scan_summary_email($dataset_type) {
             $previous_counts = $stored_counts;
         }
         if (array_key_exists($dataset_type, $previous_counts)) {
-            $previous_count = max(0, (int) $previous_counts[$dataset_type]);
-            $difference = $broken_count - $previous_count;
+            $stored_entry = $previous_counts[$dataset_type];
+            $stored_signature = '';
+            if (is_array($stored_entry)) {
+                if (isset($stored_entry['count'])) {
+                    $previous_count = max(0, (int) $stored_entry['count']);
+                }
+                if (isset($stored_entry['filters']) && is_scalar($stored_entry['filters'])) {
+                    $stored_signature = (string) $stored_entry['filters'];
+                }
+            } else {
+                $previous_count = max(0, (int) $stored_entry);
+            }
+
+            if ($previous_count !== null) {
+                if ($stored_signature !== '' && $stored_signature !== $status_signature) {
+                    $previous_count = null;
+                } else {
+                    $difference = $broken_count - $previous_count;
+                }
+            }
         }
     }
 
@@ -1407,7 +1439,10 @@ function blc_generate_scan_summary_email($dataset_type) {
     $message = implode(PHP_EOL, $message_lines);
 
     if (function_exists('update_option')) {
-        $previous_counts[$dataset_type] = $broken_count;
+        $previous_counts[$dataset_type] = array(
+            'count'   => $broken_count,
+            'filters' => $status_signature,
+        );
         update_option('blc_last_scan_summary_counts', $previous_counts);
     }
 
@@ -1422,7 +1457,48 @@ function blc_generate_scan_summary_email($dataset_type) {
         'top_issues'     => $top_issues,
         'previous_count' => $previous_count,
         'difference'     => $difference,
+        'status_filters' => $status_filters,
+        'status_filters_signature' => $status_signature,
     ];
+}
+
+/**
+ * Build the SQL clause used to filter HTTP statuses based on selected categories.
+ *
+ * @param string[] $filters Selected categories.
+ * @param string   $column  Column name to apply the clause to.
+ *
+ * @return string
+ */
+function blc_get_notification_status_filter_sql_clause(array $filters, $column = 'http_status') {
+    $column = preg_replace('/[^A-Za-z0-9_.]/', '', (string) $column);
+    if ($column === '') {
+        $column = 'http_status';
+    }
+
+    $clauses = array();
+
+    $definitions = array(
+        'status_404_410'   => sprintf('%1$s IN (404, 410)', $column),
+        'status_5xx'       => sprintf('(%1$s BETWEEN 500 AND 599)', $column),
+        'status_redirects' => sprintf('(%1$s BETWEEN 300 AND 399)', $column),
+        'status_other'     => sprintf(
+            '(%1$s IS NULL OR %1$s = 0 OR %1$s = \'\' OR (%1$s NOT BETWEEN 300 AND 399 AND %1$s NOT BETWEEN 500 AND 599 AND %1$s NOT IN (404, 410)))',
+            $column
+        ),
+    );
+
+    foreach ($filters as $filter) {
+        if (isset($definitions[$filter])) {
+            $clauses[] = $definitions[$filter];
+        }
+    }
+
+    if ($clauses === array()) {
+        return '';
+    }
+
+    return '(' . implode(' OR ', $clauses) . ')';
 }
 
 /**

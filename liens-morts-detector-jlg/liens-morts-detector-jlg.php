@@ -1585,6 +1585,15 @@ function blc_ajax_send_test_email() {
         $webhook_overrides['message_template'] = wp_unslash($_POST['message_template']);
     }
 
+    $status_filters_override = null;
+    if (isset($_POST['status_filters'])) {
+        $raw_filters = wp_unslash($_POST['status_filters']);
+        if (!is_array($raw_filters)) {
+            $raw_filters = ($raw_filters === '') ? array() : array($raw_filters);
+        }
+        $status_filters_override = blc_normalize_notification_status_filters($raw_filters);
+    }
+
     $webhook_settings = blc_get_notification_webhook_settings($webhook_overrides);
     $has_webhook = blc_is_webhook_notification_configured($webhook_settings);
 
@@ -1628,7 +1637,12 @@ function blc_ajax_send_test_email() {
     };
 
     foreach ($dataset_types as $dataset_type) {
-        $summary = blc_generate_scan_summary_email($dataset_type);
+        $summary_args = array();
+        if ($status_filters_override !== null) {
+            $summary_args['status_filters'] = $status_filters_override;
+        }
+
+        $summary = blc_generate_scan_summary_email($dataset_type, $summary_args);
         if ($summary === null) {
             $results[$dataset_type] = array(
                 'email'   => array('status' => $recipients === array() ? 'skipped' : 'failed'),

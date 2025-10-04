@@ -125,3 +125,98 @@ describe('blc-admin-scripts accessibility helper', () => {
         expect(window.wp.a11y.speak).toHaveBeenCalledWith('La ligne a été mise à jour.', 'polite');
     });
 });
+
+describe('blc-admin-scripts test notification button', () => {
+    let originalReady;
+    let postSpy;
+    let deferred;
+
+    beforeEach(() => {
+        jest.resetModules();
+        document.body.innerHTML = `
+            <div>
+                <button type="button" id="blc-send-test-email">Envoyer</button>
+                <span id="blc-test-email-spinner"></span>
+                <div id="blc-test-email-feedback"></div>
+                <textarea id="blc_notification_message_template"></textarea>
+                <input type="text" id="blc_notification_recipients" value="admin@example.com" />
+                <input type="checkbox" id="blc_notification_links_enabled" checked />
+                <input type="checkbox" id="blc_notification_images_enabled" />
+                <input type="url" id="blc_notification_webhook_url" value="" />
+                <select id="blc_notification_webhook_channel">
+                    <option value="disabled" selected>Disabled</option>
+                </select>
+                <label><input type="checkbox" name="blc_notification_status_filters[]" value="status_404_410" checked />404</label>
+                <label><input type="checkbox" name="blc_notification_status_filters[]" value="status_5xx" />5xx</label>
+            </div>
+        `;
+
+        originalReady = $.fn.ready;
+        $.fn.ready = function(fn) {
+            fn.call(document, $);
+            return this;
+        };
+
+        window.blcAdminMessages = {};
+        window.blcAdminNotifications = {
+            action: 'blc_send_test_email',
+            nonce: 'abc123',
+            ajaxUrl: '/ajax-endpoint',
+            missingRecipientsText: 'missing',
+            missingChannelText: 'channel',
+            errorText: 'error',
+            sendingText: 'sending',
+            successText: 'success',
+            partialSuccessText: 'partial'
+        };
+
+        window.wp = {
+            a11y: {
+                speak: jest.fn()
+            }
+        };
+
+        global.jQuery = $;
+        global.$ = $;
+        window.jQuery = $;
+        window.$ = $;
+
+        deferred = $.Deferred();
+        postSpy = jest.spyOn($, 'post').mockImplementation(() => deferred);
+
+        require(path.resolve(__dirname, '../../..', 'liens-morts-detector-jlg/assets/js/blc-admin-scripts.js'));
+    });
+
+    afterEach(() => {
+        if (postSpy) {
+            postSpy.mockRestore();
+            postSpy = null;
+        }
+
+        delete window.blcAdminNotifications;
+        delete window.blcAdminMessages;
+        delete window.wp;
+        delete global.jQuery;
+        delete global.$;
+        delete window.jQuery;
+        delete window.$;
+
+        if (originalReady) {
+            $.fn.ready = originalReady;
+        } else {
+            delete $.fn.ready;
+        }
+
+        jest.resetModules();
+    });
+
+    it('includes the selected status filters in the AJAX payload', () => {
+        $('#blc-send-test-email').trigger('click');
+
+        expect(postSpy).toHaveBeenCalledTimes(1);
+        const payload = postSpy.mock.calls[0][1];
+        expect(payload.status_filters).toEqual(['status_404_410']);
+
+        deferred.resolve({ success: true, data: { message: 'ok' } });
+    });
+});
