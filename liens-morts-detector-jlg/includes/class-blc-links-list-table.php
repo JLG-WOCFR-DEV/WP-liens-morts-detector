@@ -293,6 +293,22 @@ class BLC_Links_List_Table extends WP_List_Table {
     }
 
     /**
+     * Définit les colonnes pouvant être triées via l'interface.
+     *
+     * @return array<string, array{0:string,1:bool}|string>
+     */
+    protected function get_sortable_columns() {
+        return [
+            'url'               => ['url', false],
+            'anchor_text'       => ['anchor', false],
+            'http_status'       => ['http_status', false],
+            'redirect_target_url' => ['redirect_target_url', false],
+            'last_checked_at'   => ['last_checked_at', false],
+            'post_title'        => ['post_title', false],
+        ];
+    }
+
+    /**
      * Rendu de la colonne de cases à cocher utilisée pour les actions groupées.
      *
      * @param array $item L'élément actuel du tableau.
@@ -677,7 +693,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         $this->process_bulk_action();
         $this->maybe_prepare_bulk_notice_from_query();
 
-        $this->_column_headers = [$this->get_columns(), [], []];
+        $this->_column_headers = [$this->get_columns(), [], $this->get_sortable_columns(), 'url'];
         $current_view = (!empty($_GET['link_type'])) ? sanitize_text_field(wp_unslash($_GET['link_type'])) : 'all';
         $per_page     = 20;
         $current_page = max(1, (int) $this->get_pagenum());
@@ -757,7 +773,55 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         $offset = ($current_page - 1) * $per_page;
 
-        $order_by = $is_ignored_view ? 'ignored_at DESC, id DESC' : 'id DESC';
+        $sortable_columns = $this->get_sortable_columns();
+        $whitelisted_columns = [];
+
+        foreach ($sortable_columns as $column_key => $sortable_data) {
+            if (is_array($sortable_data) && isset($sortable_data[0])) {
+                $db_column = (string) $sortable_data[0];
+            } else {
+                $db_column = (string) $sortable_data;
+            }
+
+            if ($db_column !== '') {
+                $whitelisted_columns[$column_key] = $db_column;
+            }
+        }
+
+        // Colonnes internes utilisées pour les tris par défaut.
+        $whitelisted_columns['id'] = 'id';
+        if ($is_ignored_view) {
+            $whitelisted_columns['ignored_at'] = 'ignored_at';
+        }
+
+        $requested_orderby = '';
+        if (!empty($_GET['orderby'])) {
+            $requested_orderby = sanitize_key(wp_unslash($_GET['orderby']));
+        }
+
+        $order_direction = 'DESC';
+        if (!empty($_GET['order'])) {
+            $raw_order = strtolower((string) sanitize_text_field(wp_unslash($_GET['order'])));
+            if ($raw_order === 'asc') {
+                $order_direction = 'ASC';
+            } elseif ($raw_order === 'desc') {
+                $order_direction = 'DESC';
+            }
+        }
+
+        if ($requested_orderby !== '' && isset($whitelisted_columns[$requested_orderby])) {
+            $primary_order_column = $whitelisted_columns[$requested_orderby];
+            $order_clauses = [sprintf('%s %s', $primary_order_column, $order_direction)];
+
+            if ($primary_order_column !== 'id') {
+                $order_clauses[] = 'id DESC';
+            }
+
+            $order_by = implode(', ', $order_clauses);
+        } else {
+            $fallback_order = $is_ignored_view ? ['ignored_at DESC', 'id DESC'] : ['id DESC'];
+            $order_by = implode(', ', $fallback_order);
+        }
 
         $data_query = $wpdb->prepare(
             "SELECT id, occurrence_index, url, anchor, redirect_target_url, context_html, context_excerpt, post_id, post_title, http_status, last_checked_at, ignored_at, posts.post_type AS post_type

@@ -46,4 +46,9 @@ class WP_List_Table
     {
         // Intentionally left blank for tests.
     }
+
+    public function current_action()
+    {
+        return false;
+    }
 }
