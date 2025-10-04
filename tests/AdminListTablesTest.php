@@ -11,6 +11,27 @@ namespace {
             return preg_replace('/[^a-z0-9_\-]/', '', $key);
         }
     }
+
+    if (!function_exists('wp_parse_args')) {
+        function wp_parse_args($args, $defaults = [])
+        {
+            if (is_object($args)) {
+                $args = get_object_vars($args);
+            } elseif (!is_array($args)) {
+                parse_str((string) $args, $args);
+            }
+
+            if (!is_array($args)) {
+                $args = [];
+            }
+
+            if (!is_array($defaults)) {
+                $defaults = [];
+            }
+
+            return array_merge($defaults, $args);
+        }
+    }
 }
 
 namespace Tests {
@@ -199,6 +220,25 @@ class AdminListTablesTest extends TestCase
         $this->assertSame('—', $table->renderLastChecked($empty));
     }
 
+    public function test_links_sortable_columns_are_exposed(): void
+    {
+        $table = new class() extends \BLC_Links_List_Table {
+            public function exposeSortableColumns(): array
+            {
+                return parent::get_sortable_columns();
+            }
+        };
+
+        $sortable = $table->exposeSortableColumns();
+
+        $this->assertArrayHasKey('http_status', $sortable);
+        $this->assertSame(['http_status', false], $sortable['http_status']);
+        $this->assertArrayHasKey('last_checked_at', $sortable);
+        $this->assertSame(['last_checked_at', false], $sortable['last_checked_at']);
+        $this->assertArrayHasKey('anchor_text', $sortable);
+        $this->assertSame(['anchor', false], $sortable['anchor_text']);
+    }
+
     public function test_links_prepare_items_supports_injected_data_with_pagination(): void
     {
         $_REQUEST['paged'] = 2;
@@ -210,6 +250,28 @@ class AdminListTablesTest extends TestCase
         $this->assertCount(20, $table->items);
         $this->assertSame('https://example.com/link-20', $table->items[0]['url']);
         $this->assertSame(55, $table->get_pagination_args()['total_items']);
+    }
+
+    public function test_links_prepare_items_sets_sortable_headers(): void
+    {
+        $table = new class() extends \BLC_Links_List_Table {
+            public function getColumnHeaders(): array
+            {
+                return $this->_column_headers;
+            }
+
+            public function exposeSortableColumns(): array
+            {
+                return parent::get_sortable_columns();
+            }
+        };
+
+        $table->prepare_items([]);
+
+        $headers = $table->getColumnHeaders();
+        $this->assertCount(4, $headers);
+        $this->assertSame($table->exposeSortableColumns(), $headers[2]);
+        $this->assertSame('url', $headers[3]);
     }
 
     public function test_links_prepare_items_uses_paginated_queries(): void
@@ -228,6 +290,55 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString('COUNT(*)', $wpdb->last_get_var_query);
         $this->assertStringContainsString('LIMIT 20', $wpdb->last_get_results_query);
         $this->assertStringContainsString('OFFSET 0', $wpdb->last_get_results_query);
+    }
+
+    public function test_links_prepare_items_applies_requested_ordering(): void
+    {
+        global $wpdb;
+        $wpdb = new DummyWpdb();
+        $wpdb->get_var_return_values = [0];
+        $wpdb->results_to_return = [];
+
+        $_GET['orderby'] = 'http_status';
+        $_GET['order'] = 'asc';
+
+        $table = new \BLC_Links_List_Table();
+        $table->prepare_items();
+
+        $this->assertStringContainsString('ORDER BY http_status ASC', $wpdb->last_get_results_query);
+        $this->assertStringContainsString('id DESC', $wpdb->last_get_results_query);
+    }
+
+    public function test_links_prepare_items_invalid_ordering_uses_fallback(): void
+    {
+        global $wpdb;
+        $wpdb = new DummyWpdb();
+        $wpdb->get_var_return_values = [0];
+        $wpdb->results_to_return = [];
+
+        $_GET['orderby'] = 'invalid_column';
+        $_GET['order'] = 'asc';
+
+        $table = new \BLC_Links_List_Table();
+        $table->prepare_items();
+
+        $this->assertStringContainsString('ORDER BY id DESC', $wpdb->last_get_results_query);
+        $this->assertStringNotContainsString('invalid_column', $wpdb->last_get_results_query);
+    }
+
+    public function test_links_prepare_items_ignored_view_fallback(): void
+    {
+        global $wpdb;
+        $wpdb = new DummyWpdb();
+        $wpdb->get_var_return_values = [0];
+        $wpdb->results_to_return = [];
+
+        $_GET['link_type'] = 'ignored';
+
+        $table = new \BLC_Links_List_Table();
+        $table->prepare_items();
+
+        $this->assertStringContainsString('ORDER BY ignored_at DESC, id DESC', $wpdb->last_get_results_query);
     }
 
     public function test_links_prepare_items_filters_by_selected_post_type(): void
