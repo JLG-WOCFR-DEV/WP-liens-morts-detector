@@ -246,7 +246,7 @@ function blc_schedule_manual_image_scan() {
     $automatic_enabled = (bool) get_option('blc_image_scan_schedule_enabled', false);
 
     if (!$automatic_enabled && function_exists('wp_clear_scheduled_hook')) {
-        wp_clear_scheduled_hook('blc_check_image_batch');
+        wp_clear_scheduled_hook('blc_check_image_batch', array(0, true));
     }
 
     $scheduled = wp_schedule_single_event(time(), 'blc_check_image_batch', array(0, true));
@@ -1360,7 +1360,7 @@ function blc_ajax_cancel_manual_image_scan() {
     }
 
     $cleared_batches = function_exists('wp_clear_scheduled_hook')
-        ? wp_clear_scheduled_hook('blc_check_image_batch')
+        ? wp_clear_scheduled_hook('blc_check_image_batch', array(0, true))
         : 0;
 
     $message = __('Les lots planifiés ont été annulés. Le lot en cours peut se terminer.', 'liens-morts-detector-jlg');

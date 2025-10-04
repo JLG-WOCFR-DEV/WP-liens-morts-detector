@@ -517,7 +517,7 @@ function blc_deactivate_site() {
     // Supprime également toute tâche de lot qui aurait pu rester en attente
     wp_clear_scheduled_hook('blc_check_batch');
     wp_clear_scheduled_hook('blc_manual_check_batch');
-    wp_clear_scheduled_hook('blc_check_image_batch');
+    wp_clear_scheduled_hook('blc_check_image_batch', array(0, true));
 }
 
 function blc_deactivation($network_wide = false) {

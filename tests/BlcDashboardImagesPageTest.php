@@ -316,6 +316,55 @@ class BlcDashboardImagesPageTest extends TestCase
         $this->assertStringContainsString(gmdate('j M Y H:i', $timestamp), $output);
     }
 
+    public function test_reschedule_image_cron_shows_warning_when_schedule_disabled(): void
+    {
+        $this->setStoredOption('blc_image_scan_schedule_enabled', false);
+        $_POST['blc_reschedule_image_cron'] = '1';
+
+        Functions\expect('blc_reset_image_check_schedule')->never();
+
+        ob_start();
+        blc_dashboard_images_page();
+        $output = (string) ob_get_clean();
+
+        $this->assertStringContainsString(
+            "La planification automatique des images est désactivée.",
+            $output
+        );
+    }
+
+    public function test_reschedule_image_cron_outputs_error_when_schedule_fails(): void
+    {
+        $this->setStoredOption('blc_image_scan_schedule_enabled', true);
+        $_POST['blc_reschedule_image_cron'] = '1';
+
+        Functions\expect('blc_reset_image_check_schedule')->once()->withArgs(static function ($args) {
+            return isset($args['context']) && 'dashboard_reschedule' === $args['context'];
+        })->andReturn([
+            'success'           => false,
+            'error_message'     => 'failure message',
+            'restore_attempted' => true,
+            'restored'          => false,
+        ]);
+
+        Functions\expect('error_log')->once()->withArgs(static function ($message) {
+            return is_string($message) && str_contains($message, 'failure message');
+        });
+
+        ob_start();
+        blc_dashboard_images_page();
+        $output = (string) ob_get_clean();
+
+        $this->assertStringContainsString(
+            "La planification automatique des images n'a pas pu être reprogrammée.",
+            $output
+        );
+        $this->assertStringContainsString(
+            "La planification précédente des images n'a pas pu être restaurée.",
+            $output
+        );
+    }
+
     public function test_dashboard_images_page_displays_thumbnail_preview_when_available(): void
     {
         Functions\when('attachment_url_to_postid')->alias(static function ($url) {
