@@ -298,6 +298,16 @@ function blc_register_settings() {
         )
     );
 
+    register_setting(
+        $option_group,
+        'blc_notification_status_filters',
+        array(
+            'type'              => 'array',
+            'sanitize_callback' => 'blc_sanitize_notification_status_filters_option',
+            'default'           => blc_get_default_notification_status_filters(),
+        )
+    );
+
     blc_register_settings_sections();
 }
 
@@ -1429,6 +1439,8 @@ function blc_render_notification_channels_field() {
     $webhook_url = (string) get_option('blc_notification_webhook_url', '');
     $message_template = (string) get_option('blc_notification_message_template', "{{subject}}\n\n{{message}}");
     $channel_choices = blc_get_notification_webhook_channel_choices();
+    $status_choices = blc_get_notification_status_filter_choices();
+    $status_filters = blc_get_notification_status_filters();
     ?>
     <fieldset>
         <legend class="screen-reader-text"><span><?php esc_html_e('Canaux de notification', 'liens-morts-detector-jlg'); ?></span></legend>
@@ -1466,6 +1478,22 @@ function blc_render_notification_channels_field() {
             <span class="spinner" id="blc-test-email-spinner" aria-hidden="true"></span>
         </p>
         <div id="blc-test-email-feedback" class="blc-test-email-feedback" aria-live="polite"></div>
+        <?php if ($status_choices !== []) : ?>
+            <hr>
+            <p><strong><?php esc_html_e('Statuts HTTP inclus dans les résumés', 'liens-morts-detector-jlg'); ?></strong></p>
+            <p class="description"><?php esc_html_e('Décochez les catégories à exclure des résumés envoyés (e-mail et webhook). Elles correspondent aux filtres de la liste des liens.', 'liens-morts-detector-jlg'); ?></p>
+            <div class="blc-notification-status-filters">
+                <?php foreach ($status_choices as $value => $label) :
+                    $input_id = 'blc_notification_status_filter_' . sanitize_html_class($value);
+                    $is_checked = in_array($value, $status_filters, true);
+                    ?>
+                    <label for="<?php echo esc_attr($input_id); ?>" class="blc-toggle">
+                        <input type="checkbox" name="blc_notification_status_filters[]" id="<?php echo esc_attr($input_id); ?>" value="<?php echo esc_attr($value); ?>" <?php checked($is_checked, true); ?>>
+                        <?php echo esc_html($label); ?>
+                    </label><br>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
     </fieldset>
     <?php
 }
@@ -2197,6 +2225,106 @@ function blc_get_notification_webhook_channel_choices() {
         'slack'    => __('Slack', 'liens-morts-detector-jlg'),
         'teams'    => __('Microsoft Teams', 'liens-morts-detector-jlg'),
     );
+}
+
+/**
+ * Retourne la liste des catégories de statuts HTTP disponibles pour les notifications.
+ *
+ * @return array<string, string>
+ */
+function blc_get_notification_status_filter_choices() {
+    return array(
+        'status_404_410'   => __('404 / 410 (contenu introuvable)', 'liens-morts-detector-jlg'),
+        'status_5xx'       => __('Erreurs serveur (5xx)', 'liens-morts-detector-jlg'),
+        'status_redirects' => __('Redirections (3xx)', 'liens-morts-detector-jlg'),
+        'status_other'     => __('Autres statuts (timeouts, 4xx hors 404/410, etc.)', 'liens-morts-detector-jlg'),
+    );
+}
+
+/**
+ * Retourne la liste par défaut des catégories retenues dans les résumés.
+ *
+ * @return string[]
+ */
+function blc_get_default_notification_status_filters() {
+    return array_keys(blc_get_notification_status_filter_choices());
+}
+
+/**
+ * Normalise une liste de catégories de statuts HTTP.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string[]
+ */
+function blc_normalize_notification_status_filters($value) {
+    $choices = blc_get_notification_status_filter_choices();
+
+    if (is_string($value)) {
+        $value = array($value);
+    } elseif (!is_array($value)) {
+        $value = array();
+    }
+
+    $selected = array();
+
+    foreach ($value as $candidate) {
+        if (!is_scalar($candidate)) {
+            continue;
+        }
+
+        $normalized = (string) $candidate;
+        if (function_exists('sanitize_key')) {
+            $normalized = sanitize_key($normalized);
+        } else {
+            $normalized = strtolower($normalized);
+            $normalized = preg_replace('/[^a-z0-9_\-]/', '', $normalized);
+        }
+
+        if ($normalized === '') {
+            continue;
+        }
+
+        if (!isset($choices[$normalized])) {
+            continue;
+        }
+
+        $selected[$normalized] = $normalized;
+    }
+
+    if ($selected === array()) {
+        return blc_get_default_notification_status_filters();
+    }
+
+    return array_values($selected);
+}
+
+/**
+ * Récupère la liste des statuts HTTP retenus pour les notifications.
+ *
+ * @param mixed $override Liste optionnelle à utiliser à la place du réglage stocké.
+ *
+ * @return string[]
+ */
+function blc_get_notification_status_filters($override = null) {
+    if (is_array($override)) {
+        return blc_normalize_notification_status_filters($override);
+    }
+
+    $stored = get_option('blc_notification_status_filters', blc_get_default_notification_status_filters());
+
+    return blc_normalize_notification_status_filters($stored);
+}
+
+/**
+ * Sanitize la liste des statuts HTTP retenus pour les notifications.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string[]
+ */
+function blc_sanitize_notification_status_filters_option($value) {
+    return blc_normalize_notification_status_filters($value);
 }
 
 /**

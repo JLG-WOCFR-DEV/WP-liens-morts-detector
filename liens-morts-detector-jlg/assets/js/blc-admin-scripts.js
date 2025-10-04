@@ -155,6 +155,7 @@ jQuery(document).ready(function($) {
         var $webhookUrl = $('#blc_notification_webhook_url');
         var $webhookChannel = $('#blc_notification_webhook_channel');
         var $messageTemplate = $('#blc_notification_message_template');
+        var $statusFilterInputs = $('input[name="blc_notification_status_filters[]"]');
         var isSending = false;
 
         function ensureFeedbackContainer() {
@@ -253,6 +254,16 @@ jQuery(document).ready(function($) {
                 return;
             }
 
+            var statusFilters = [];
+            if ($statusFilterInputs.length) {
+                $statusFilterInputs.each(function() {
+                    var $input = $(this);
+                    if ($input.is(':checked')) {
+                        statusFilters.push(String($input.val()));
+                    }
+                });
+            }
+
             var ajaxEndpoint = config.ajaxUrl || (typeof window.ajaxurl !== 'undefined' ? window.ajaxurl : '');
             if (!ajaxEndpoint) {
                 showFeedback('error', config.errorText || '');
@@ -271,7 +282,8 @@ jQuery(document).ready(function($) {
                 dataset_types: datasetTypes,
                 webhook_url: webhookUrlValue,
                 webhook_channel: webhookChannelValue,
-                message_template: $messageTemplate.length ? $messageTemplate.val() : ''
+                message_template: $messageTemplate.length ? $messageTemplate.val() : '',
+                status_filters: statusFilters
             }).done(function(response) {
                 if (response && response.success) {
                     var message = (response.data && response.data.message) ? response.data.message : (config.successText || '');
