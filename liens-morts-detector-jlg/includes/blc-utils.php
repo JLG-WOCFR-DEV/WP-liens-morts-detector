@@ -1156,6 +1156,71 @@ function blc_get_request_timeout_constraints() {
 }
 
 /**
+ * Retrieve the constraints applied to the link scan batch size.
+ *
+ * @return array{default: int, min: int, max: int}
+ */
+function blc_get_link_batch_size_constraints() {
+    $defaults = [
+        'default' => 20,
+        'min'     => 5,
+        'max'     => 200,
+    ];
+
+    $candidates = apply_filters('blc_link_batch_size_constraints', $defaults);
+    if (!is_array($candidates)) {
+        $candidates = [];
+    }
+
+    $default = isset($candidates['default']) ? (int) $candidates['default'] : $defaults['default'];
+    $min     = isset($candidates['min']) ? (int) $candidates['min'] : $defaults['min'];
+    $max     = isset($candidates['max']) ? (int) $candidates['max'] : $defaults['max'];
+
+    if ($min > $max) {
+        $tmp = $min;
+        $min = $max;
+        $max = $tmp;
+    }
+
+    if ($default < $min) {
+        $default = $min;
+    } elseif ($default > $max) {
+        $default = $max;
+    }
+
+    return [
+        'default' => $default,
+        'min'     => $min,
+        'max'     => $max,
+    ];
+}
+
+/**
+ * Normalize the batch size used during link scans.
+ *
+ * @param mixed $value Raw batch size value.
+ *
+ * @return int
+ */
+function blc_normalize_link_batch_size($value) {
+    $constraints = blc_get_link_batch_size_constraints();
+
+    $default = isset($constraints['default']) ? (int) $constraints['default'] : 20;
+    $min     = isset($constraints['min']) ? (int) $constraints['min'] : 1;
+    $max     = isset($constraints['max']) ? (int) $constraints['max'] : max($min, $default);
+
+    $sanitized = is_scalar($value) ? (int) $value : $default;
+
+    if ($sanitized < $min) {
+        $sanitized = $min;
+    } elseif ($sanitized > $max) {
+        $sanitized = $max;
+    }
+
+    return $sanitized;
+}
+
+/**
  * Normalize a timeout option coming from a settings form.
  *
  * @param mixed $value   Raw submitted value.

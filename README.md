@@ -26,6 +26,7 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 - La cadence peut être ajustée via un champ combinant intervalles prédéfinis et intervalle personnalisé (slider toutes les X heures + heure de départ). Une action sur le tableau de bord permet de forcer la reprogrammation selon les réglages en cas de blocage de WP‑Cron.
 - Les liens ou images détectés comme cassés apparaissent dans une table permettant la modification rapide de l’URL ou la suppression du lien.
 - Des réglages avancés permettent d’exclure certains domaines, de limiter l’analyse à des plages horaires et d’activer un mode debug pour le suivi.
+- La taille des lots analysés peut être ajustée pour s’adapter aux capacités de l’hébergement (de manière optionnelle via l’interface ou un filtre).
 - L’analyse des images distantes (CDN, sous-domaines médias) peut être activée dans les réglages. Cette vérification reste basée sur les fichiers présents dans `wp-content/uploads` et peut rallonger la durée du scan ou consommer davantage de quotas côté CDN.
 
 ## Commandes WP-CLI
@@ -74,6 +75,19 @@ Définit le délai (en secondes) avant la reprise d’un scan suspendu pour caus
 ```php
 add_filter('blc_load_retry_delay', function (int $delay): int {
     return 600; // Reprogrammer le scan dans 10 minutes au lieu de 5.
+});
+```
+
+### `blc_link_batch_size`
+Permet de modifier dynamiquement la taille des lots utilisés par le scanner de liens. La valeur par défaut est bornée entre `5` et `200` éléments, mais ces limites peuvent également être ajustées via `blc_link_batch_size_constraints`.
+
+```php
+add_filter('blc_link_batch_size', function (int $batchSize, int $batch, bool $isFullScan): int {
+    if ($isFullScan) {
+        return 50; // Traiter plus d’éléments par lot lors d’une réindexation complète.
+    }
+
+    return $batchSize;
 });
 ```
 

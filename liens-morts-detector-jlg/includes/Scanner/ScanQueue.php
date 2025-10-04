@@ -369,7 +369,10 @@ class ScanQueue {
                 : '';
 
             // --- 3. Récupération des données et préparation ---
-            $batch_size      = 20;
+            $batch_size_option = get_option('blc_batch_size', blc_get_link_batch_size_constraints()['default']);
+            $batch_size = blc_normalize_link_batch_size($batch_size_option);
+            $batch_size = apply_filters('blc_link_batch_size', $batch_size, $batch, $is_full_scan);
+            $batch_size = blc_normalize_link_batch_size($batch_size);
             $last_check_time = (int) get_option('blc_last_check_time', 0);
             $table_name      = $wpdb->prefix . 'blc_broken_links';
 

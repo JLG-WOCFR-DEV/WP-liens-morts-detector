@@ -26,6 +26,7 @@ function blc_register_settings() {
     $head_timeout_limits = isset($timeout_constraints['head']) ? $timeout_constraints['head'] : array('default' => 5);
     $get_timeout_limits  = isset($timeout_constraints['get']) ? $timeout_constraints['get'] : array('default' => 10);
     $recheck_constraints = blc_get_recheck_interval_days_constraints();
+    $batch_size_constraints = blc_get_link_batch_size_constraints();
 
     register_setting(
         $option_group,
@@ -104,6 +105,16 @@ function blc_register_settings() {
             'type'              => 'integer',
             'sanitize_callback' => 'blc_sanitize_batch_delay_option',
             'default'           => 60,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_batch_size',
+        array(
+            'type'              => 'integer',
+            'sanitize_callback' => 'blc_sanitize_batch_size_option',
+            'default'           => isset($batch_size_constraints['default']) ? $batch_size_constraints['default'] : 20,
         )
     );
 
@@ -372,8 +383,25 @@ function blc_register_settings_sections() {
             'min'         => 10,
             'step'        => 10,
             'unit'        => __('secondes', 'liens-morts-detector-jlg'),
-            'description' => __('Pause entre chaque groupe de 20 articles analysés. (Défaut : 60)', 'liens-morts-detector-jlg'),
+            'description' => __('Pause entre chaque lot d’articles analysés. (Défaut : 60)', 'liens-morts-detector-jlg'),
             'label_for'   => 'blc_batch_delay',
+        )
+    );
+
+    add_settings_field(
+        'blc_batch_size',
+        __('⚙️ Taille des lots', 'liens-morts-detector-jlg'),
+        'blc_render_number_field',
+        $page,
+        'blc_performance_section',
+        array(
+            'option_name' => 'blc_batch_size',
+            'min'         => isset($batch_size_constraints['min']) ? $batch_size_constraints['min'] : 5,
+            'max'         => isset($batch_size_constraints['max']) ? $batch_size_constraints['max'] : 200,
+            'step'        => 1,
+            'unit'        => __('articles', 'liens-morts-detector-jlg'),
+            'description' => __('Nombre d’articles traités par lot lors d’une analyse des liens. (Défaut : 20)', 'liens-morts-detector-jlg'),
+            'label_for'   => 'blc_batch_size',
         )
     );
 
@@ -1913,6 +1941,17 @@ function blc_sanitize_link_delay_option($value) {
  */
 function blc_sanitize_batch_delay_option($value) {
     return max(0, (int) $value);
+}
+
+/**
+ * Sanitize la taille des lots du scanner de liens.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return int
+ */
+function blc_sanitize_batch_size_option($value) {
+    return blc_normalize_link_batch_size($value);
 }
 
 /**

@@ -211,6 +211,7 @@ class BlcScannerTest extends TestCase
             'blc_rest_end_hour'    => '00',
             'blc_link_delay'       => 0,
             'blc_batch_delay'      => 60,
+            'blc_batch_size'       => 20,
             'blc_head_request_timeout' => 5,
             'blc_get_request_timeout'  => 10,
             'blc_scan_method'      => 'precise',
@@ -2965,6 +2966,92 @@ class BlcScannerTest extends TestCase
         $cacheKeyOptions = $this->updatedOptions;
         unset($cacheKeyOptions['blc_active_link_scan_key']);
         $this->assertSame([], $cacheKeyOptions, 'Last check time should not be updated before the final batch.');
+    }
+
+    public function test_blc_perform_check_uses_custom_batch_size_option(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_batch_size'] = 12;
+
+        $post = (object) [
+            'ID' => 11,
+            'post_title' => 'Custom Batch Size',
+            'post_content' => '<a href="https://example.com/custom">Custom</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 2,
+        ];
+
+        blc_perform_check(0, true);
+
+        $this->assertCount(1, $GLOBALS['wp_query_last_args'], 'WP_Query should be executed once.');
+        $args = $GLOBALS['wp_query_last_args'][0];
+        $this->assertSame(12, $args['posts_per_page']);
+    }
+
+    public function test_blc_perform_check_enforces_batch_size_constraints(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $constraints = blc_get_link_batch_size_constraints();
+        $this->options['blc_batch_size'] = 1;
+
+        $post = (object) [
+            'ID' => 12,
+            'post_title' => 'Clamped Batch Size',
+            'post_content' => '<a href="https://example.com/clamped">Clamped</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_check(0, true);
+
+        $this->assertCount(1, $GLOBALS['wp_query_last_args'], 'WP_Query should be executed once.');
+        $args = $GLOBALS['wp_query_last_args'][0];
+        $this->assertSame($constraints['min'], $args['posts_per_page']);
+    }
+
+    public function test_blc_perform_check_applies_batch_size_filter(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        Functions\when('apply_filters')->alias(function (string $hook, $value, ...$args) {
+            if ($hook === 'blc_parallel_requests_dispatcher') {
+                return [$this, 'dispatchParallelRequests'];
+            }
+
+            if ($hook === 'blc_link_batch_size') {
+                return 30;
+            }
+
+            return $value;
+        });
+
+        $post = (object) [
+            'ID' => 13,
+            'post_title' => 'Filtered Batch Size',
+            'post_content' => '<a href="https://example.com/filtered">Filtered</a>',
+        ];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [$post],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_check(0, false);
+
+        $this->assertCount(1, $GLOBALS['wp_query_last_args'], 'WP_Query should be executed once.');
+        $args = $GLOBALS['wp_query_last_args'][0];
+        $this->assertSame(30, $args['posts_per_page']);
     }
 
     public function test_blc_perform_check_reschedules_initial_batch_when_lock_is_held(): void
