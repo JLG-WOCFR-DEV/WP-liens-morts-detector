@@ -572,20 +572,9 @@ if (!class_exists('ImageScanQueue')) {
             ]);
 
             $batch_size = 20;
-            $public_post_types = get_post_types(['public' => true], 'names');
-            if (!is_array($public_post_types)) {
-                $public_post_types = [];
-            }
-            $public_post_types = array_values(array_filter(array_map('strval', $public_post_types), static function ($post_type) {
-                return $post_type !== '';
-            }));
-            if ($public_post_types === []) {
-                $public_post_types = ['post'];
-            }
-
             // Limiter la requête aux types de contenus publics (repli sur « post ») tout en conservant la pagination existante.
             $args = [
-                'post_type'      => $public_post_types,
+                'post_type'      => blc_get_scannable_post_types(),
                 'post_status'    => blc_get_scannable_post_statuses(),
                 'posts_per_page' => $batch_size,
                 'paged'          => $batch + 1,
@@ -1354,6 +1343,70 @@ function blc_parse_notification_recipients($raw_recipients) {
     }
 
     return array_values($recipients);
+}
+
+/**
+ * Retrieve the list of post types that should be included in scans.
+ *
+ * @return string[]
+ */
+function blc_get_scannable_post_types() {
+    $stored_post_types = get_option('blc_post_types', []);
+    if (!is_array($stored_post_types)) {
+        $stored_post_types = [$stored_post_types];
+    }
+
+    $available_post_types = get_post_types([], 'names');
+    if (!is_array($available_post_types)) {
+        $available_post_types = [];
+    }
+
+    $available_lookup = [];
+    foreach ($available_post_types as $post_type_name) {
+        $normalized_name = sanitize_key((string) $post_type_name);
+        if ($normalized_name === '') {
+            continue;
+        }
+
+        $available_lookup[$normalized_name] = true;
+    }
+
+    $selected_post_types = [];
+    foreach ($stored_post_types as $post_type_value) {
+        if (!is_scalar($post_type_value)) {
+            continue;
+        }
+
+        $post_type_key = sanitize_key((string) $post_type_value);
+        if ($post_type_key === '') {
+            continue;
+        }
+
+        if ($available_lookup !== [] && !isset($available_lookup[$post_type_key])) {
+            continue;
+        }
+
+        $selected_post_types[$post_type_key] = $post_type_key;
+    }
+
+    if ($selected_post_types !== []) {
+        return array_values($selected_post_types);
+    }
+
+    $public_post_types = get_post_types(['public' => true], 'names');
+    if (!is_array($public_post_types)) {
+        $public_post_types = [];
+    }
+
+    $public_post_types = array_values(array_filter(array_map('sanitize_key', $public_post_types), static function ($post_type) {
+        return $post_type !== '';
+    }));
+
+    if ($public_post_types === []) {
+        $public_post_types = ['post'];
+    }
+
+    return $public_post_types;
 }
 
 /**

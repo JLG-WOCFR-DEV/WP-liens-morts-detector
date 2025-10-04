@@ -331,20 +331,9 @@ class ScanQueue {
             $last_check_time = (int) get_option('blc_last_check_time', 0);
             $table_name      = $wpdb->prefix . 'blc_broken_links';
 
-            $public_post_types = get_post_types(['public' => true], 'names');
-            if (!is_array($public_post_types)) {
-                $public_post_types = [];
-            }
-            $public_post_types = array_values(array_filter(array_map('strval', $public_post_types), static function ($post_type) {
-                return $post_type !== '';
-            }));
-            if ($public_post_types === []) {
-                $public_post_types = ['post'];
-            }
-
             // Limiter la requête aux types de contenus publics (repli sur « post ») tout en conservant la pagination existante.
             $args = [
-                'post_type'      => $public_post_types,
+                'post_type'      => blc_get_scannable_post_types(),
                 'post_status'    => blc_get_scannable_post_statuses(),
                 'posts_per_page' => $batch_size,
                 'paged'          => $batch + 1,
