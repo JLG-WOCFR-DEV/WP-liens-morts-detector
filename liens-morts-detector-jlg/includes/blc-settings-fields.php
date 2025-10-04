@@ -189,6 +189,16 @@ function blc_register_settings() {
 
     register_setting(
         $option_group,
+        'blc_post_types',
+        array(
+            'type'              => 'array',
+            'sanitize_callback' => 'blc_sanitize_post_types_option',
+            'default'           => array(),
+        )
+    );
+
+    register_setting(
+        $option_group,
         'blc_post_statuses',
         array(
             'type'              => 'array',
@@ -400,6 +410,14 @@ function blc_register_settings_sections() {
         __('Statuts analysés', 'liens-morts-detector-jlg'),
         '__return_false',
         $page
+    );
+
+    add_settings_field(
+        'blc_post_types',
+        __('Types de contenus à analyser', 'liens-morts-detector-jlg'),
+        'blc_render_post_types_field',
+        $page,
+        'blc_post_statuses_section'
     );
 
     add_settings_field(
@@ -1104,6 +1122,83 @@ function blc_render_post_statuses_field() {
     ?>
     <p class="description"><?php esc_html_e('Sélectionnez les statuts des contenus à inclure dans l’analyse. Par défaut, seuls les contenus publiés sont examinés.', 'liens-morts-detector-jlg'); ?></p>
     <?php
+}
+
+/**
+ * Affiche la liste des types de contenus sélectionnables.
+ *
+ * @return void
+ */
+function blc_render_post_types_field() {
+    $selected_post_types_option = get_option('blc_post_types', array());
+    if (!is_array($selected_post_types_option)) {
+        $selected_post_types_option = array($selected_post_types_option);
+    }
+
+    $selected_post_types = array();
+    foreach ($selected_post_types_option as $post_type_value) {
+        if (!is_scalar($post_type_value)) {
+            continue;
+        }
+
+        $post_type_key = sanitize_key((string) $post_type_value);
+        if ('' === $post_type_key) {
+            continue;
+        }
+
+        $selected_post_types[$post_type_key] = $post_type_key;
+    }
+
+    $fallback_post_types = get_post_types(array('public' => true), 'names');
+    if (!is_array($fallback_post_types)) {
+        $fallback_post_types = array();
+    }
+
+    $fallback_post_types = array_values(array_filter(array_map('sanitize_key', $fallback_post_types), static function ($post_type) {
+        return '' !== $post_type;
+    }));
+
+    if (array() === $fallback_post_types) {
+        $fallback_post_types = array('post');
+    }
+
+    if (array() === $selected_post_types) {
+        foreach ($fallback_post_types as $post_type_key) {
+            $selected_post_types[$post_type_key] = $post_type_key;
+        }
+    }
+
+    $post_type_objects = get_post_types(array(), 'objects');
+    if (!is_array($post_type_objects)) {
+        $post_type_objects = array();
+    }
+
+    foreach ($post_type_objects as $post_type_key => $post_type_object) {
+        $sanitized_key = sanitize_key((string) $post_type_key);
+        if ('' === $sanitized_key) {
+            continue;
+        }
+
+        $label = '';
+        if (is_object($post_type_object)) {
+            if (isset($post_type_object->labels) && is_object($post_type_object->labels) && isset($post_type_object->labels->name) && '' !== $post_type_object->labels->name) {
+                $label = (string) $post_type_object->labels->name;
+            } elseif (isset($post_type_object->label) && '' !== $post_type_object->label) {
+                $label = (string) $post_type_object->label;
+            }
+        }
+
+        if ('' === $label) {
+            $label = ucwords(str_replace(array('-', '_'), ' ', $sanitized_key));
+        }
+
+        ?>
+        <label>
+            <input type="checkbox" name="blc_post_types[]" value="<?php echo esc_attr($sanitized_key); ?>" <?php checked(isset($selected_post_types[$sanitized_key])); ?>>
+            <?php echo esc_html($label); ?>
+        </label><br>
+        <?php
+    }
 }
 
 /**
@@ -1890,6 +1985,55 @@ function blc_sanitize_scan_method_option($value) {
  */
 function blc_sanitize_remote_image_scan_option($value) {
     return (bool) $value;
+}
+
+/**
+ * Sanitize la liste des types de contenus sélectionnés.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return array
+ */
+function blc_sanitize_post_types_option($value) {
+    $available_post_types = get_post_types(array(), 'names');
+    if (!is_array($available_post_types)) {
+        $available_post_types = array();
+    }
+
+    $available_lookup = array();
+    foreach ($available_post_types as $post_type_name) {
+        $normalized_post_type = sanitize_key((string) $post_type_name);
+        if ('' === $normalized_post_type) {
+            continue;
+        }
+
+        $available_lookup[$normalized_post_type] = true;
+    }
+
+    $raw_post_types = $value;
+    if (!is_array($raw_post_types)) {
+        $raw_post_types = array($raw_post_types);
+    }
+
+    $selected_post_types = array();
+    foreach ($raw_post_types as $post_type_value) {
+        if (!is_scalar($post_type_value)) {
+            continue;
+        }
+
+        $post_type_key = sanitize_key((string) $post_type_value);
+        if ('' === $post_type_key) {
+            continue;
+        }
+
+        if (array() !== $available_lookup && !isset($available_lookup[$post_type_key])) {
+            continue;
+        }
+
+        $selected_post_types[$post_type_key] = $post_type_key;
+    }
+
+    return array_values($selected_post_types);
 }
 
 /**

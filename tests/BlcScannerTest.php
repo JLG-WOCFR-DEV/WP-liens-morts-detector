@@ -169,6 +169,9 @@ class BlcScannerTest extends TestCase
     /** @var array<int, string> */
     private array $publicPostTypes = [];
 
+    /** @var array<int, string> */
+    private array $allPostTypes = [];
+
     /** @var array<int, array{args: array, output: string, operator: string}> */
     private array $getPostTypesCalls = [];
 
@@ -242,6 +245,7 @@ class BlcScannerTest extends TestCase
         $GLOBALS['wp_query_queue'] = [];
         $GLOBALS['wp_query_last_args'] = [];
         $this->publicPostTypes = ['post', 'page'];
+        $this->allPostTypes = ['post', 'page'];
         $this->getPostTypesCalls = [];
         $this->wpResetPostdataCalls = 0;
         $this->postStatuses = [
@@ -387,13 +391,37 @@ class BlcScannerTest extends TestCase
             return array_keys($this->postStatuses);
         });
         Functions\when('get_post_types')->alias(function ($args = [], $output = 'names', $operator = 'and') {
+            $normalized_args = is_array($args) ? $args : [];
+
             $this->getPostTypesCalls[] = [
-                'args' => is_array($args) ? $args : [],
-                'output' => (string) $output,
+                'args'     => $normalized_args,
+                'output'   => (string) $output,
                 'operator' => (string) $operator,
             ];
 
-            return $this->publicPostTypes;
+            $types = $this->allPostTypes;
+            if (isset($normalized_args['public']) && $normalized_args['public']) {
+                $types = $this->publicPostTypes;
+            } elseif ($types === []) {
+                $types = $this->publicPostTypes;
+            }
+
+            if ($output === 'objects') {
+                $objects = [];
+                foreach ($types as $slug) {
+                    $label = ucwords(str_replace(['-', '_'], ' ', (string) $slug));
+                    $objects[$slug] = (object) [
+                        'label'  => $label,
+                        'labels' => (object) [
+                            'name' => $label,
+                        ],
+                    ];
+                }
+
+                return $objects;
+            }
+
+            return $types;
         });
         Functions\when('get_permalink')->alias(function ($post = null) {
             if (is_object($post) && isset($post->ID)) {
@@ -2063,6 +2091,7 @@ class BlcScannerTest extends TestCase
         $wpdb = $this->createWpdbStub();
 
         $this->publicPostTypes = ['portfolio', 'case-study'];
+        $this->allPostTypes = ['portfolio', 'case-study'];
 
         $GLOBALS['wp_query_queue'][] = [
             'posts' => [],
@@ -2073,16 +2102,52 @@ class BlcScannerTest extends TestCase
 
         $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should run during scans.');
         $args = end($GLOBALS['wp_query_last_args']);
-        $this->assertNotEmpty($this->getPostTypesCalls, 'The scan should request the list of public post types.');
-        $lastPostTypeCall = end($this->getPostTypesCalls);
-        $this->assertSame(['public' => true], $lastPostTypeCall['args']);
-        $this->assertSame('names', $lastPostTypeCall['output']);
-        $this->assertSame('and', $lastPostTypeCall['operator']);
+        $this->assertNotEmpty($this->getPostTypesCalls, 'The scan should request the list of available post types.');
+        $this->assertGreaterThanOrEqual(2, count($this->getPostTypesCalls));
+        $firstCall = $this->getPostTypesCalls[0];
+        $lastCall = end($this->getPostTypesCalls);
+        $this->assertSame([], $firstCall['args'], 'The initial post type lookup should not filter arguments.');
+        $this->assertSame(['public' => true], $lastCall['args'], 'Fallback to public post types should occur when no selection is stored.');
+        $this->assertSame('names', $lastCall['output']);
+        $this->assertSame('and', $lastCall['operator']);
         $this->assertSame(
             $this->publicPostTypes,
             $args['post_type'] ?? null,
             'Link scans must restrict queries to the list of public post types.'
         );
+    }
+
+    public function test_blc_perform_check_uses_configured_post_types(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_post_types'] = ['portfolio', 'case-study'];
+        $this->allPostTypes = ['post', 'page', 'portfolio', 'case-study'];
+        $this->publicPostTypes = ['post', 'page', 'portfolio', 'case-study'];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_check(0, true);
+
+        $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should run during scans.');
+        $args = end($GLOBALS['wp_query_last_args']);
+
+        $this->assertSame(
+            ['portfolio', 'case-study'],
+            $args['post_type'] ?? null,
+            'Configured post types must be forwarded to WP_Query.'
+        );
+
+        $this->assertNotEmpty($this->getPostTypesCalls, 'The scan should validate configured post types.');
+        $firstCall = $this->getPostTypesCalls[0];
+        $this->assertSame([], $firstCall['args']);
+        foreach ($this->getPostTypesCalls as $call) {
+            $this->assertNotSame(['public' => true], $call['args'], 'Public post type fallback should not trigger when the selection is valid.');
+        }
     }
 
     public function test_blc_perform_check_uses_configured_post_statuses(): void
@@ -2114,6 +2179,7 @@ class BlcScannerTest extends TestCase
         $wpdb = $this->createWpdbStub();
 
         $this->publicPostTypes = [];
+        $this->options['blc_post_types'] = ['nonexistent'];
 
         $GLOBALS['wp_query_queue'][] = [
             'posts' => [],
@@ -2137,6 +2203,7 @@ class BlcScannerTest extends TestCase
         $wpdb = $this->createWpdbStub();
 
         $this->publicPostTypes = [];
+        $this->options['blc_post_types'] = ['nonexistent'];
 
         $GLOBALS['wp_query_queue'][] = [
             'posts' => [],
@@ -3140,6 +3207,38 @@ class BlcScannerTest extends TestCase
         $wpdb = $this->createWpdbStub();
 
         $this->publicPostTypes = ['portfolio', 'case-study'];
+        $this->allPostTypes = ['portfolio', 'case-study'];
+
+        $GLOBALS['wp_query_queue'][] = [
+            'posts' => [],
+            'max_num_pages' => 1,
+        ];
+
+        blc_perform_image_check(0, true);
+
+        $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should be executed during image scans.');
+        $args = end($GLOBALS['wp_query_last_args']);
+        $this->assertNotEmpty($this->getPostTypesCalls, 'Image scans should request the list of available post types.');
+        $this->assertGreaterThanOrEqual(2, count($this->getPostTypesCalls));
+        $firstCall = $this->getPostTypesCalls[0];
+        $lastCall = end($this->getPostTypesCalls);
+        $this->assertSame([], $firstCall['args']);
+        $this->assertSame(['public' => true], $lastCall['args']);
+        $this->assertSame(
+            $this->publicPostTypes,
+            $args['post_type'] ?? null,
+            'Image scans must restrict queries to the list of public post types.'
+        );
+    }
+
+    public function test_blc_perform_image_check_uses_configured_post_types(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $this->options['blc_post_types'] = ['portfolio', 'case-study'];
+        $this->allPostTypes = ['post', 'page', 'portfolio', 'case-study'];
+        $this->publicPostTypes = ['post', 'page', 'portfolio', 'case-study'];
 
         $GLOBALS['wp_query_queue'][] = [
             'posts' => [],
@@ -3151,10 +3250,17 @@ class BlcScannerTest extends TestCase
         $this->assertNotEmpty($GLOBALS['wp_query_last_args'], 'WP_Query should be executed during image scans.');
         $args = end($GLOBALS['wp_query_last_args']);
         $this->assertSame(
-            $this->publicPostTypes,
+            ['portfolio', 'case-study'],
             $args['post_type'] ?? null,
-            'Image scans must restrict queries to the list of public post types.'
+            'Image scans must honor the configured list of post types.'
         );
+
+        $this->assertNotEmpty($this->getPostTypesCalls, 'Image scans should validate configured post types.');
+        $firstCall = $this->getPostTypesCalls[0];
+        $this->assertSame([], $firstCall['args']);
+        foreach ($this->getPostTypesCalls as $call) {
+            $this->assertNotSame(['public' => true], $call['args'], 'Public post type fallback should not trigger when the configuration is valid.');
+        }
     }
 
     public function test_blc_perform_image_check_restores_markers_when_interrupted(): void
