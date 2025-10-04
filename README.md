@@ -28,6 +28,11 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 - Des réglages avancés permettent d’exclure certains domaines, de limiter l’analyse à des plages horaires et d’activer un mode debug pour le suivi.
 - L’analyse des images distantes (CDN, sous-domaines médias) peut être activée dans les réglages. Cette vérification reste basée sur les fichiers présents dans `wp-content/uploads` et peut rallonger la durée du scan ou consommer davantage de quotas côté CDN.
 
+## Commandes WP-CLI
+- `wp broken-links scan links` lance immédiatement un lot de vérification des liens. Ajouter `--full` force une réindexation complète, et `--bypass-rest-window` ignore la plage de repos configurée.
+- `wp broken-links scan images` exécute le scanner d’images de façon synchrone. Le flag `--full` est accepté pour homogénéité (le mode complet est déjà l’option par défaut).
+- Les commandes affichent la progression (lots et éléments traités) ainsi que les messages d’état renvoyés par le scanner. Elles retournent un code de sortie non nul en cas d’échec, ce qui permet une intégration directe dans vos scripts d’automatisation ou jobs de supervision.
+
 ## Hooks disponibles
 ### `blc_cron_schedule_definitions`
 Permet d’ajouter, modifier ou supprimer des intervalles WP‑Cron proposés par défaut (heures, jours, semaines…). Chaque entrée doit fournir un identifiant unique ainsi qu’un intervalle en secondes.

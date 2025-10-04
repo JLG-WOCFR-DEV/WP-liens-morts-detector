@@ -58,6 +58,7 @@ require_once BLC_PLUGIN_PATH . 'includes/blc-settings-fields.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-admin-pages.php';
 require_once BLC_PLUGIN_PATH . 'includes/class-blc-links-list-table.php';
 require_once BLC_PLUGIN_PATH . 'includes/class-blc-images-list-table.php';
+require_once BLC_PLUGIN_PATH . 'includes/blc-cli.php';
 
 /**
  * Mark the cached view counters for broken links as stale so they can be recalculated.
