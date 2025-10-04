@@ -25,6 +25,10 @@ class BLC_Links_List_Table extends WP_List_Table {
 
     private static $bulk_query_args_registered = false;
 
+    private $current_orderby = 'id';
+
+    private $current_order = 'desc';
+
     /**
      * Cache local pour les compteurs agrégés des liens.
      *
@@ -290,6 +294,26 @@ class BLC_Links_List_Table extends WP_List_Table {
             'post_title'   => __('Trouvé dans l\'article/page', 'liens-morts-detector-jlg'),
             'actions'      => __('Actions', 'liens-morts-detector-jlg')
         ];
+    }
+
+    protected function get_sortable_columns() {
+        return [
+            'url'                 => ['url', false],
+            'anchor_text'         => ['anchor_text', false],
+            'http_status'         => ['http_status', false],
+            'redirect_target_url' => ['redirect_target_url', false],
+            'last_checked_at'     => ['last_checked_at', false],
+            'post_title'          => ['post_title', false],
+            'post_type'           => ['post_type', false],
+        ];
+    }
+
+    public function get_current_orderby() {
+        return $this->current_orderby;
+    }
+
+    public function get_current_order() {
+        return $this->current_order;
     }
 
     /**
@@ -677,7 +701,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         $this->process_bulk_action();
         $this->maybe_prepare_bulk_notice_from_query();
 
-        $this->_column_headers = [$this->get_columns(), [], []];
+        $this->_column_headers = [$this->get_columns(), [], $this->get_sortable_columns()];
         $current_view = (!empty($_GET['link_type'])) ? sanitize_text_field(wp_unslash($_GET['link_type'])) : 'all';
         $per_page     = 20;
         $current_page = max(1, (int) $this->get_pagenum());
@@ -757,17 +781,66 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         $offset = ($current_page - 1) * $per_page;
 
-        $order_by = $is_ignored_view ? 'ignored_at DESC, id DESC' : 'id DESC';
+        $requested_orderby = '';
+        if (isset($_GET['orderby'])) {
+            $requested_orderby = sanitize_key(wp_unslash($_GET['orderby']));
+        }
+
+        $requested_order = '';
+        if (isset($_GET['order'])) {
+            $requested_order = sanitize_key(wp_unslash($_GET['order']));
+        }
+
+        $allowed_orders = ['asc', 'desc'];
+        if (!in_array($requested_order, $allowed_orders, true)) {
+            $requested_order = 'desc';
+        }
+
+        $order_columns = [
+            'id'                 => $table_name . '.id',
+            'url'                => $table_name . '.url',
+            'anchor_text'        => $table_name . '.anchor',
+            'http_status'        => $table_name . '.http_status',
+            'redirect_target_url'=> $table_name . '.redirect_target_url',
+            'last_checked_at'    => $table_name . '.last_checked_at',
+            'post_title'         => 'COALESCE(posts.post_title, ' . $table_name . '.post_title)',
+            'post_type'          => 'posts.post_type',
+            'ignored_at'         => $table_name . '.ignored_at',
+        ];
+
+        $default_orderby = $is_ignored_view ? 'ignored_at' : 'id';
+        if (!isset($order_columns[$requested_orderby])) {
+            $requested_orderby = $default_orderby;
+        }
+
+        $this->current_orderby = $requested_orderby;
+        $this->current_order = $requested_order;
+
+        $direction_sql = ($requested_order === 'asc') ? 'ASC' : 'DESC';
+
+        $order_by_parts = [];
+        $order_by_parts[] = $order_columns[$requested_orderby] . ' ' . $direction_sql;
+
+        if ($is_ignored_view && $requested_orderby !== 'ignored_at') {
+            $order_by_parts[] = $order_columns['ignored_at'] . ' DESC';
+        }
+
+        if ($requested_orderby !== 'id') {
+            $order_by_parts[] = $order_columns['id'] . ' DESC';
+        }
+
+        $order_by = implode(', ', $order_by_parts);
 
         $data_query = $wpdb->prepare(
-            "SELECT id, occurrence_index, url, anchor, redirect_target_url, context_html, context_excerpt, post_id, post_title, http_status, last_checked_at, ignored_at, posts.post_type AS post_type
-             FROM {$table_name}
-             {$join_clause}
-             WHERE $where_clause
-             ORDER BY $order_by
-             LIMIT %d OFFSET %d",
+            "SELECT id, occurrence_index, url, anchor, redirect_target_url, context_html, context_excerpt, post_id, post_title, http_status, last_checked_at, ignored_at, posts.post_type AS post_type"
+            . " FROM {$table_name}"
+            . " {$join_clause}"
+            . " WHERE $where_clause"
+            . " ORDER BY $order_by"
+            . " LIMIT %d OFFSET %d",
             array_merge($params, [$per_page, $offset])
         );
+
         $items = $wpdb->get_results($data_query, ARRAY_A);
 
         $this->set_pagination_args(['total_items' => $total_items, 'per_page' => $per_page]);
