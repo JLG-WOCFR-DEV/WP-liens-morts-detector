@@ -356,6 +356,7 @@ function blc_enqueue_admin_assets($hook) {
         'blcAdminSoft404Config',
         array(
             'minLength'       => isset($soft_404_config['min_length']) ? (int) $soft_404_config['min_length'] : 0,
+            'titleWeight'     => isset($soft_404_config['title_weight']) ? (float) $soft_404_config['title_weight'] : 0.0,
             'titleIndicators' => isset($soft_404_config['title_indicators']) && is_array($soft_404_config['title_indicators'])
                 ? array_values($soft_404_config['title_indicators'])
                 : array(),
@@ -369,6 +370,7 @@ function blc_enqueue_admin_assets($hook) {
                 'length' => __('Contenu trop court', 'liens-morts-detector-jlg'),
                 'title'  => __('Titre suspect', 'liens-morts-detector-jlg'),
                 'body'   => __('Message d’erreur détecté', 'liens-morts-detector-jlg'),
+                'titleWeight' => __('Pondération du titre', 'liens-morts-detector-jlg'),
             ),
         )
     );

@@ -100,13 +100,15 @@ describe('blc-admin-scripts modal interactions', () => {
     delete window.blcAdminMessages;
     window.blcAdminSoft404Config = {
       minLength: 10,
+      titleWeight: 1.5,
       titleIndicators: ['introuvable', 'erreur'],
       bodyIndicators: ['erreur 404', 'page introuvable'],
       ignorePatterns: ['/profil/i'],
       labels: {
         length: 'Contenu trop court',
         title: 'Titre suspect',
-        body: "Message d’erreur détecté"
+        body: "Message d’erreur détecté",
+        titleWeight: 'Pondération du titre'
       }
     };
     require(path.resolve(__dirname, '../blc-admin-scripts.js'));
@@ -219,6 +221,7 @@ describe('blc-admin-scripts modal interactions', () => {
     const config = window.blcAdmin.soft404.getConfig();
 
     expect(config.minLength).toBe(10);
+    expect(config.titleWeight).toBeCloseTo(1.5);
     expect(config.titleIndicators).toEqual(expect.arrayContaining(['introuvable', 'erreur']));
     expect(config.bodyIndicators).toEqual(expect.arrayContaining(['erreur 404', 'page introuvable']));
     expect(config.ignorePatterns).toEqual(expect.arrayContaining(['/profil/i']));

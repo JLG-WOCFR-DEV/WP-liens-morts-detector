@@ -1906,7 +1906,13 @@ function blc_get_soft_404_default_ignore_patterns() {
 /**
  * Récupère la configuration normalisée des heuristiques soft 404.
  *
- * @return array{min_length:int,title_indicators:string[],body_indicators:string[],ignore_patterns:string[]}
+ * @return array{
+ *     min_length:int,
+ *     title_weight:float,
+ *     title_indicators:string[],
+ *     body_indicators:string[],
+ *     ignore_patterns:string[]
+ * }
  */
 function blc_get_soft_404_heuristics() {
     $default_titles = blc_get_soft_404_default_title_indicators();
@@ -1915,6 +1921,12 @@ function blc_get_soft_404_heuristics() {
 
     $min_length_option = get_option('blc_soft_404_min_length', 512);
     $min_length = max(0, (int) $min_length_option);
+
+    $title_weight_option = get_option('blc_soft_404_title_weight', 1.0);
+    $title_weight = (float) $title_weight_option;
+    if (!is_finite($title_weight) || $title_weight < 0) {
+        $title_weight = 0.0;
+    }
 
     $raw_titles = get_option('blc_soft_404_title_indicators', implode("\n", $default_titles));
     $raw_bodies = get_option('blc_soft_404_body_indicators', implode("\n", $default_bodies));
@@ -1925,6 +1937,10 @@ function blc_get_soft_404_heuristics() {
     $ignore_patterns = blc_parse_multiline_text_option($raw_ignore);
 
     $min_length = (int) apply_filters('blc_soft_404_min_length', $min_length);
+    $title_weight = (float) apply_filters('blc_soft_404_title_weight', $title_weight, $min_length);
+    if (!is_finite($title_weight) || $title_weight < 0) {
+        $title_weight = 0.0;
+    }
 
     $title_indicators = apply_filters('blc_soft_404_title_indicators', $title_indicators, $min_length);
     if (!is_array($title_indicators)) {
@@ -1952,6 +1968,7 @@ function blc_get_soft_404_heuristics() {
 
     return [
         'min_length'       => $min_length,
+        'title_weight'     => $title_weight,
         'title_indicators' => $title_indicators,
         'body_indicators'  => $body_indicators,
         'ignore_patterns'  => $ignore_patterns,
