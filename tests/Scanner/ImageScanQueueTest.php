@@ -49,6 +49,7 @@ class ImageScanQueueTest extends ScannerTestCase
         Functions\when('blc_refresh_image_scan_lock')->alias(function () {
         });
         Functions\when('blc_is_safe_remote_host')->alias(fn() => true);
+        Functions\when('file_exists')->alias(fn() => false);
         Functions\when('get_post_types')->alias(fn($args = [], $output = 'names') => ['post']);
         Functions\when('get_post_stati')->alias(fn($args = [], $output = 'names') => ['publish']);
         Functions\when('wp_reset_postdata')->alias(function () {
@@ -73,6 +74,40 @@ class ImageScanQueueTest extends ScannerTestCase
         $this->assertSame('blc_check_image_batch', $event['hook']);
         $this->assertSame([0, true], $event['args']);
         $this->assertSame([], $this->wpdb->insertedRows);
+    }
+
+    public function test_run_records_remote_images_when_enabled(): void
+    {
+        $this->options['blc_remote_image_scan_enabled'] = true;
+        $GLOBALS['wp_query_queue'] = [[
+            'posts' => [
+                (object) [
+                    'ID'           => 111,
+                    'post_title'   => 'Remote image allowed',
+                    'post_content' => '<p><img src="https://cdn.example.net/wp-content/uploads/2024/05/photo.jpg" /></p>',
+                ],
+            ],
+            'max_num_pages' => 1,
+        ]];
+
+        Functions\expect('blc_acquire_image_scan_lock')->once()->andReturn('remote-lock');
+        Functions\expect('blc_generate_scan_run_token')->once()->andReturn('run-token');
+        Functions\expect('blc_stage_dataset_refresh')->once()->andReturn(true);
+        Functions\expect('blc_commit_dataset_refresh')->once()->andReturn(true);
+        Functions\expect('blc_maybe_send_scan_summary')->once()->with('image');
+
+        $release_calls = [];
+        Functions\when('blc_release_image_scan_lock')->alias(function ($token) use (&$release_calls) {
+            $release_calls[] = $token;
+        });
+
+        $queue = new \ImageScanQueue();
+        $queue->run(0, true);
+
+        $this->assertCount(1, $this->wpdb->insertedRows, 'Remote broken image should be recorded when scanning is enabled.');
+        $row = $this->wpdb->insertedRows[0];
+        $this->assertSame('remote-image', $row['data']['type']);
+        $this->assertSame('remote-lock', $release_calls[0] ?? null, 'Lock should be released after successful remote scan.');
     }
 
     public function test_run_skips_remote_images_when_disabled(): void
