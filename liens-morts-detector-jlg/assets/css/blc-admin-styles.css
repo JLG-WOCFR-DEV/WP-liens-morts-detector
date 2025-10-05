@@ -639,6 +639,64 @@
     display: block;
 }
 
+.blc-modal__section {
+    margin-bottom: 16px;
+}
+
+.blc-modal__section:last-of-type {
+    margin-bottom: 20px;
+}
+
+.blc-modal__section.is-hidden {
+    display: none;
+}
+
+.blc-modal__options-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.blc-modal__options-help {
+    margin: 0 0 12px;
+    color: #50575e;
+    font-size: 13px;
+}
+
+.blc-modal__preview-list {
+    margin: 8px 0 0 18px;
+    padding: 0;
+    list-style: disc;
+}
+
+.blc-modal__preview-item {
+    margin-bottom: 6px;
+}
+
+.blc-modal__preview-item:last-child {
+    margin-bottom: 0;
+}
+
+.blc-modal__preview-item.is-disabled {
+    opacity: 0.7;
+}
+
+.blc-modal__preview-note {
+    margin-top: 10px;
+    font-size: 13px;
+    color: #d63638;
+}
+
+.blc-inline-notices {
+    margin-bottom: 16px;
+}
+
+.blc-inline-notices .notice {
+    margin-top: 12px;
+}
+
 .blc-modal__field {
     margin-bottom: 20px;
 }

@@ -52,7 +52,23 @@ jQuery(document).ready(function($) {
         applyRedirectModalMessage: 'Appliquer la redirection détectée vers %s ?',
         applyRedirectMissingModalTitle: 'Redirection indisponible',
         applyRedirectMissingModalMessage: 'Aucune redirection détectée n\'est disponible pour ce lien.',
-        bulkApplyRedirectModalMessage: 'Voulez-vous appliquer la redirection détectée aux %s liens sélectionnés ?'
+        bulkApplyRedirectModalMessage: 'Voulez-vous appliquer la redirection détectée aux %s liens sélectionnés ?',
+        applyGloballyLabel: 'Appliquer partout',
+        applyGloballyHelp: 'Mettre à jour toutes les occurrences connues de cette URL.',
+        massUpdatePreviewTitle: 'Contenus concernés',
+        massUpdatePreviewEmpty: 'Seul cet élément sera mis à jour.',
+        massUpdatePreviewInactive: 'Activez «\u00a0Appliquer partout\u00a0» pour voir les contenus concernés.',
+        massUpdatePreviewNeedsUrl: 'Saisissez une nouvelle URL valide pour afficher les contenus concernés.',
+        massUpdatePreviewLoading: 'Chargement de l\'aperçu…',
+        massUpdatePreviewError: 'Impossible de récupérer l\'aperçu.',
+        massUpdatePreviewRestricted: 'Certains contenus ne pourront pas être mis à jour faute de droits.',
+        massUpdatePreviewRestrictedSingle: 'Non modifiable (droits insuffisants)',
+        massUpdatePreviewCurrent: 'Élément actuel',
+        massUpdateUntitled: 'Contenu sans titre',
+        massUpdateSummarySuccess: '%1$s contenu(s) mis à jour.',
+        massUpdateSummaryPartial: '%1$s contenu(s) mis à jour, %2$s échec(s).',
+        massUpdateFailureListTitle: 'Échecs lors de la mise à jour\u00a0:',
+        massUpdateFailureItem: '%1$s (ID %2$s)'
     };
 
     var messages = $.extend({}, defaultMessages, window.blcAdminMessages || {});
@@ -66,6 +82,24 @@ jQuery(document).ready(function($) {
         var result = template.replace(/%1\$s/g, replacement);
 
         return result.replace(/%s/g, replacement);
+    }
+
+    function debounce(fn, delay) {
+        var timeoutId = null;
+
+        return function() {
+            var context = this;
+            var args = arguments;
+
+            if (timeoutId) {
+                window.clearTimeout(timeoutId);
+            }
+
+            timeoutId = window.setTimeout(function() {
+                timeoutId = null;
+                fn.apply(context, args);
+            }, delay || 0);
+        };
     }
 
     var accessibility = (function() {
@@ -137,6 +171,109 @@ jQuery(document).ready(function($) {
         }
 
         return $notice;
+    }
+
+    function ensureInlineNoticeContainer() {
+        var $existing = $('.blc-inline-notices').first();
+        if ($existing.length) {
+            return $existing;
+        }
+
+        var $container = $('<div>', { class: 'blc-inline-notices' });
+        var $wrap = $('.wrap').first();
+
+        if ($wrap.length) {
+            $wrap.prepend($container);
+        } else {
+            $('body').prepend($container);
+        }
+
+        return $container;
+    }
+
+    function displayMassUpdateSummary(summary) {
+        if (!summary || !summary.applyGlobally) {
+            return;
+        }
+
+        var updatedCount = parseInt(summary.updatedCount, 10);
+        if (Number.isNaN(updatedCount)) {
+            updatedCount = 0;
+        }
+
+        var failureCount = parseInt(summary.failureCount, 10);
+        if (Number.isNaN(failureCount)) {
+            failureCount = 0;
+        }
+
+        if (Array.isArray(summary.failures) && summary.failures.length && failureCount === 0) {
+            failureCount = summary.failures.length;
+        }
+
+        var messageTemplate = failureCount > 0
+            ? messages.massUpdateSummaryPartial
+            : messages.massUpdateSummarySuccess;
+
+        var message = '';
+        if (typeof messageTemplate === 'string' && messageTemplate) {
+            message = messageTemplate.replace('%1$s', updatedCount).replace('%2$s', failureCount);
+        }
+
+        var type = failureCount > 0 ? 'warning' : 'success';
+        var $notice = createNoticeElement(type, message);
+
+        if (failureCount > 0 && Array.isArray(summary.failures) && summary.failures.length) {
+            var listTitle = messages.massUpdateFailureListTitle || '';
+            if (listTitle) {
+                $('<p>').text(listTitle).appendTo($notice);
+            }
+
+            var $list = $('<ul>');
+            summary.failures.forEach(function(item) {
+                if (!item) {
+                    return;
+                }
+
+                var rawPostId = typeof item.postId !== 'undefined' ? item.postId : item.post_id;
+                var postIdString = '';
+                if (typeof rawPostId !== 'undefined' && rawPostId !== null && rawPostId !== '') {
+                    postIdString = String(rawPostId);
+                }
+
+                var normalizedPostId = parseInt(postIdString, 10);
+                if (postIdString === '' && !Number.isNaN(normalizedPostId)) {
+                    postIdString = String(normalizedPostId);
+                }
+
+                var postTitle = item.postTitle || item.post_title || '';
+                if (!postTitle) {
+                    postTitle = messages.massUpdateUntitled || '';
+                }
+
+                var reason = item.reason || '';
+                var itemTemplate = messages.massUpdateFailureItem || '%1$s (ID %2$s)';
+                var label = itemTemplate.replace('%1$s', postTitle);
+                label = label.replace('%2$s', postIdString || '?');
+                label = $.trim(label);
+
+                var $entry = $('<li>').text(label);
+                if (reason) {
+                    $('<div>').text(reason).appendTo($entry);
+                }
+
+                $list.append($entry);
+            });
+
+            $notice.append($list);
+        }
+
+        var $container = ensureInlineNoticeContainer();
+        $container.append($notice);
+
+        if (message) {
+            var politeness = failureCount > 0 ? 'assertive' : 'polite';
+            accessibility.speak(message, politeness);
+        }
     }
 
     (function setupTestEmailButton() {
@@ -364,9 +501,11 @@ jQuery(document).ready(function($) {
         var $message = $modal.find('.blc-modal__message');
         var $context = $modal.find('.blc-modal__context');
         var $error = $modal.find('.blc-modal__error');
+        var $options = $modal.find('.blc-modal__options');
         var $field = $modal.find('.blc-modal__field');
         var $label = $modal.find('.blc-modal__label');
         var $input = $modal.find('.blc-modal__input');
+        var $preview = $modal.find('.blc-modal__preview');
         var $confirm = $modal.find('.blc-modal__confirm');
         var $cancel = $modal.find('.blc-modal__cancel');
         var $close = $modal.find('.blc-modal__close');
@@ -438,6 +577,56 @@ jQuery(document).ready(function($) {
             }
 
             $context.empty().addClass('is-hidden');
+        }
+
+        function clearOptions() {
+            if ($options.length) {
+                $options.empty().addClass('is-hidden');
+            }
+        }
+
+        function clearPreview() {
+            if ($preview.length) {
+                $preview.empty().addClass('is-hidden');
+            }
+        }
+
+        function appendContent($container, content) {
+            if (!$container.length) {
+                return;
+            }
+
+            if (typeof content === 'function') {
+                content = content($container);
+            }
+
+            if (content === null || typeof content === 'undefined') {
+                return;
+            }
+
+            if (content.jquery) {
+                $container.append(content);
+            } else if (typeof window.DocumentFragment !== 'undefined' && content instanceof window.DocumentFragment) {
+                $container.append(content);
+            } else if (content instanceof window.Element) {
+                $container.append(content);
+            } else if (typeof content === 'string') {
+                $container.html(content);
+            }
+
+            if ($container.children().length) {
+                $container.removeClass('is-hidden');
+            }
+        }
+
+        function setOptionsContent(content) {
+            clearOptions();
+            appendContent($options, content);
+        }
+
+        function setPreviewContent(content) {
+            clearPreview();
+            appendContent($preview, content);
         }
 
         function setContext(options) {
@@ -526,6 +715,8 @@ jQuery(document).ready(function($) {
             setSubmitting(false);
             clearError();
             clearContext();
+            clearOptions();
+            clearPreview();
 
             resetPromiseState();
 
@@ -606,6 +797,8 @@ jQuery(document).ready(function($) {
 
             clearError();
             setContext(options);
+            setOptionsContent(options.optionsContent);
+            setPreviewContent(options.previewContent);
             setSubmitting(false);
 
             $modal.addClass('is-open').attr('aria-hidden', 'false');
@@ -627,7 +820,17 @@ jQuery(document).ready(function($) {
             showError: showError,
             clearError: clearError,
             setSubmitting: setSubmitting,
-            close: close
+            close: close,
+            setOptionsContent: setOptionsContent,
+            clearOptions: clearOptions,
+            getOptionsContainer: function() {
+                return $options;
+            },
+            setPreviewContent: setPreviewContent,
+            clearPreview: clearPreview,
+            getPreviewContainer: function() {
+                return $preview;
+            }
         };
 
         $confirm.on('click', function() {
@@ -958,6 +1161,10 @@ jQuery(document).ready(function($) {
         } else {
             finalizeListUpdate($());
         }
+
+        if (response && response.data && response.data.massUpdate) {
+            displayMassUpdateSummary(response.data.massUpdate);
+        }
     }
 
     window.blcAdmin.listActions = $.extend({}, window.blcAdmin.listActions, {
@@ -1261,6 +1468,306 @@ jQuery(document).ready(function($) {
         };
     }
 
+    function initializeMassUpdateControls(config) {
+        config = config || {};
+
+        var helpers = config.modalHelpers;
+        if (!helpers || typeof helpers.setOptionsContent !== 'function') {
+            helpers = modal.helpers;
+        }
+
+        if (!helpers || typeof helpers.setOptionsContent !== 'function') {
+            return;
+        }
+
+        var state = config.state || {};
+        state.applyGlobally = false;
+        state.previewData = null;
+        state.lastPreviewKey = '';
+        state.isLoadingPreview = false;
+
+        var $optionsWrapper = $('<div>');
+        var checkboxId = 'blc-modal-apply-globally-' + Date.now();
+
+        var $checkbox = $('<input>', {
+            type: 'checkbox',
+            id: checkboxId,
+            class: 'blc-modal__apply-globally'
+        });
+
+        var $checkboxLabel = $('<label>', {
+            class: 'blc-modal__options-label',
+            for: checkboxId
+        });
+
+        $checkboxLabel.append($checkbox);
+        $('<span>').text(messages.applyGloballyLabel || 'Appliquer partout').appendTo($checkboxLabel);
+        $optionsWrapper.append($checkboxLabel);
+
+        if (messages.applyGloballyHelp) {
+            $('<p>', { class: 'blc-modal__options-help' }).text(messages.applyGloballyHelp).appendTo($optionsWrapper);
+        }
+
+        helpers.setOptionsContent($optionsWrapper);
+
+        function showPreviewInfo(message) {
+            if (!message) {
+                helpers.clearPreview();
+                return;
+            }
+
+            var $info = $('<p>').text(message);
+            helpers.setPreviewContent($info);
+        }
+
+        function showPreviewLoading() {
+            var message = messages.massUpdatePreviewLoading || '';
+            if (!message) {
+                message = messages.recheckInProgress || '';
+            }
+
+            if (message) {
+                var $loading = $('<p>').text(message);
+                helpers.setPreviewContent($loading);
+            } else {
+                helpers.clearPreview();
+            }
+        }
+
+        function showPreviewError(message) {
+            var finalMessage = message || messages.massUpdatePreviewError || messages.genericError;
+            var $error = $('<p>', { class: 'blc-modal__preview-note' }).text(finalMessage);
+            helpers.setPreviewContent($error);
+        }
+
+        function renderPreview(preview) {
+            if (!preview || !Array.isArray(preview.items)) {
+                showPreviewInfo(messages.massUpdatePreviewEmpty || '');
+                return;
+            }
+
+            var items = preview.items;
+            var $container = $('<div>');
+
+            var totalCount = parseInt(preview.totalCount, 10);
+            if (Number.isNaN(totalCount)) {
+                totalCount = items.length;
+            }
+
+            if (messages.massUpdatePreviewTitle) {
+                var headingText = messages.massUpdatePreviewTitle;
+                if (totalCount > 0) {
+                    headingText += ' (' + totalCount + ')';
+                }
+
+                $('<strong>').text(headingText).appendTo($container);
+            }
+
+            if (totalCount <= 1 && messages.massUpdatePreviewEmpty) {
+                $('<p>').text(messages.massUpdatePreviewEmpty).appendTo($container);
+            }
+
+            var $list = $('<ul>', { class: 'blc-modal__preview-list' });
+
+            items.forEach(function(item) {
+                if (!item) {
+                    return;
+                }
+
+                var postIdValue = typeof item.postId !== 'undefined' ? item.postId : item.post_id;
+                var postId = '';
+                if (typeof postIdValue !== 'undefined' && postIdValue !== null && postIdValue !== '') {
+                    postId = String(postIdValue);
+                }
+
+                var postTitle = item.postTitle || item.post_title || '';
+                if (!postTitle) {
+                    postTitle = messages.massUpdateUntitled || '';
+                }
+
+                var descriptor = postTitle;
+                if (postId) {
+                    descriptor += ' (#' + postId + ')';
+                }
+
+                var $entry = $('<li>', { class: 'blc-modal__preview-item' });
+                if (!item.canEdit) {
+                    $entry.addClass('is-disabled');
+                }
+
+                var permalink = item.permalink || '';
+                if (permalink) {
+                    $('<a>', {
+                        href: permalink,
+                        target: '_blank',
+                        rel: 'noopener noreferrer'
+                    }).text(descriptor).appendTo($entry);
+                } else {
+                    $entry.text(descriptor);
+                }
+
+                var noteParts = [];
+                if ((item.rowId || item.row_id) === config.rowId) {
+                    if (messages.massUpdatePreviewCurrent) {
+                        noteParts.push(messages.massUpdatePreviewCurrent);
+                    }
+                }
+
+                if (!item.canEdit && messages.massUpdatePreviewRestrictedSingle) {
+                    noteParts.push(messages.massUpdatePreviewRestrictedSingle);
+                }
+
+                if (noteParts.length) {
+                    $('<div>').text(noteParts.join(' – ')).appendTo($entry);
+                }
+
+                $list.append($entry);
+            });
+
+            $container.append($list);
+
+            if (preview.nonEditableCount > 0 && messages.massUpdatePreviewRestricted) {
+                $('<p>', { class: 'blc-modal__preview-note' }).text(messages.massUpdatePreviewRestricted).appendTo($container);
+            }
+
+            helpers.setPreviewContent($container);
+        }
+
+        var $modalElement = $('#blc-modal');
+        var $input = $modalElement.find('.blc-modal__input');
+        $input.off('.blcMassUpdate');
+
+        var previewRequest = null;
+
+        function abortPreviewRequest() {
+            if (previewRequest && typeof previewRequest.abort === 'function') {
+                previewRequest.abort();
+            }
+
+            previewRequest = null;
+        }
+
+        function requestPreview(force) {
+            if (!state.applyGlobally) {
+                return;
+            }
+
+            var inputValue = $input.val();
+            var trimmedValue = inputValue ? String(inputValue).trim() : '';
+
+            if (!trimmedValue) {
+                showPreviewInfo(messages.massUpdatePreviewNeedsUrl || '');
+                return;
+            }
+
+            if (trimmedValue === config.oldUrl) {
+                showPreviewInfo(messages.massUpdatePreviewNeedsUrl || '');
+                return;
+            }
+
+            var previewKey = trimmedValue;
+            if (!force && state.lastPreviewKey === previewKey) {
+                return;
+            }
+
+            state.lastPreviewKey = previewKey;
+            state.isLoadingPreview = true;
+
+            abortPreviewRequest();
+            showPreviewLoading();
+
+            var requestData = {
+                action: config.action || 'blc_edit_link',
+                post_id: config.postId,
+                row_id: config.rowId,
+                occurrence_index: config.occurrenceIndex,
+                old_url: config.oldUrl,
+                new_url: trimmedValue,
+                apply_globally: 1,
+                preview_only: 1,
+                _ajax_nonce: config.nonce
+            };
+
+            previewRequest = $.post(ajaxurl, requestData).done(function(response) {
+                state.isLoadingPreview = false;
+
+                if (response && response.success && response.data && response.data.massUpdate) {
+                    state.previewData = response.data.massUpdate;
+                    renderPreview(state.previewData);
+                    return;
+                }
+
+                if (response && response.data && response.data.message) {
+                    showPreviewError(response.data.message);
+                    return;
+                }
+
+                showPreviewError(messages.massUpdatePreviewError || '');
+            }).fail(function(xhr) {
+                state.isLoadingPreview = false;
+
+                var errorMessage = '';
+                if (xhr && xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
+                    errorMessage = xhr.responseJSON.data.message;
+                }
+
+                showPreviewError(errorMessage || messages.massUpdatePreviewError || '');
+            }).always(function() {
+                previewRequest = null;
+            });
+        }
+
+        var schedulePreview = debounce(function() {
+            requestPreview(false);
+        }, 400);
+
+        $input.on('input.blcMassUpdate blur.blcMassUpdate', function() {
+            if (!state.applyGlobally) {
+                return;
+            }
+
+            schedulePreview();
+        });
+
+        var inactiveMessage = messages.massUpdatePreviewInactive || '';
+        if (inactiveMessage) {
+            showPreviewInfo(inactiveMessage);
+        } else {
+            helpers.clearPreview();
+        }
+
+        $checkbox.on('change', function() {
+            var isChecked = $checkbox.is(':checked');
+            state.applyGlobally = isChecked;
+
+            if (isChecked) {
+                requestPreview(true);
+            } else {
+                abortPreviewRequest();
+                state.lastPreviewKey = '';
+                state.previewData = null;
+                if (inactiveMessage) {
+                    showPreviewInfo(inactiveMessage);
+                } else {
+                    helpers.clearPreview();
+                }
+            }
+        });
+
+        state.abortPreview = abortPreviewRequest;
+        state.refreshPreview = function(force) {
+            if (state.applyGlobally) {
+                requestPreview(!!force);
+            }
+        };
+
+        state.isApplyGloballyChecked = function() {
+            return state.applyGlobally;
+        };
+
+        return state;
+    }
+
     function processLinkUpdate(linkElement, params) {
         var helpers = params.helpers || {
             setSubmitting: function() {},
@@ -1292,6 +1799,11 @@ jQuery(document).ready(function($) {
         var row = linkElement.closest('tr');
         row.css('opacity', 0.5);
 
+        var massUpdateState = params.massUpdateState || null;
+        if (massUpdateState && typeof massUpdateState.abortPreview === 'function') {
+            massUpdateState.abortPreview();
+        }
+
         var requestData = {
             action: params.action || 'blc_edit_link',
             post_id: params.postId,
@@ -1301,6 +1813,19 @@ jQuery(document).ready(function($) {
             new_url: trimmedValue,
             _ajax_nonce: params.nonce
         };
+
+        var applyGlobally = false;
+        if (massUpdateState) {
+            if (typeof massUpdateState.isApplyGloballyChecked === 'function') {
+                applyGlobally = !!massUpdateState.isApplyGloballyChecked();
+            } else if (typeof massUpdateState.applyGlobally !== 'undefined') {
+                applyGlobally = !!massUpdateState.applyGlobally;
+            }
+        }
+
+        if (applyGlobally) {
+            requestData.apply_globally = 1;
+        }
 
         if (params.extraData && typeof params.extraData === 'object') {
             $.extend(requestData, params.extraData);
@@ -1365,6 +1890,8 @@ jQuery(document).ready(function($) {
 
         var promptMessage = (messages.editPromptMessage || '').replace('%s', oldUrl || '');
 
+        var massUpdateState = {};
+
         modal.open({
             title: messages.editModalTitle,
             message: promptMessage,
@@ -1385,9 +1912,21 @@ jQuery(document).ready(function($) {
                     postId: postId,
                     rowId: rowId,
                     occurrenceIndex: occurrenceIndex,
-                    nonce: nonce
+                    nonce: nonce,
+                    massUpdateState: massUpdateState
                 });
             }
+        });
+
+        initializeMassUpdateControls({
+            state: massUpdateState,
+            modalHelpers: modal.helpers,
+            postId: postId,
+            rowId: rowId,
+            occurrenceIndex: occurrenceIndex,
+            oldUrl: oldUrl,
+            nonce: nonce,
+            action: 'blc_edit_link'
         });
     });
 

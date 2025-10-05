@@ -705,9 +705,14 @@ function blc_perform_link_update(array $args) {
         'old_url'             => '',
         'new_url'             => '',
         'success_message'     => '',
+        'apply_globally'      => false,
+        'preview_only'        => false,
     ];
 
     $args = array_merge($defaults, $args);
+
+    $apply_globally = !empty($args['apply_globally']);
+    $preview_only   = !empty($args['preview_only']);
 
     $post_id = absint($args['post_id']);
     $row_id  = absint($args['row_id']);
@@ -847,9 +852,331 @@ function blc_perform_link_update(array $args) {
         }
     }
 
+    $old_url = $prepared_old_url;
+    if (strpos($final_new_url, '//') === 0) {
+        $scheme_for_scheme_relative = (is_string($site_scheme) && $site_scheme !== '') ? $site_scheme : 'http';
+        $final_new_url = set_url_scheme($final_new_url, $scheme_for_scheme_relative);
+    }
+
+    $new_url = esc_url_raw($final_new_url);
+    if ($new_url === '') {
+        return new WP_Error('blc_invalid_url', __('URL invalide.', 'liens-morts-detector-jlg'), ['status' => BLC_HTTP_BAD_REQUEST]);
+    }
+
+    if ($apply_globally) {
+        $candidate_rows = blc_get_mass_update_candidate_rows($table_name, $stored_old_url, $row_id);
+
+        $unique_rows = [];
+        foreach ($candidate_rows as $candidate_row) {
+            $candidate_id = isset($candidate_row['id']) ? (int) $candidate_row['id'] : 0;
+            if ($candidate_id <= 0 || isset($unique_rows[$candidate_id])) {
+                continue;
+            }
+
+            $unique_rows[$candidate_id] = $candidate_row;
+        }
+
+        $ordered_rows = [];
+        if (isset($unique_rows[$row_id])) {
+            $ordered_rows[] = $unique_rows[$row_id];
+            unset($unique_rows[$row_id]);
+        }
+
+        foreach ($unique_rows as $unique_row) {
+            $ordered_rows[] = $unique_row;
+        }
+
+        $mass_update_candidates = [];
+        $preview_items = [];
+        $editable_count = 0;
+        $non_editable_count = 0;
+
+        foreach ($ordered_rows as $candidate_row) {
+            $target_row_id = isset($candidate_row['id']) ? (int) $candidate_row['id'] : 0;
+            if ($target_row_id <= 0) {
+                continue;
+            }
+
+            $target_post_id = isset($candidate_row['post_id']) ? (int) $candidate_row['post_id'] : 0;
+
+            $candidate_post_title = '';
+            if (!empty($candidate_row['current_post_title'])) {
+                $candidate_post_title = (string) $candidate_row['current_post_title'];
+            } elseif (!empty($candidate_row['post_title'])) {
+                $candidate_post_title = (string) $candidate_row['post_title'];
+            }
+
+            $candidate_post_type = isset($candidate_row['post_type']) ? (string) $candidate_row['post_type'] : '';
+
+            $can_edit = ($target_post_id > 0 && current_user_can('edit_post', $target_post_id));
+
+            $permalink = '';
+            if ($target_post_id > 0 && function_exists('get_permalink')) {
+                $permalink_candidate = get_permalink($target_post_id);
+                if (is_string($permalink_candidate)) {
+                    $permalink = $permalink_candidate;
+                }
+            }
+
+            $occurrence_value = $candidate_row['occurrence_index'] ?? null;
+            $candidate_occurrence_index = null;
+            if (is_numeric($occurrence_value)) {
+                $candidate_occurrence_index = max(0, (int) $occurrence_value);
+            }
+            if ($target_row_id === $row_id && $occurrence_index !== null) {
+                $candidate_occurrence_index = $occurrence_index;
+            }
+
+            $candidate_footprint = 0;
+            if ($target_row_id === $row_id && $row_cache_footprint > 0) {
+                $candidate_footprint = $row_cache_footprint;
+            } else {
+                $candidate_footprint = blc_calculate_row_storage_footprint_bytes(
+                    isset($candidate_row['url']) ? (string) $candidate_row['url'] : '',
+                    isset($candidate_row['anchor']) ? (string) $candidate_row['anchor'] : '',
+                    $candidate_post_title,
+                    isset($candidate_row['context_html']) ? (string) $candidate_row['context_html'] : '',
+                    isset($candidate_row['context_excerpt']) ? (string) $candidate_row['context_excerpt'] : ''
+                );
+            }
+
+            if ($can_edit) {
+                $editable_count++;
+            } else {
+                $non_editable_count++;
+            }
+
+            $mass_update_candidates[] = [
+                'rowId'           => $target_row_id,
+                'postId'          => $target_post_id,
+                'postTitle'       => $candidate_post_title,
+                'postType'        => $candidate_post_type,
+                'canEdit'         => $can_edit,
+                'permalink'       => $permalink,
+                'occurrenceIndex' => $candidate_occurrence_index,
+                'footprint'       => $candidate_footprint,
+            ];
+
+            $preview_items[] = [
+                'rowId'     => $target_row_id,
+                'postId'    => $target_post_id,
+                'postTitle' => $candidate_post_title,
+                'postType'  => $candidate_post_type,
+                'permalink' => $permalink,
+                'canEdit'   => $can_edit,
+            ];
+        }
+
+        $preview_payload = [
+            'applyGlobally'    => true,
+            'totalCount'       => count($mass_update_candidates),
+            'editableCount'    => $editable_count,
+            'nonEditableCount' => $non_editable_count,
+            'items'            => $preview_items,
+            'initiatorRowId'   => $row_id,
+        ];
+
+        if ($preview_only) {
+            return [
+                'previewOnly' => true,
+                'massUpdate'  => $preview_payload,
+                'rowRemoved'  => false,
+                'row_removed' => false,
+            ];
+        }
+
+        $successes = [];
+        $failures = [];
+        $row_removed = false;
+        $footprint_adjustment = 0;
+
+        foreach ($mass_update_candidates as $candidate) {
+            if (!$candidate['canEdit']) {
+                $failures[] = [
+                    'rowId'     => $candidate['rowId'],
+                    'postId'    => $candidate['postId'],
+                    'postTitle' => $candidate['postTitle'],
+                    'reason'    => __('Permissions insuffisantes.', 'liens-morts-detector-jlg'),
+                ];
+                continue;
+            }
+
+            $target_post_id = $candidate['postId'];
+            if ($target_post_id <= 0) {
+                $failures[] = [
+                    'rowId'     => $candidate['rowId'],
+                    'postId'    => $candidate['postId'],
+                    'postTitle' => $candidate['postTitle'],
+                    'reason'    => __('Le contenu est introuvable.', 'liens-morts-detector-jlg'),
+                ];
+                continue;
+            }
+
+            $target_post = get_post($target_post_id);
+            if (!$target_post instanceof WP_Post) {
+                $failures[] = [
+                    'rowId'     => $candidate['rowId'],
+                    'postId'    => $candidate['postId'],
+                    'postTitle' => $candidate['postTitle'],
+                    'reason'    => __('Le contenu est introuvable.', 'liens-morts-detector-jlg'),
+                ];
+                continue;
+            }
+
+            $normalized_content = blc_normalize_post_content_encoding($target_post->post_content);
+            $replacement = blc_replace_link_href_in_content($normalized_content, $old_url, $new_url, $candidate['occurrenceIndex']);
+
+            if (!is_array($replacement) || empty($replacement['updated'])) {
+                $failures[] = [
+                    'rowId'     => $candidate['rowId'],
+                    'postId'    => $candidate['postId'],
+                    'postTitle' => $candidate['postTitle'] !== '' ? $candidate['postTitle'] : get_the_title($target_post),
+                    'reason'    => __('Impossible de localiser cette occurrence du lien. Le contenu a peut-être été modifié.', 'liens-morts-detector-jlg'),
+                ];
+                continue;
+            }
+
+            $new_content = blc_restore_post_content_encoding($replacement['content']);
+            $update_result = wp_update_post(
+                [
+                    'ID'           => $target_post_id,
+                    'post_content' => wp_slash($new_content),
+                ],
+                true
+            );
+
+            if (!$update_result || is_wp_error($update_result)) {
+                $error_message = __('La mise à jour de l\'article a échoué.', 'liens-morts-detector-jlg');
+                if (is_wp_error($update_result)) {
+                    $error_message .= ' ' . $update_result->get_error_message();
+                }
+
+                $failures[] = [
+                    'rowId'     => $candidate['rowId'],
+                    'postId'    => $candidate['postId'],
+                    'postTitle' => $candidate['postTitle'] !== '' ? $candidate['postTitle'] : get_the_title($target_post),
+                    'reason'    => $error_message,
+                ];
+                continue;
+            }
+
+            $delete_result = $wpdb->delete(
+                $table_name,
+                ['id' => $candidate['rowId']],
+                ['%d']
+            );
+
+            if ($delete_result === false) {
+                $failures[] = [
+                    'rowId'     => $candidate['rowId'],
+                    'postId'    => $candidate['postId'],
+                    'postTitle' => $candidate['postTitle'] !== '' ? $candidate['postTitle'] : get_the_title($target_post),
+                    'reason'    => __('La suppression du lien dans la base de données a échoué.', 'liens-morts-detector-jlg'),
+                ];
+                continue;
+            }
+
+            if ($delete_result > 0 && $candidate['footprint'] > 0) {
+                $footprint_adjustment += (int) $candidate['footprint'];
+            }
+
+            $row_removed = $row_removed || ($candidate['rowId'] === $row_id);
+
+            $success_title = get_the_title($target_post_id);
+            if (!is_string($success_title) || $success_title === '') {
+                $success_title = $candidate['postTitle'];
+            }
+
+            $success_permalink = $candidate['permalink'];
+            if ($success_permalink === '' && function_exists('get_permalink')) {
+                $permalink_candidate = get_permalink($target_post_id);
+                if (is_string($permalink_candidate)) {
+                    $success_permalink = $permalink_candidate;
+                }
+            }
+
+            $successes[] = [
+                'rowId'     => $candidate['rowId'],
+                'postId'    => $candidate['postId'],
+                'postTitle' => $success_title,
+                'permalink' => $success_permalink,
+            ];
+        }
+
+        if ($footprint_adjustment > 0) {
+            blc_adjust_dataset_storage_footprint('link', -$footprint_adjustment);
+        }
+
+        if (!empty($successes)) {
+            blc_mark_link_view_counts_dirty();
+        }
+
+        $updated_count = count($successes);
+        $failure_count = count($failures);
+
+        if ($updated_count === 0 && $failure_count === 0) {
+            $message = __('Aucune occurrence n’a été trouvée pour cette URL.', 'liens-morts-detector-jlg');
+        } elseif ($updated_count === 0) {
+            $message = __('Aucune occurrence n’a pu être mise à jour.', 'liens-morts-detector-jlg');
+        } elseif ($failure_count > 0) {
+            $message = sprintf(
+                _n('%1$d contenu mis à jour, %2$d échec.', '%1$d contenus mis à jour, %2$d échecs.', $updated_count, 'liens-morts-detector-jlg'),
+                $updated_count,
+                $failure_count
+            );
+        } else {
+            $message = sprintf(
+                _n('%d contenu mis à jour.', '%d contenus mis à jour.', $updated_count, 'liens-morts-detector-jlg'),
+                $updated_count
+            );
+        }
+
+        $mass_update_summary = [
+            'applyGlobally'    => true,
+            'totalCount'       => count($mass_update_candidates),
+            'updatedCount'     => $updated_count,
+            'failureCount'     => $failure_count,
+            'editableCount'    => $editable_count,
+            'nonEditableCount' => $non_editable_count,
+            'updatedPosts'     => $successes,
+            'failures'         => $failures,
+        ];
+
+        $log_payload = [
+            'old_url'         => $prepared_old_url,
+            'new_url'         => $new_url,
+            'initiator_row_id'=> $row_id,
+            'initiator_post_id' => $post_id,
+            'updated_posts'   => $successes,
+            'failures'        => $failures,
+            'total'           => count($mass_update_candidates),
+            'updated_count'   => $updated_count,
+            'failure_count'   => $failure_count,
+            'user_id'         => get_current_user_id(),
+            'timestamp'       => current_time('mysql'),
+        ];
+
+        $filtered_payload = apply_filters('blc_link_mass_update_performed', $log_payload, $mass_update_summary);
+        if (is_array($filtered_payload)) {
+            $log_payload = $filtered_payload;
+        }
+
+        return [
+            'purged'      => false,
+            'row_removed' => $row_removed,
+            'rowRemoved'  => $row_removed,
+            'previewOnly' => false,
+            'message'     => $message,
+            'announcement'=> $message,
+            'massUpdate'  => $mass_update_summary,
+        ];
+    }
+
     $success_payload = [
         'purged'      => false,
         'row_removed' => true,
+        'rowRemoved'  => true,
+        'previewOnly' => false,
     ];
 
     if ($args['success_message'] !== '') {
@@ -879,23 +1206,14 @@ function blc_perform_link_update(array $args) {
         blc_mark_link_view_counts_dirty();
 
         $success_payload['purged'] = true;
+        $success_payload['row_removed'] = true;
+        $success_payload['rowRemoved'] = true;
 
         return $success_payload;
     }
 
     if (!current_user_can('edit_post', $post_id)) {
         return new WP_Error('blc_forbidden', __('Permissions insuffisantes.', 'liens-morts-detector-jlg'), ['status' => BLC_HTTP_FORBIDDEN]);
-    }
-
-    $old_url = $prepared_old_url;
-    if (strpos($final_new_url, '//') === 0) {
-        $scheme_for_scheme_relative = (is_string($site_scheme) && $site_scheme !== '') ? $site_scheme : 'http';
-        $final_new_url = set_url_scheme($final_new_url, $scheme_for_scheme_relative);
-    }
-
-    $new_url = esc_url_raw($final_new_url);
-    if ($new_url === '') {
-        return new WP_Error('blc_invalid_url', __('URL invalide.', 'liens-morts-detector-jlg'), ['status' => BLC_HTTP_BAD_REQUEST]);
     }
 
     $normalized_content = blc_normalize_post_content_encoding($post->post_content);
@@ -939,7 +1257,87 @@ function blc_perform_link_update(array $args) {
 
     blc_mark_link_view_counts_dirty();
 
+    $success_payload['row_removed'] = true;
+    $success_payload['rowRemoved'] = true;
+
     return $success_payload;
+}
+
+/**
+ * Retrieve candidate broken link rows for a mass update.
+ *
+ * @param string $table_name     Table storing broken link records.
+ * @param string $stored_old_url Stored URL used as matching key.
+ * @param int    $row_id         Initiator row identifier.
+ *
+ * @return array<int,array<string,mixed>>
+ */
+function blc_get_mass_update_candidate_rows($table_name, $stored_old_url, $row_id) {
+    global $wpdb;
+
+    $table_name = (string) $table_name;
+    if ($table_name === '') {
+        $table_name = $wpdb->prefix . 'blc_broken_links';
+    }
+
+    $row_id = absint($row_id);
+
+    $posts_table = $wpdb->posts;
+
+    $conditions = [];
+    $params = ['link'];
+
+    if ($stored_old_url !== '') {
+        $conditions[] = 'links.url = %s';
+        $params[] = $stored_old_url;
+        $conditions[] = 'links.redirect_target_url = %s';
+        $params[] = $stored_old_url;
+    }
+
+    $conditions[] = 'links.id = %d';
+    $params[] = $row_id;
+
+    $where_parts = array_map(
+        static function ($clause) {
+            return '(' . $clause . ')';
+        },
+        $conditions
+    );
+
+    $where_sql = implode(' OR ', $where_parts);
+
+    $query = "
+        SELECT
+            links.id,
+            links.post_id,
+            links.url,
+            links.anchor,
+            links.redirect_target_url,
+            links.context_html,
+            links.context_excerpt,
+            links.post_title,
+            links.occurrence_index,
+            posts.post_type,
+            posts.post_title AS current_post_title
+        FROM {$table_name} AS links
+        LEFT JOIN {$posts_table} AS posts ON posts.ID = links.post_id
+        WHERE links.type = %s
+    ";
+
+    if ($where_sql !== '') {
+        $query .= " AND ({$where_sql})";
+    }
+
+    $query .= ' ORDER BY links.post_id ASC, links.id ASC';
+
+    $prepared = $wpdb->prepare($query, $params);
+    $results = $wpdb->get_results($prepared, ARRAY_A);
+
+    if (!is_array($results)) {
+        return [];
+    }
+
+    return $results;
 }
 
 /**
@@ -1008,6 +1406,9 @@ function blc_ajax_edit_link_callback() {
     $row_to_delete = $resolution['cache_row'];
     $row_cache_footprint = $resolution['cache_footprint'];
 
+    $apply_globally = !empty($_POST['apply_globally']);
+    $preview_only   = !empty($_POST['preview_only']);
+
     $result = blc_perform_link_update([
         'post_id'             => $post_id,
         'row_id'              => $row_id,
@@ -1018,6 +1419,8 @@ function blc_ajax_edit_link_callback() {
         'row_cache_footprint' => $row_cache_footprint,
         'old_url'             => $params['old_url'],
         'new_url'             => $params['new_url'],
+        'apply_globally'      => $apply_globally,
+        'preview_only'        => $preview_only,
     ]);
 
     if (is_wp_error($result)) {
@@ -1025,12 +1428,7 @@ function blc_ajax_edit_link_callback() {
         wp_send_json_error(['message' => $result->get_error_message()], $status);
     }
 
-    if (!empty($result['purged'])) {
-        wp_send_json_success(['purged' => true]);
-        return;
-    }
-
-    wp_send_json_success();
+    wp_send_json_success($result);
 }
 
 add_action('wp_ajax_blc_apply_detected_redirect', 'blc_ajax_apply_detected_redirect_callback');
