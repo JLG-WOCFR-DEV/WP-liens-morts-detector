@@ -143,11 +143,20 @@ final class ScanQueueRunBatchTest extends ScannerTestCase
         ]);
 
         $processedSources = [];
-        Functions\when('blc_process_link_nodes_from_html')->alias(function ($html, $charset, $callback) use (&$processedSources) {
+        Functions\when('blc_process_link_nodes_from_html')->alias(function ($html, $charset, $callbacks) use (&$processedSources) {
             $processedSources[] = $html;
             $index = count($processedSources);
             $href = 'https://scanned.test/' . $index;
-            $callback($href, 'Anchor ' . $index, '<a href="' . $href . '">Anchor</a>', 'Anchor ' . $index);
+
+            if (is_array($callbacks)) {
+                $link_callback = $callbacks['link'] ?? null;
+                if (is_callable($link_callback)) {
+                    $link_callback($href, 'Anchor ' . $index, '<a href="' . $href . '">Anchor</a>', 'Anchor ' . $index, 'link', []);
+                }
+            } elseif (is_callable($callbacks)) {
+                $callbacks($href, 'Anchor ' . $index, '<a href="' . $href . '">Anchor</a>', 'Anchor ' . $index, 'link', []);
+            }
+
             return true;
         });
 

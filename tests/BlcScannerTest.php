@@ -648,6 +648,69 @@ class BlcScannerTest extends TestCase
         require_once __DIR__ . '/../liens-morts-detector-jlg/liens-morts-detector-jlg.php';
     }
 
+    public function test_process_link_nodes_from_html_handles_additional_nodes(): void
+    {
+        Functions::when('wp_strip_all_tags')->alias('strip_tags');
+        Functions::when('wp_kses_decode_entities')->alias('html_entity_decode');
+
+        $html = <<<HTML
+<div>
+    <a href="https://example.com/anchor">Anchor text</a>
+    <iframe src="https://example.com/embed" title="Video player"></iframe>
+    <script src="https://example.com/app.js" id="main-script"></script>
+    <link rel="stylesheet" href="https://example.com/site.css" />
+    <form action="https://example.com/form" method="post" id="contact"></form>
+    <div style="background-image:url('https://example.com/inline-bg.jpg');"></div>
+</div>
+<style>
+.hero { background: url("https://example.com/hero.jpg"); }
+</style>
+HTML;
+
+        $collected = [];
+        $callbacks = [];
+        foreach (['link', 'iframe', 'script', 'stylesheet', 'form', 'css-background'] as $type) {
+            $callbacks[$type] = static function ($url, $label, $context_html, $context_excerpt, $reference_type) use (&$collected) {
+                $collected[$reference_type][] = [
+                    'url'            => $url,
+                    'label'          => $label,
+                    'context_html'   => $context_html,
+                    'context_excerpt'=> $context_excerpt,
+                ];
+            };
+        }
+
+        $result = blc_process_link_nodes_from_html($html, 'UTF-8', $callbacks);
+
+        $this->assertTrue($result);
+        $this->assertArrayHasKey('link', $collected);
+        $this->assertArrayHasKey('iframe', $collected);
+        $this->assertArrayHasKey('script', $collected);
+        $this->assertArrayHasKey('stylesheet', $collected);
+        $this->assertArrayHasKey('form', $collected);
+        $this->assertArrayHasKey('css-background', $collected);
+
+        $this->assertSame('https://example.com/anchor', $collected['link'][0]['url']);
+        $this->assertSame('Anchor text', $collected['link'][0]['label']);
+
+        $this->assertSame('https://example.com/embed', $collected['iframe'][0]['url']);
+        $this->assertSame('Video player', $collected['iframe'][0]['label']);
+
+        $this->assertSame('https://example.com/app.js', $collected['script'][0]['url']);
+        $this->assertSame('Script « main-script »', $collected['script'][0]['label']);
+
+        $this->assertSame('https://example.com/site.css', $collected['stylesheet'][0]['url']);
+        $this->assertSame('Feuille de style', $collected['stylesheet'][0]['label']);
+
+        $this->assertSame('https://example.com/form', $collected['form'][0]['url']);
+        $this->assertSame('Formulaire « contact » (POST)', $collected['form'][0]['label']);
+
+        $this->assertCount(2, $collected['css-background']);
+        $background_urls = array_column($collected['css-background'], 'url');
+        $this->assertContains('https://example.com/inline-bg.jpg', $background_urls);
+        $this->assertContains('https://example.com/hero.jpg', $background_urls);
+    }
+
     protected function tearDown(): void
     {
         Monkey\tearDown();

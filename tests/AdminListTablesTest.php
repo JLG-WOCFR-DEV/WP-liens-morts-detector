@@ -580,6 +580,31 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString("NOT ((url LIKE 'https://example.com%' AND url REGEXP '^https://example\\\.com(?:[/?#]|$)'))", $wpdb->last_get_results_query);
     }
 
+    public function test_links_prepare_items_filters_by_reference_type(): void
+    {
+        global $wpdb;
+        $wpdb = new DummyWpdb();
+        $wpdb->get_var_return_values = [0];
+        $wpdb->results_to_return = [];
+
+        $_GET['link_type'] = 'iframe';
+
+        $table = new \BLC_Links_List_Table();
+        $table->prepare_items();
+
+        unset($_GET['link_type']);
+
+        $this->assertStringContainsString('type = %s', $wpdb->last_get_var_query);
+        $this->assertStringContainsString('type = %s', $wpdb->last_get_results_query);
+
+        $matching_calls = array_filter(
+            $wpdb->prepare_calls,
+            static fn(array $call): bool => isset($call['params']) && in_array('iframe', (array) $call['params'], true)
+        );
+
+        $this->assertNotEmpty($matching_calls);
+    }
+
     public function test_links_get_views_counts_internal_patterns(): void
     {
         global $wpdb;
@@ -597,6 +622,12 @@ class AdminListTablesTest extends TestCase
 
         $this->assertArrayHasKey('internal', $views);
         $this->assertArrayHasKey('external', $views);
+        $this->assertArrayHasKey('link', $views);
+        $this->assertArrayHasKey('iframe', $views);
+        $this->assertArrayHasKey('script', $views);
+        $this->assertArrayHasKey('stylesheet', $views);
+        $this->assertArrayHasKey('form', $views);
+        $this->assertArrayHasKey('css-background', $views);
         $this->assertStringContainsString("CASE WHEN (url LIKE 'https://example.com%' AND url REGEXP '^https://example\\\.com(?:[/?#]|$)') THEN 1", $wpdb->last_get_row_query);
         $this->assertStringContainsString("WHEN (url LIKE 'http://example.com%' AND url REGEXP '^http://example\\\.com(?:[/?#]|$)') THEN 1", $wpdb->last_get_row_query);
         $this->assertStringContainsString("(url LIKE '//example.com%' AND url REGEXP '^//example\\\.com(?:[/?#]|$)')", $wpdb->last_get_row_query);
@@ -604,7 +635,10 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString("WHEN (url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_row_query);
         $prepare_call = end($wpdb->prepare_calls);
         $this->assertIsArray($prepare_call);
-        $this->assertSame('link', end($prepare_call[1]));
+        $expected_types = ['link', 'iframe', 'script', 'stylesheet', 'form', 'css-background'];
+        foreach ($expected_types as $expected_type) {
+            $this->assertContains($expected_type, $prepare_call[1]);
+        }
         $this->assertContains('https://example.com%', $prepare_call[1]);
         $this->assertContains('^https://example\\.com(?:[/?#]|$)', $prepare_call[1]);
         $this->assertContains('http://example.com%', $prepare_call[1]);

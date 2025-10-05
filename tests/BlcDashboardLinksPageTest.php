@@ -433,6 +433,12 @@ class BlcDashboardLinksPageTest extends TestCase
         $this->assertStringContainsString("5xx <span class='count'>(1)</span>", $output);
         $this->assertStringContainsString("Redirections <span class='count'>(1)</span>", $output);
         $this->assertStringContainsString("À revérifier <span class='count'>(2)</span>", $output);
+        $this->assertStringContainsString("Liens HTML <span class='count'>(0)</span>", $output);
+        $this->assertStringContainsString("Iframes <span class='count'>(0)</span>", $output);
+        $this->assertStringContainsString("Scripts externes <span class='count'>(0)</span>", $output);
+        $this->assertStringContainsString("Balises &lt;link&gt; <span class='count'>(0)</span>", $output);
+        $this->assertStringContainsString("Formulaires <span class='count'>(0)</span>", $output);
+        $this->assertStringContainsString("Arrière-plans CSS <span class='count'>(0)</span>", $output);
     }
 
     public function test_hidden_page_field_not_rendered_for_non_scalar_request(): void
@@ -542,7 +548,9 @@ class BlcDashboardLinksPageTest extends TestCase
         $this->assertNotEmpty($matching_calls);
 
         foreach ($matching_calls as $call) {
-            $this->assertContains('link', $call['params']);
+            foreach (['link', 'iframe', 'script', 'stylesheet', 'form', 'css-background'] as $expectedType) {
+                $this->assertContains($expectedType, $call['params']);
+            }
             $this->assertContains('0000-00-00 00:00:00', $call['params']);
             $this->assertContains($expected_threshold, $call['params']);
         }
