@@ -123,6 +123,109 @@ class ScanQueue {
                 $max_concurrent_requests = 1;
             }
 
+            $soft_404_config = blc_get_soft_404_heuristics();
+            $soft_404_min_length = isset($soft_404_config['min_length']) ? (int) $soft_404_config['min_length'] : 0;
+            $soft_404_title_indicators = isset($soft_404_config['title_indicators']) && is_array($soft_404_config['title_indicators'])
+                ? $soft_404_config['title_indicators']
+                : [];
+            $soft_404_body_indicators = isset($soft_404_config['body_indicators']) && is_array($soft_404_config['body_indicators'])
+                ? $soft_404_config['body_indicators']
+                : [];
+            $soft_404_ignore_patterns = isset($soft_404_config['ignore_patterns']) && is_array($soft_404_config['ignore_patterns'])
+                ? $soft_404_config['ignore_patterns']
+                : [];
+
+            $soft_404_extract_title = static function ($html) {
+                if (!is_string($html) || $html === '') {
+                    return '';
+                }
+
+                if (preg_match('/<title\b[^>]*>(.*?)<\/title>/is', $html, $matches) !== 1) {
+                    return '';
+                }
+
+                $title = isset($matches[1]) ? (string) $matches[1] : '';
+                if ($title === '') {
+                    return '';
+                }
+
+                if (function_exists('wp_specialchars_decode')) {
+                    $title = wp_specialchars_decode($title, ENT_QUOTES);
+                } else {
+                    $title = html_entity_decode($title, ENT_QUOTES, 'UTF-8');
+                }
+
+                $title = trim(preg_replace('/\s+/', ' ', $title));
+
+                return $title;
+            };
+
+            $soft_404_strip_text = static function ($html) {
+                if (!is_string($html) || $html === '') {
+                    return '';
+                }
+
+                if (function_exists('wp_strip_all_tags')) {
+                    $text = wp_strip_all_tags($html, true);
+                } else {
+                    $text = strip_tags($html);
+                }
+
+                $text = trim(preg_replace('/\s+/', ' ', (string) $text));
+
+                return $text;
+            };
+
+            $soft_404_matches_any = static function (array $patterns, array $candidates): bool {
+                if ($patterns === []) {
+                    return false;
+                }
+
+                foreach ($patterns as $pattern) {
+                    if (!is_string($pattern) || $pattern === '') {
+                        continue;
+                    }
+
+                    $pattern_value = (string) $pattern;
+                    $is_regex = false;
+                    $regex_body = '';
+                    $regex_flags = 'i';
+
+                    if (strlen($pattern_value) >= 2 && $pattern_value[0] === '/') {
+                        $last_delimiter = strrpos($pattern_value, '/');
+                        if ($last_delimiter !== false) {
+                            $regex_body = substr($pattern_value, 1, $last_delimiter - 1);
+                            $regex_flags = substr($pattern_value, $last_delimiter + 1);
+                            if ($regex_body !== '') {
+                                $is_regex = true;
+                            }
+                        }
+                    }
+
+                    foreach ($candidates as $candidate) {
+                        if (!is_string($candidate) || $candidate === '') {
+                            continue;
+                        }
+
+                        if ($is_regex) {
+                            $flags = $regex_flags === '' ? 'i' : $regex_flags;
+                            $expression = '/' . $regex_body . '/' . $flags;
+                            $match = @preg_match($expression, $candidate);
+                            if ($match === 1) {
+                                return true;
+                            }
+                            continue;
+                        }
+
+                        if (stripos($candidate, $pattern_value) !== false) {
+                            return true;
+                        }
+                    }
+                }
+
+                return false;
+            };
+
             $parallel_requests_dispatcher = apply_filters('blc_parallel_requests_dispatcher', null);
             if (!is_callable($parallel_requests_dispatcher)) {
                 $parallel_requests_dispatcher = static function (array $requests) {
@@ -1674,7 +1777,14 @@ class ScanQueue {
                                 $remote_request_client,
                                 $temporary_http_statuses,
                                 $normalized_url,
-                                $finalize_remote_outcome
+                                $finalize_remote_outcome,
+                                $soft_404_min_length,
+                                $soft_404_title_indicators,
+                                $soft_404_body_indicators,
+                                $soft_404_ignore_patterns,
+                                $soft_404_extract_title,
+                                $soft_404_strip_text,
+                                $soft_404_matches_any
                             ) {
                                 if (!is_wp_error($response)) {
                                     $resolved_target_url = blc_determine_response_target_url($response, $normalized_url);
@@ -1742,6 +1852,82 @@ class ScanQueue {
                                         if (in_array($response_code, $temporary_http_statuses, true)) {
                                             $should_retry_later = true;
                                         } else {
+                                            $should_insert_broken_link = true;
+                                        }
+                                    } else {
+                                        $response_body_raw = '';
+                                        if (is_array($response) && array_key_exists('body', $response) && is_string($response['body'])) {
+                                            $response_body_raw = (string) $response['body'];
+                                        }
+
+                                        $body_text = '';
+                                        $page_title = '';
+                                        $soft_404_reasons = [];
+                                        $soft_404_detected = false;
+
+                                        if ($response_body_raw !== '' && trim($response_body_raw) !== '') {
+                                            $body_text = $soft_404_strip_text($response_body_raw);
+                                            $page_title = $soft_404_extract_title($response_body_raw);
+
+                                            $ignore_match = $soft_404_matches_any(
+                                                $soft_404_ignore_patterns,
+                                                [$response_body_raw, $body_text, $page_title]
+                                            );
+
+                                            if (!$ignore_match) {
+                                                if ($soft_404_min_length > 0) {
+                                                    $body_length = $body_text === ''
+                                                        ? 0
+                                                        : (function_exists('mb_strlen')
+                                                            ? (int) mb_strlen($body_text, 'UTF-8')
+                                                            : strlen($body_text));
+
+                                                    if ($body_length < $soft_404_min_length) {
+                                                        $soft_404_detected = true;
+                                                        $soft_404_reasons[] = 'length';
+                                                    }
+                                                }
+
+                                                if ($page_title !== '' && $soft_404_matches_any($soft_404_title_indicators, [$page_title])) {
+                                                    $soft_404_detected = true;
+                                                    $soft_404_reasons[] = 'title';
+                                                }
+
+                                                if ($soft_404_matches_any($soft_404_body_indicators, [$response_body_raw, $body_text])) {
+                                                    $soft_404_detected = true;
+                                                    $soft_404_reasons[] = 'body';
+                                                }
+                                            }
+
+                                            $soft_404_reasons = array_values(array_unique($soft_404_reasons));
+
+                                            $detection_context = [
+                                                'url'            => $normalized_url,
+                                                'response_code'  => $response_code,
+                                                'body'           => $response_body_raw,
+                                                'body_text'      => $body_text,
+                                                'title'          => $page_title,
+                                                'min_length'     => $soft_404_min_length,
+                                                'reasons'        => $soft_404_reasons,
+                                                'ignore_matched' => $ignore_match,
+                                            ];
+
+                                            /**
+                                             * Permet d'ajuster le résultat de la détection soft 404.
+                                             *
+                                             * @param bool  $soft_404_detected État détecté par défaut.
+                                             * @param array $detection_context Contexte d'analyse (URL, code HTTP, corps…).
+                                             * @param mixed $response          Réponse HTTP complète.
+                                             */
+                                            $soft_404_detected = (bool) apply_filters(
+                                                'blc_soft_404_detection',
+                                                $soft_404_detected,
+                                                $detection_context,
+                                                $response
+                                            );
+                                        }
+
+                                        if ($soft_404_detected) {
                                             $should_insert_broken_link = true;
                                         }
                                     }

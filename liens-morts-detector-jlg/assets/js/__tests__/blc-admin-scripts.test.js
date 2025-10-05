@@ -98,6 +98,17 @@ describe('blc-admin-scripts modal interactions', () => {
     window.$ = $;
     global.ajaxurl = 'admin-ajax.php';
     delete window.blcAdminMessages;
+    window.blcAdminSoft404Config = {
+      minLength: 10,
+      titleIndicators: ['introuvable', 'erreur'],
+      bodyIndicators: ['erreur 404', 'page introuvable'],
+      ignorePatterns: ['/profil/i'],
+      labels: {
+        length: 'Contenu trop court',
+        title: 'Titre suspect',
+        body: "Message d’erreur détecté"
+      }
+    };
     require(path.resolve(__dirname, '../blc-admin-scripts.js'));
     expect($('#blc-modal').length).toBe(1);
     expect($('#blc-modal').attr('tabindex')).toBe('-1');
@@ -112,6 +123,7 @@ describe('blc-admin-scripts modal interactions', () => {
     delete window.jQuery;
     delete window.$;
     delete global.ajaxurl;
+    delete window.blcAdminSoft404Config;
   });
 
   function openEditModal() {
@@ -176,6 +188,40 @@ describe('blc-admin-scripts modal interactions', () => {
     input.val('https://old.example');
     confirm.trigger('click');
     expect(error.text()).toBe(defaultMessages.same);
+  });
+
+  test('detects soft 404 responses via title and body heuristics', () => {
+    const result = window.blcAdmin.soft404.detect({
+      body: '<html><head><title>Page Introuvable</title></head><body><h1>Erreur 404</h1></body></html>'
+    });
+
+    expect(result.isSoft404).toBe(true);
+    expect(result.reasons).toEqual(expect.arrayContaining(['title', 'body']));
+  });
+
+  test('skips soft 404 detection when ignore patterns match', () => {
+    const result = window.blcAdmin.soft404.detect({
+      body: '<html><body><p>Profil introuvable</p></body></html>'
+    });
+
+    expect(result.isSoft404).toBe(false);
+    expect(result.ignored).toBe(true);
+  });
+
+  test('flags short content when below the configured threshold', () => {
+    const result = window.blcAdmin.soft404.detect({ body: '<p>Hi</p>' });
+
+    expect(result.reasons).toContain('length');
+    expect(result.isSoft404).toBe(true);
+  });
+
+  test('exposes normalized soft 404 configuration', () => {
+    const config = window.blcAdmin.soft404.getConfig();
+
+    expect(config.minLength).toBe(10);
+    expect(config.titleIndicators).toEqual(expect.arrayContaining(['introuvable', 'erreur']));
+    expect(config.bodyIndicators).toEqual(expect.arrayContaining(['erreur 404', 'page introuvable']));
+    expect(config.ignorePatterns).toEqual(expect.arrayContaining(['/profil/i']));
   });
 
   test('keeps focus trapped inside the modal when tabbing', () => {

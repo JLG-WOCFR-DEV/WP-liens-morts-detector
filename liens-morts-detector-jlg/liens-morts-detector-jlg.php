@@ -349,6 +349,29 @@ function blc_enqueue_admin_assets($hook) {
             ),
         )
     );
+
+    $soft_404_config = blc_get_soft_404_heuristics();
+    wp_localize_script(
+        'blc-admin-js',
+        'blcAdminSoft404Config',
+        array(
+            'minLength'       => isset($soft_404_config['min_length']) ? (int) $soft_404_config['min_length'] : 0,
+            'titleIndicators' => isset($soft_404_config['title_indicators']) && is_array($soft_404_config['title_indicators'])
+                ? array_values($soft_404_config['title_indicators'])
+                : array(),
+            'bodyIndicators'  => isset($soft_404_config['body_indicators']) && is_array($soft_404_config['body_indicators'])
+                ? array_values($soft_404_config['body_indicators'])
+                : array(),
+            'ignorePatterns'  => isset($soft_404_config['ignore_patterns']) && is_array($soft_404_config['ignore_patterns'])
+                ? array_values($soft_404_config['ignore_patterns'])
+                : array(),
+            'labels'          => array(
+                'length' => __('Contenu trop court', 'liens-morts-detector-jlg'),
+                'title'  => __('Titre suspect', 'liens-morts-detector-jlg'),
+                'body'   => __('Message d’erreur détecté', 'liens-morts-detector-jlg'),
+            ),
+        )
+    );
 }
 
 /**
