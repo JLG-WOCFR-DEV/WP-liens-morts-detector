@@ -122,10 +122,12 @@ function blc_render_action_modal() {
             <p class="blc-modal__message"></p>
             <div class="blc-modal__context" aria-live="polite"></div>
             <div class="blc-modal__error" role="alert" aria-live="assertive"></div>
+            <div class="blc-modal__options blc-modal__section is-hidden"></div>
             <div class="blc-modal__field">
                 <label for="blc-modal-url" class="blc-modal__label"></label>
                 <input type="url" id="blc-modal-url" class="blc-modal__input" placeholder="<?php echo esc_attr__('https://', 'liens-morts-detector-jlg'); ?>">
             </div>
+            <div class="blc-modal__preview blc-modal__section is-hidden" aria-live="polite"></div>
             <div class="blc-modal__actions">
                 <button type="button" class="button button-secondary blc-modal__cancel"><?php esc_html_e('Annuler', 'liens-morts-detector-jlg'); ?></button>
                 <button type="button" class="button button-primary blc-modal__confirm"><?php esc_html_e('Confirmer', 'liens-morts-detector-jlg'); ?></button>

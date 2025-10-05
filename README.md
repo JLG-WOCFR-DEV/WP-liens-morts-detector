@@ -91,6 +91,34 @@ add_filter('blc_link_batch_size', function (int $batchSize, int $batch, bool $is
 });
 ```
 
+### `blc_link_mass_update_performed`
+Déclenché après une mise à jour globale d’un lien via l’interface d’actions rapides. Le hook transmet le résumé de l’opération
+ (`status`, `updated`, `failed`, `apply_globally`, `preview`) ainsi que la liste détaillée des contenus modifiés ou en erreur.
+Ce filtre est idéal pour enregistrer les changements dans un journal personnalisé ou déclencher des redirections automatiques.
+
+```php
+add_action('blc_link_mass_update_performed', function (array $context) {
+    foreach ($context['updated_posts'] as $postChange) {
+        error_log(sprintf(
+            'Lien mis à jour dans %s (%d) : %s → %s',
+            $postChange['post_title'],
+            $postChange['post_id'],
+            $postChange['old_url'],
+            $postChange['new_url']
+        ));
+    }
+
+    foreach ($context['failed_posts'] as $postError) {
+        error_log(sprintf(
+            'Échec de la mise à jour du lien dans %s (%d) : %s',
+            $postError['post_title'],
+            $postError['error_message'],
+            $postError['post_id']
+        ));
+    }
+});
+```
+
 ## Structure du projet
 - `liens-morts-detector-jlg.php` : point d’entrée du plugin, chargement des fichiers, hooks et actions AJAX.
 - `includes/` : planification WP‑Cron, fonctions d’activation/désactivation, scanners et pages d’administration.
