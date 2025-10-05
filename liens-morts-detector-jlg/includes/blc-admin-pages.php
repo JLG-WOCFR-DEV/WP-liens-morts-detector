@@ -642,6 +642,85 @@ function blc_dashboard_links_page() {
             'label'     => $card_data['label'],
         );
     }
+
+    $history_display_limit = 10;
+    if (function_exists('apply_filters')) {
+        $history_display_limit = (int) apply_filters('blc_scan_history_display_limit', $history_display_limit, 'link');
+    }
+
+    if ($history_display_limit <= 0) {
+        $history_display_limit = 10;
+    }
+
+    $history_required_keys = array('broken', 'not_found', 'server_error', 'redirect', 'needs_recheck');
+    $link_history_entries = function_exists('blc_get_recent_scan_history')
+        ? blc_get_recent_scan_history('link', $history_display_limit)
+        : array();
+
+    $link_history_entries = array_values(array_filter(
+        array_map(
+            static function ($entry) use ($history_required_keys) {
+                if (!is_array($entry) || empty($entry['timestamp'])) {
+                    return null;
+                }
+
+                $timestamp = (int) $entry['timestamp'];
+                if ($timestamp <= 0) {
+                    return null;
+                }
+
+                $totals = array();
+                if (isset($entry['totals']) && is_array($entry['totals'])) {
+                    $totals = $entry['totals'];
+                }
+
+                $normalized_totals = array();
+                foreach ($history_required_keys as $key) {
+                    $normalized_totals[$key] = isset($totals[$key]) ? (int) $totals[$key] : 0;
+                }
+
+                return array(
+                    'timestamp' => $timestamp,
+                    'totals'    => $normalized_totals,
+                );
+            },
+            $link_history_entries
+        ),
+        static function ($entry) {
+            return is_array($entry) && isset($entry['timestamp']) && $entry['timestamp'] > 0;
+        }
+    ));
+
+    $link_history_first_timestamp = 0;
+    $link_history_last_timestamp = 0;
+    if ($link_history_entries !== array()) {
+        $first_entry = reset($link_history_entries);
+        if (is_array($first_entry) && isset($first_entry['timestamp'])) {
+            $link_history_first_timestamp = (int) $first_entry['timestamp'];
+        }
+
+        $last_entry = end($link_history_entries);
+        if (is_array($last_entry) && isset($last_entry['timestamp'])) {
+            $link_history_last_timestamp = (int) $last_entry['timestamp'];
+        }
+        reset($link_history_entries);
+    }
+
+    $history_last_display = '';
+    $history_first_display = '';
+
+    if ($link_history_last_timestamp > 0) {
+        $history_last_display = wp_date('j M Y H:i', $link_history_last_timestamp);
+    }
+
+    if ($link_history_first_timestamp > 0 && $link_history_first_timestamp !== $link_history_last_timestamp) {
+        $history_first_display = wp_date('j M Y H:i', $link_history_first_timestamp);
+    }
+
+    $link_history_json = wp_json_encode($link_history_entries);
+    if (!is_string($link_history_json)) {
+        $link_history_json = '[]';
+    }
     $option_size_bytes = blc_get_dataset_storage_footprint_bytes('link');
     $last_check_time    = get_option('blc_last_check_time', 0);
     $option_size_kb     = $option_size_bytes / 1024;
@@ -659,35 +738,106 @@ function blc_dashboard_links_page() {
     <div class="wrap blc-dashboard-links-page">
         <?php blc_render_dashboard_tabs('links'); ?>
         <h1><?php esc_html_e('Rapport des Liens Cassés', 'liens-morts-detector-jlg'); ?></h1>
-        <div class="blc-stats-box">
-            <?php foreach ($stats_cards as $card) :
-                $link_type = $card['link_type'];
-                $card_url  = $build_dashboard_url($link_type);
-                $aria_label = sprintf(
-                    /* translators: 1: Stat label, 2: number of items. */
-                    __('Afficher %1$s (%2$s)', 'liens-morts-detector-jlg'),
-                    $card['label'],
-                    $card['value']
-                );
-                $is_active_card = ($link_type === 'all' && $current_link_type === 'all')
-                    || ($link_type !== 'all' && $current_link_type === $link_type);
-                $card_classes = array(
-                    'blc-stat',
-                    'blc-stat--' . $card['slug'],
-                    $is_active_card ? 'is-active' : '',
-                );
-                ?>
-                <a
-                    class="<?php echo esc_attr(implode(' ', array_filter(array_map('sanitize_html_class', $card_classes)))); ?>"
-                    href="<?php echo esc_url($card_url); ?>"
-                    data-link-type="<?php echo esc_attr($link_type); ?>"
-                    aria-label="<?php echo esc_attr($aria_label); ?>"
-                    <?php echo $is_active_card ? ' aria-current="page"' : ''; ?>
-                >
-                    <span class="blc-stat-value"><?php echo esc_html($card['value']); ?></span>
-                    <span class="blc-stat-label"><?php echo esc_html($card['label']); ?></span>
-                </a>
-            <?php endforeach; ?>
+        <div class="blc-stats-overview">
+            <div class="blc-stats-box">
+                <?php foreach ($stats_cards as $card) :
+                    $link_type = $card['link_type'];
+                    $card_url  = $build_dashboard_url($link_type);
+                    $aria_label = sprintf(
+                        /* translators: 1: Stat label, 2: number of items. */
+                        __('Afficher %1$s (%2$s)', 'liens-morts-detector-jlg'),
+                        $card['label'],
+                        $card['value']
+                    );
+                    $is_active_card = ($link_type === 'all' && $current_link_type === 'all')
+                        || ($link_type !== 'all' && $current_link_type === $link_type);
+                    $card_classes = array(
+                        'blc-stat',
+                        'blc-stat--' . $card['slug'],
+                        $is_active_card ? 'is-active' : '',
+                    );
+                    ?>
+                    <a
+                        class="<?php echo esc_attr(implode(' ', array_filter(array_map('sanitize_html_class', $card_classes)))); ?>"
+                        href="<?php echo esc_url($card_url); ?>"
+                        data-link-type="<?php echo esc_attr($link_type); ?>"
+                        aria-label="<?php echo esc_attr($aria_label); ?>"
+                        <?php echo $is_active_card ? ' aria-current="page"' : ''; ?>
+                    >
+                        <span class="blc-stat-value"><?php echo esc_html($card['value']); ?></span>
+                        <span class="blc-stat-label"><?php echo esc_html($card['label']); ?></span>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+            <section
+                class="blc-links-history-chart"
+                data-history="<?php echo esc_attr($link_history_json); ?>"
+                aria-labelledby="blc-links-history-title"
+            >
+                <header class="blc-links-history-chart__header">
+                    <h2 id="blc-links-history-title"><?php esc_html_e('Historique des erreurs détectées', 'liens-morts-detector-jlg'); ?></h2>
+                    <?php if ('' !== $history_last_display) : ?>
+                        <?php if ('' !== $history_first_display) : ?>
+                            <p class="blc-links-history-chart__meta">
+                                <?php
+                                printf(
+                                    /* translators: 1: first recorded date, 2: last recorded date. */
+                                    esc_html__('Derniers scans consignés : %1$s — %2$s', 'liens-morts-detector-jlg'),
+                                    esc_html($history_first_display),
+                                    esc_html($history_last_display)
+                                );
+                                ?>
+                            </p>
+                        <?php else : ?>
+                            <p class="blc-links-history-chart__meta">
+                                <?php
+                                printf(
+                                    /* translators: %s: latest recorded scan date. */
+                                    esc_html__('Dernier scan consigné : %s', 'liens-morts-detector-jlg'),
+                                    esc_html($history_last_display)
+                                );
+                                ?>
+                            </p>
+                        <?php endif; ?>
+                    <?php endif; ?>
+                </header>
+                <canvas
+                    width="320"
+                    height="140"
+                    role="img"
+                    aria-label="<?php echo esc_attr__('Évolution des erreurs détectées lors des derniers scans', 'liens-morts-detector-jlg'); ?>"
+                ></canvas>
+                <p class="blc-links-history-chart__empty">
+                    <?php esc_html_e('Lancer un scan pour visualiser l\'historique des erreurs.', 'liens-morts-detector-jlg'); ?>
+                </p>
+                <ul class="blc-links-history-chart__legend">
+                    <li>
+                        <span class="blc-legend-dot blc-legend-dot--broken" aria-hidden="true"></span>
+                        <span class="blc-legend-label"><?php esc_html_e('Liens morts', 'liens-morts-detector-jlg'); ?></span>
+                        <span class="blc-legend-value" data-metric="broken">0</span>
+                    </li>
+                    <li>
+                        <span class="blc-legend-dot blc-legend-dot--not-found" aria-hidden="true"></span>
+                        <span class="blc-legend-label"><?php esc_html_e('Erreurs 404 / 410', 'liens-morts-detector-jlg'); ?></span>
+                        <span class="blc-legend-value" data-metric="not_found">0</span>
+                    </li>
+                    <li>
+                        <span class="blc-legend-dot blc-legend-dot--server-error" aria-hidden="true"></span>
+                        <span class="blc-legend-label"><?php esc_html_e('Erreurs 5xx', 'liens-morts-detector-jlg'); ?></span>
+                        <span class="blc-legend-value" data-metric="server_error">0</span>
+                    </li>
+                    <li>
+                        <span class="blc-legend-dot blc-legend-dot--redirect" aria-hidden="true"></span>
+                        <span class="blc-legend-label"><?php esc_html_e('Redirections détectées', 'liens-morts-detector-jlg'); ?></span>
+                        <span class="blc-legend-value" data-metric="redirect">0</span>
+                    </li>
+                    <li>
+                        <span class="blc-legend-dot blc-legend-dot--needs-recheck" aria-hidden="true"></span>
+                        <span class="blc-legend-label"><?php esc_html_e('À revérifier', 'liens-morts-detector-jlg'); ?></span>
+                        <span class="blc-legend-value" data-metric="needs_recheck">0</span>
+                    </li>
+                </ul>
+            </section>
         </div>
         <div class="blc-meta-box">
             <div class="blc-meta">

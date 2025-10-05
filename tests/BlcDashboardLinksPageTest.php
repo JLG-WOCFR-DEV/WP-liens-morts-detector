@@ -12,6 +12,35 @@ namespace {
             return preg_replace('/[^a-z0-9_\-]/', '', $key);
         }
     }
+
+    if (!function_exists('sanitize_html_class')) {
+        function sanitize_html_class($class)
+        {
+            $class = (string) $class;
+
+            return preg_replace('/[^A-Za-z0-9_-]/', '', $class);
+        }
+    }
+
+    if (!function_exists('wp_parse_args')) {
+        function wp_parse_args($args, $defaults = array())
+        {
+            if (is_array($args)) {
+                return array_merge($defaults, $args);
+            }
+
+            if (is_object($args)) {
+                return array_merge($defaults, get_object_vars($args));
+            }
+
+            $parsed = array();
+            if (is_string($args) && $args !== '') {
+                parse_str($args, $parsed);
+            }
+
+            return array_merge($defaults, $parsed);
+        }
+    }
 }
 
 namespace Tests {
@@ -66,7 +95,12 @@ class BlcDashboardLinksPageTest extends TestCase
             require_once __DIR__ . '/stubs/WP_List_Table.php';
         }
 
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-scanner.php';
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-utils.php';
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-settings-fields.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/class-blc-links-list-table.php';
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-stats.php';
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-scan-history.php';
 
         $this->options = [
             'blc_last_check_time'        => 0,
@@ -253,6 +287,8 @@ class BlcDashboardLinksPageTest extends TestCase
             return 1700000000;
         });
 
+        Functions\when('apply_filters')->alias(static fn($hook, $value, ...$args) => $value);
+
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-admin-pages.php';
     }
 
@@ -365,6 +401,45 @@ class BlcDashboardLinksPageTest extends TestCase
         $this->assertStringContainsString("Le déclenchement immédiat du cron a échoué", $output);
     }
 
+    public function test_history_chart_renders_saved_entries(): void
+    {
+        $history = [
+            'link' => [
+                [
+                    'timestamp' => 1700000000,
+                    'totals'    => [
+                        'broken'        => 5,
+                        'not_found'     => 3,
+                        'server_error'  => 1,
+                        'redirect'      => 2,
+                        'needs_recheck' => 4,
+                    ],
+                ],
+                [
+                    'timestamp' => 1700003600,
+                    'totals'    => [
+                        'broken'        => 4,
+                        'not_found'     => 2,
+                        'server_error'  => 1,
+                        'redirect'      => 1,
+                        'needs_recheck' => 3,
+                    ],
+                ],
+            ],
+        ];
+
+        $this->setStoredOption('blc_scan_history', $history);
+
+        ob_start();
+        blc_dashboard_links_page();
+        $output = (string) ob_get_clean();
+
+        $this->assertStringContainsString('Historique des erreurs détectées', $output);
+        $this->assertStringContainsString('Derniers scans consignés', $output);
+        $this->assertStringContainsString('data-history="[{&quot;timestamp&quot;:1700000000', $output);
+        $this->assertStringContainsString('&quot;broken&quot;:5', $output);
+    }
+
     public function test_reschedule_cron_displays_success_notice(): void
     {
         $_POST['blc_reschedule_cron'] = '1';
@@ -425,14 +500,10 @@ class BlcDashboardLinksPageTest extends TestCase
         blc_dashboard_links_page();
         $output = (string) ob_get_clean();
 
-        $this->assertStringContainsString("404 / 410", $output);
-        $this->assertStringContainsString("5xx", $output);
-        $this->assertStringContainsString("Redirections", $output);
-        $this->assertStringContainsString("À revérifier", $output);
-        $this->assertStringContainsString("404 / 410 <span class='count'>(1)</span>", $output);
-        $this->assertStringContainsString("5xx <span class='count'>(1)</span>", $output);
-        $this->assertStringContainsString("Redirections <span class='count'>(1)</span>", $output);
-        $this->assertStringContainsString("À revérifier <span class='count'>(2)</span>", $output);
+        $this->assertStringContainsString('aria-label="Afficher Erreurs 404 / 410 (1)"', $output);
+        $this->assertStringContainsString('aria-label="Afficher Erreurs 5xx (1)"', $output);
+        $this->assertStringContainsString('aria-label="Afficher Redirections détectées (1)"', $output);
+        $this->assertStringContainsString('aria-label="Afficher Liens à revérifier (2)"', $output);
     }
 
     public function test_hidden_page_field_not_rendered_for_non_scalar_request(): void

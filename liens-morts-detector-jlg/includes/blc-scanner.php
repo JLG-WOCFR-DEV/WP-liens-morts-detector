@@ -133,6 +133,10 @@ if (!function_exists('blc_update_link_scan_status')) {
 
         update_option('blc_link_scan_status', $status, false);
 
+        if ($status['state'] === 'completed' && $previous_state !== 'completed' && function_exists('blc_record_link_scan_history_snapshot')) {
+            blc_record_link_scan_history_snapshot();
+        }
+
         return $status;
     }
 }
@@ -339,6 +343,10 @@ if (!function_exists('blc_update_image_scan_status')) {
         $status['is_full_scan'] = true;
 
         update_option('blc_image_scan_status', $status, false);
+
+        if ($status['state'] === 'completed' && $previous_state !== 'completed' && function_exists('blc_record_image_scan_history_snapshot')) {
+            blc_record_image_scan_history_snapshot();
+        }
 
         return $status;
     }

@@ -33,21 +33,21 @@ if (!function_exists('esc_html_e')) {
 if (!function_exists('esc_attr')) {
     function esc_attr($text)
     {
-        return $text;
+        return htmlspecialchars((string) $text, ENT_QUOTES, 'UTF-8');
     }
 }
 
 if (!function_exists('esc_attr__')) {
     function esc_attr__($text, $domain = null)
     {
-        return $text;
+        return esc_attr($text);
     }
 }
 
 if (!function_exists('esc_attr_e')) {
     function esc_attr_e($text, $domain = null)
     {
-        echo $text;
+        echo esc_attr($text);
     }
 }
 

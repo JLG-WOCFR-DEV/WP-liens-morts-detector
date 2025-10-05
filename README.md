@@ -12,6 +12,7 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 - Analyse des liens issus des commentaires, des métadonnées personnalisées et des widgets texte WordPress
 - Planification flexible : toutes les heures, toutes les 6 ou 12 heures, quotidienne, hebdomadaire, mensuelle ou intervalle personnalisé
 - Tableau de bord listant les liens et images cassés avec statistiques
+- Historique des scans des liens sous forme de courbe (sparkline) pour visualiser l'évolution des erreurs
 - Actions rapides pour modifier une URL ou retirer un lien directement depuis la liste
 - Options avancées : exclusion de domaines, plages horaires de repos, mode debug
 - Option dédiée pour analyser les images servies depuis un CDN ou un domaine externe sécurisé
@@ -28,6 +29,7 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 - Des réglages avancés permettent d’exclure certains domaines, de limiter l’analyse à des plages horaires et d’activer un mode debug pour le suivi.
 - La taille des lots analysés peut être ajustée pour s’adapter aux capacités de l’hébergement (de manière optionnelle via l’interface ou un filtre).
 - L’analyse des images distantes (CDN, sous-domaines médias) peut être activée dans les réglages. Cette vérification reste basée sur les fichiers présents dans `wp-content/uploads` et peut rallonger la durée du scan ou consommer davantage de quotas côté CDN.
+- Une section « Historique des erreurs détectées » affiche les derniers scans enregistrés sous forme de graphique aux côtés des cartes statistiques.
 
 ## Commandes WP-CLI
 - `wp broken-links scan links` lance immédiatement un lot de vérification des liens. Ajouter `--full` force une réindexation complète, et `--bypass-rest-window` ignore la plage de repos configurée.
@@ -89,6 +91,32 @@ add_filter('blc_link_batch_size', function (int $batchSize, int $batch, bool $is
 
     return $batchSize;
 });
+```
+
+### `blc_scan_history_max_entries`
+Contrôle la profondeur maximale du journal historique stocké après chaque scan. La valeur par défaut conserve 30 entrées par type (`link`, `image`).
+
+```php
+add_filter('blc_scan_history_max_entries', function (int $limit, string $dataset): int {
+    if ('link' === $dataset) {
+        return 60; // Conserver 60 scans pour l'historique des liens.
+    }
+
+    return $limit;
+}, 10, 2);
+```
+
+### `blc_scan_history_display_limit`
+Définit combien d’entrées sont chargées côté interface pour alimenter la courbe affichée dans le tableau de bord.
+
+```php
+add_filter('blc_scan_history_display_limit', function (int $limit, string $dataset): int {
+    if ('link' === $dataset) {
+        return 20; // Afficher les 20 derniers points plutôt que 10.
+    }
+
+    return $limit;
+}, 10, 2);
 ```
 
 ## Structure du projet

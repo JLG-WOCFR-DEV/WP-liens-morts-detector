@@ -2229,4 +2229,141 @@ jQuery(document).ready(function($) {
     });
 })();
 
+(function renderLinkHistoryChart() {
+    var $charts = $('.blc-links-history-chart');
+
+    if (!$charts.length) {
+        return;
+    }
+
+    var COLORS = {
+        broken: '#2271b1',
+        not_found: '#d63638',
+        server_error: '#d54e21',
+        redirect: '#46b450',
+        needs_recheck: '#826eb4'
+    };
+
+    var KEYS = ['broken', 'not_found', 'server_error', 'redirect', 'needs_recheck'];
+
+    $charts.each(function() {
+        var $chart = $(this);
+        var rawData = $chart.attr('data-history') || '[]';
+        var entries = [];
+
+        try {
+            entries = JSON.parse(rawData);
+        } catch (error) {
+            entries = [];
+        }
+
+        if (!Array.isArray(entries) || !entries.length) {
+            $chart.addClass('is-empty');
+            return;
+        }
+
+        var canvas = $chart.find('canvas').get(0);
+        if (!canvas || typeof canvas.getContext !== 'function') {
+            $chart.addClass('is-empty');
+            return;
+        }
+
+        var context = canvas.getContext('2d');
+        if (!context) {
+            $chart.addClass('is-empty');
+            return;
+        }
+
+        var deviceRatio = window.devicePixelRatio || 1;
+        var displayWidth = canvas.width;
+        var displayHeight = canvas.height;
+
+        if (canvas.clientWidth && canvas.clientHeight) {
+            displayWidth = canvas.clientWidth;
+            displayHeight = canvas.clientHeight;
+        }
+
+        if (deviceRatio !== 1) {
+            canvas.width = displayWidth * deviceRatio;
+            canvas.height = displayHeight * deviceRatio;
+            canvas.style.width = displayWidth + 'px';
+            canvas.style.height = displayHeight + 'px';
+        }
+
+        var width = canvas.width;
+        var height = canvas.height;
+        var padding = 18 * deviceRatio;
+        var chartHeight = height - padding * 2;
+        var chartWidth = width - padding * 2;
+        var stepCount = Math.max(entries.length - 1, 1);
+        var stepX = chartWidth / stepCount;
+
+        var maxValue = 0;
+        entries.forEach(function(entry) {
+            if (!entry || typeof entry !== 'object' || !entry.totals) {
+                return;
+            }
+
+            KEYS.forEach(function(key) {
+                var value = Number(entry.totals[key]) || 0;
+                if (value > maxValue) {
+                    maxValue = value;
+                }
+            });
+        });
+
+        if (maxValue <= 0) {
+            maxValue = 1;
+        }
+
+        context.clearRect(0, 0, width, height);
+        context.lineJoin = 'round';
+        context.lineCap = 'round';
+
+        KEYS.forEach(function(key) {
+            var stroke = COLORS[key];
+            if (!stroke) {
+                return;
+            }
+
+            context.beginPath();
+            context.lineWidth = 2 * deviceRatio;
+            context.strokeStyle = stroke;
+
+            entries.forEach(function(entry, index) {
+                var totals = entry && entry.totals ? entry.totals : {};
+                var value = Number(totals[key]) || 0;
+
+                var x = padding + (stepX * index);
+                if (entries.length === 1) {
+                    x = padding + chartWidth / 2;
+                }
+
+                var y = height - padding - ((value / maxValue) * chartHeight);
+
+                if (index === 0) {
+                    context.moveTo(x, y);
+                } else {
+                    context.lineTo(x, y);
+                }
+            });
+
+            context.stroke();
+        });
+
+        var latestEntry = entries[entries.length - 1];
+        if (latestEntry && latestEntry.totals) {
+            KEYS.forEach(function(key) {
+                var $value = $chart.find('.blc-legend-value[data-metric="' + key + '"]');
+                if ($value.length) {
+                    var total = Number(latestEntry.totals[key]) || 0;
+                    $value.text(total.toLocaleString());
+                }
+            });
+        }
+
+        $chart.removeClass('is-empty');
+    });
+})();
+
 });
