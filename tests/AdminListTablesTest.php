@@ -227,6 +227,11 @@ class AdminListTablesTest extends TestCase
             {
                 return parent::get_sortable_columns();
             }
+
+            public function exposeSortRequest(): array
+            {
+                return $this->get_current_sort_request();
+            }
         };
 
         $sortable = $table->exposeSortableColumns();
@@ -237,6 +242,58 @@ class AdminListTablesTest extends TestCase
         $this->assertSame(['last_checked_at', false], $sortable['last_checked_at']);
         $this->assertArrayHasKey('anchor_text', $sortable);
         $this->assertSame(['anchor', false], $sortable['anchor_text']);
+
+        $this->assertSame(['orderby' => '', 'order' => 'desc'], $table->exposeSortRequest());
+    }
+
+    public function test_links_sort_request_is_validated(): void
+    {
+        $_GET['orderby'] = 'http_status';
+        $_GET['order'] = 'asc';
+
+        $table = new class() extends \BLC_Links_List_Table {
+            public function exposeSortableColumns(): array
+            {
+                return parent::get_sortable_columns();
+            }
+
+            public function exposeSortRequest(): array
+            {
+                return $this->get_current_sort_request();
+            }
+        };
+
+        $table->exposeSortableColumns();
+
+        $this->assertSame([
+            'orderby' => 'http_status',
+            'order'   => 'asc',
+        ], $table->exposeSortRequest());
+    }
+
+    public function test_links_sort_request_invalid_values_are_ignored(): void
+    {
+        $_GET['orderby'] = 'invalid_column;';
+        $_GET['order'] = 'sideways';
+
+        $table = new class() extends \BLC_Links_List_Table {
+            public function exposeSortableColumns(): array
+            {
+                return parent::get_sortable_columns();
+            }
+
+            public function exposeSortRequest(): array
+            {
+                return $this->get_current_sort_request();
+            }
+        };
+
+        $table->exposeSortableColumns();
+
+        $this->assertSame([
+            'orderby' => '',
+            'order'   => 'desc',
+        ], $table->exposeSortRequest());
     }
 
     public function test_links_prepare_items_supports_injected_data_with_pagination(): void
