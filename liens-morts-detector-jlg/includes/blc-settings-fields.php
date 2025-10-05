@@ -164,6 +164,16 @@ function blc_register_settings() {
 
     register_setting(
         $option_group,
+        'blc_soft_404_title_weight',
+        array(
+            'type'              => 'number',
+            'sanitize_callback' => 'blc_sanitize_soft_404_title_weight_option',
+            'default'           => 1.0,
+        )
+    );
+
+    register_setting(
+        $option_group,
         'blc_soft_404_title_indicators',
         array(
             'type'              => 'string',
@@ -489,7 +499,7 @@ function blc_register_settings_sections() {
 
     add_settings_section(
         'blc_soft_404_section',
-        __('Détection des soft 404', 'liens-morts-detector-jlg'),
+        __('Détection de soft 404', 'liens-morts-detector-jlg'),
         '__return_false',
         $page
     );
@@ -507,6 +517,21 @@ function blc_register_settings_sections() {
             'unit'        => __('caractères', 'liens-morts-detector-jlg'),
             'description' => __('Considère une page suspecte si le texte est plus court que ce seuil. (Défaut : 512)', 'liens-morts-detector-jlg'),
             'label_for'   => 'blc_soft_404_min_length',
+        )
+    );
+
+    add_settings_field(
+        'blc_soft_404_title_weight',
+        __('⚖️ Pondération du titre', 'liens-morts-detector-jlg'),
+        'blc_render_number_field',
+        $page,
+        'blc_soft_404_section',
+        array(
+            'option_name' => 'blc_soft_404_title_weight',
+            'min'         => 0,
+            'step'        => 0.1,
+            'description' => __('Ajuste l’influence du titre dans les heuristiques. (Défaut : 1)', 'liens-morts-detector-jlg'),
+            'label_for'   => 'blc_soft_404_title_weight',
         )
     );
 
@@ -2191,6 +2216,27 @@ function blc_sanitize_soft_404_min_length_option($value) {
     }
 
     return $sanitized;
+}
+
+/**
+ * Sanitize la pondération appliquée aux titres pour détecter les soft 404.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return float
+ */
+function blc_sanitize_soft_404_title_weight_option($value) {
+    $weight = is_numeric($value) ? (float) $value : 0.0;
+
+    if ($weight < 0) {
+        $weight = 0.0;
+    }
+
+    if (!is_finite($weight)) {
+        $weight = 0.0;
+    }
+
+    return $weight;
 }
 
 /**

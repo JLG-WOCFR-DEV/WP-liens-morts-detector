@@ -261,18 +261,24 @@ jQuery(document).ready(function($) {
         var rawConfig = window.blcAdminSoft404Config || {};
         var normalizedConfig = {
             minLength: Number.isFinite(parseInt(rawConfig.minLength, 10)) ? parseInt(rawConfig.minLength, 10) : 0,
+            titleWeight: Number.isFinite(parseFloat(rawConfig.titleWeight)) ? parseFloat(rawConfig.titleWeight) : 0,
             titleIndicators: normalizeList(rawConfig.titleIndicators),
             bodyIndicators: normalizeList(rawConfig.bodyIndicators),
             ignorePatterns: normalizeList(rawConfig.ignorePatterns),
             labels: {
                 length: rawConfig.labels && rawConfig.labels.length ? rawConfig.labels.length : 'Contenu trop court',
                 title: rawConfig.labels && rawConfig.labels.title ? rawConfig.labels.title : 'Titre suspect',
-                body: rawConfig.labels && rawConfig.labels.body ? rawConfig.labels.body : 'Message d’erreur détecté'
+                body: rawConfig.labels && rawConfig.labels.body ? rawConfig.labels.body : 'Message d’erreur détecté',
+                titleWeight: rawConfig.labels && rawConfig.labels.titleWeight ? rawConfig.labels.titleWeight : 'Pondération du titre'
             }
         };
 
         if (!Number.isFinite(normalizedConfig.minLength) || normalizedConfig.minLength < 0) {
             normalizedConfig.minLength = 0;
+        }
+
+        if (!Number.isFinite(normalizedConfig.titleWeight) || normalizedConfig.titleWeight < 0) {
+            normalizedConfig.titleWeight = 0;
         }
 
         function detectSoft404(response) {
@@ -316,6 +322,7 @@ jQuery(document).ready(function($) {
                 title: title,
                 bodyText: bodyText,
                 minLength: normalizedConfig.minLength,
+                titleWeight: normalizedConfig.titleWeight,
                 labels: normalizedConfig.labels
             };
         }
