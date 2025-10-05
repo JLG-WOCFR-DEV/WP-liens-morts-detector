@@ -4,6 +4,7 @@ if (!defined('ABSPATH')) exit;
 
 
 require_once __DIR__ . '/Scanner/RemoteRequestClient.php';
+require_once __DIR__ . '/Scanner/ImageUrlNormalizer.php';
 
 if (!function_exists('blc_get_default_link_scan_status')) {
     /**
@@ -476,6 +477,11 @@ require_once __DIR__ . '/Scanner/LinkScanController.php';
 
 if (!class_exists('ImageScanQueue')) {
     class ImageScanQueue {
+        /**
+         * @var array<int, array<int, array{id:int,bytes:int}>>
+         */
+        private $pendingImageInserts = [];
+
         public function run($batch = 0, $is_full_scan = true) {
          // Une analyse d'images est toujours complète
             global $wpdb;
@@ -495,6 +501,163 @@ if (!class_exists('ImageScanQueue')) {
                 $lock_timeout = 0;
             }
 
+            $lock_token = $this->acquireLock($batch, $lock_timeout, $batch_delay_s, $is_full_scan, $debug_mode);
+            if ($lock_token === null) {
+                return;
+            }
+
+            blc_update_image_scan_status([
+                'state'         => 'running',
+                'current_batch' => (int) $batch,
+                'is_full_scan'  => true,
+                'message'       => __('Analyse des images en cours…', 'liens-morts-detector-jlg'),
+            ]);
+
+            $batch_size = 20;
+            $batch_data = $this->fetchBatch(
+                $batch,
+                $batch_size,
+                $table_name,
+                $image_dataset_row_types,
+                $lock_token,
+                $lock_timeout,
+                $batch_delay_s,
+                $debug_mode
+            );
+
+            if ($batch_data instanceof WP_Error) {
+                return $batch_data;
+            }
+
+            $posts = $batch_data['posts'];
+            $query = $batch_data['query'];
+            $total_items = $batch_data['total_items'];
+            $processed_items = $batch_data['processed_items'];
+            $processed_batches = $batch_data['processed_batches'];
+            $total_batches = $batch_data['total_batches'];
+            $remaining_batches = $batch_data['remaining_batches'];
+            $scan_run_token = $batch_data['scan_run_token'];
+
+            $checked_local_paths = [];
+            $site_context = $this->buildSiteContext();
+            $upload_context = $this->buildUploadContext($debug_mode);
+
+            $scan_result = [
+                'pending_image_inserts' => [],
+                'exception'            => null,
+                'wp_error'             => null,
+                'should_cleanup'       => false,
+            ];
+
+            try {
+                $scan_result = $this->scanPostImages(
+                    $posts,
+                    $site_context,
+                    $upload_context,
+                    $table_name,
+                    $scan_run_token,
+                    $image_dataset_row_types,
+                    $remote_image_scan_enabled,
+                    $debug_mode,
+                    $checked_local_paths
+                );
+            } finally {
+                wp_reset_postdata();
+            }
+
+            $pending_image_inserts = $scan_result['pending_image_inserts'];
+            $batch_exception = $scan_result['exception'];
+            $batch_wp_error = $scan_result['wp_error'];
+            $should_cleanup_pending_images = $scan_result['should_cleanup'];
+
+            $this->cleanupOnFailure(
+                $pending_image_inserts,
+                $should_cleanup_pending_images,
+                $table_name,
+                $image_dataset_row_types,
+                $scan_run_token
+            );
+
+            if ($batch_exception instanceof \Throwable) {
+                if ($lock_token !== '') {
+                        blc_release_image_scan_lock($lock_token);
+                }
+                throw $batch_exception;
+            }
+
+            if ($batch_wp_error instanceof \WP_Error) {
+                if ($lock_token !== '') {
+                    blc_release_image_scan_lock($lock_token);
+                }
+                return $batch_wp_error;
+            }
+
+            if ($query->max_num_pages > ($batch + 1)) {
+                blc_refresh_image_scan_lock($lock_token, $lock_timeout);
+                $scheduled = wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_image_batch', array($batch + 1, true));
+                if (false === $scheduled) {
+                    error_log(sprintf('BLC: Failed to schedule next image batch #%d.', $batch + 1));
+                    do_action('blc_check_image_batch_schedule_failed', $batch + 1, true, 'next_batch');
+
+                    if ($lock_token !== '') {
+                        blc_release_image_scan_lock($lock_token);
+                    }
+
+                    delete_option('blc_image_scan_lock_token');
+
+                    blc_update_image_scan_status([
+                        'state'           => 'failed',
+                        'last_error'      => __('Impossible de programmer le lot suivant.', 'liens-morts-detector-jlg'),
+                        'message'         => __('Impossible de programmer le lot suivant.', 'liens-morts-detector-jlg'),
+                        'total_items'     => $total_items,
+                        'processed_items' => $processed_items,
+                        'is_full_scan'    => true,
+                    ]);
+
+                    return new WP_Error(
+                        'blc_image_schedule_failed',
+                        sprintf('Failed to schedule next image batch #%d.', $batch + 1)
+                    );
+                }
+
+                blc_update_image_scan_status([
+                    'state'             => 'running',
+                    'current_batch'     => (int) $batch,
+                    'processed_batches' => $processed_batches,
+                    'total_batches'     => $total_batches,
+                    'remaining_batches' => max(0, $remaining_batches),
+                    'total_items'       => $total_items,
+                    'processed_items'   => $processed_items,
+                    'is_full_scan'      => true,
+                    'message'           => sprintf(
+                        /* translators: 1: completed batch number, 2: next batch number. */
+                        __('Lot %1$d terminé. Lot %2$d planifié.', 'liens-morts-detector-jlg'),
+                        $processed_batches,
+                        min($total_batches, $processed_batches + 1)
+                    ),
+                ]);
+            } else {
+                if ($debug_mode) { error_log("--- Scan IMAGES terminé ---"); }
+                update_option('blc_last_image_check_time', current_time('timestamp', true));
+                blc_maybe_send_scan_summary('image');
+                blc_update_image_scan_status([
+                    'state'             => 'completed',
+                    'current_batch'     => (int) $batch,
+                    'processed_batches' => $processed_batches,
+                    'total_batches'     => $total_batches,
+                    'remaining_batches' => 0,
+                    'total_items'       => $total_items,
+                    'processed_items'   => max($total_items, $processed_items),
+                    'is_full_scan'      => true,
+                    'message'           => $total_items > 0
+                        ? __('Analyse terminée. Tous les lots ont été traités.', 'liens-morts-detector-jlg')
+                        : __('Analyse terminée. Aucun contenu à analyser.', 'liens-morts-detector-jlg'),
+                ]);
+                blc_release_image_scan_lock($lock_token);
+            }
+        }
+
+        private function acquireLock($batch, $lock_timeout, $batch_delay_s, $is_full_scan, $debug_mode) {
             $lock_token = '';
             if ($batch === 0) {
                 $lock_token = blc_acquire_image_scan_lock($lock_timeout);
@@ -506,73 +669,69 @@ if (!class_exists('ImageScanQueue')) {
                         error_log('BLC: Failed to schedule image batch #0 while waiting for lock.');
                         do_action('blc_check_image_batch_schedule_failed', 0, true, 'initial_lock_retry');
                     }
-                    return;
+                    return null;
                 }
-            } else {
-                $stored_token = get_option('blc_image_scan_lock_token', '');
-                if (!is_string($stored_token)) {
-                    $stored_token = '';
-                }
-                $lock_state = blc_get_image_scan_lock_state();
-                $active_token = isset($lock_state['token']) ? (string) $lock_state['token'] : '';
-                $lock_active  = blc_is_image_scan_lock_active($lock_state, $lock_timeout);
-
-                if ($stored_token === '' || $active_token === '') {
-                    $lock_token = blc_acquire_image_scan_lock($lock_timeout);
-                    if ($lock_token === '') {
-                        if ($debug_mode) { error_log('Impossible de reprendre le scan d\'images (verrou indisponible).'); }
-                        $retry_delay = max(60, $batch_delay_s);
-                        $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
-                        if (false === $scheduled) {
-                            error_log(sprintf('BLC: Failed to reschedule image batch #%d due to missing lock token.', $batch));
-                            do_action('blc_check_image_batch_schedule_failed', $batch, $is_full_scan, 'missing_lock_token');
-                        }
-                        return;
-                    }
-                } elseif (!$lock_active) {
-                    $lock_token = blc_acquire_image_scan_lock($lock_timeout);
-                    if ($lock_token === '') {
-                        if ($debug_mode) { error_log('Impossible de reprendre le scan d\'images (verrou expiré).'); }
-                        $retry_delay = max(60, $batch_delay_s);
-                        $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
-                        if (false === $scheduled) {
-                            error_log(sprintf('BLC: Failed to reschedule image batch #%d after lock expiration.', $batch));
-                            do_action('blc_check_image_batch_schedule_failed', $batch, $is_full_scan, 'expired_lock');
-                        }
-                        return;
-                    }
-                } elseif ($active_token !== $stored_token) {
-                    if ($lock_active) {
-                        if ($debug_mode) { error_log('Analyse d\'images ignorée : un autre processus détient le verrou.'); }
-                        return;
-                    }
-
-                    $lock_token = blc_acquire_image_scan_lock($lock_timeout);
-                    if ($lock_token === '') {
-                        if ($debug_mode) { error_log('Impossible de rafraîchir le verrou du scan d\'images.'); }
-                        $retry_delay = max(60, $batch_delay_s);
-                        $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
-                        if (false === $scheduled) {
-                            error_log(sprintf('BLC: Failed to reschedule image batch #%d after failing to refresh lock.', $batch));
-                            do_action('blc_check_image_batch_schedule_failed', $batch, $is_full_scan, 'lock_refresh');
-                        }
-                        return;
-                    }
-                } else {
-                    $lock_token = $stored_token;
-                    blc_refresh_image_scan_lock($lock_token, $lock_timeout);
-                }
+                return $lock_token;
             }
 
-            blc_update_image_scan_status([
-                'state'         => 'running',
-                'current_batch' => (int) $batch,
-                'is_full_scan'  => true,
-                'message'       => __('Analyse des images en cours…', 'liens-morts-detector-jlg'),
-            ]);
+            $stored_token = get_option('blc_image_scan_lock_token', '');
+            if (!is_string($stored_token)) {
+                $stored_token = '';
+            }
+            $lock_state = blc_get_image_scan_lock_state();
+            $active_token = isset($lock_state['token']) ? (string) $lock_state['token'] : '';
+            $lock_active  = blc_is_image_scan_lock_active($lock_state, $lock_timeout);
 
-            $batch_size = 20;
-            // Limiter la requête aux types de contenus publics (repli sur « post ») tout en conservant la pagination existante.
+            if ($stored_token === '' || $active_token === '') {
+                $lock_token = blc_acquire_image_scan_lock($lock_timeout);
+                if ($lock_token === '') {
+                    if ($debug_mode) { error_log('Impossible de reprendre le scan d\'images (verrou indisponible).'); }
+                    $retry_delay = max(60, $batch_delay_s);
+                    $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
+                    if (false === $scheduled) {
+                        error_log(sprintf('BLC: Failed to reschedule image batch #%d due to missing lock token.', $batch));
+                        do_action('blc_check_image_batch_schedule_failed', $batch, $is_full_scan, 'missing_lock_token');
+                    }
+                    return null;
+                }
+            } elseif (!$lock_active) {
+                $lock_token = blc_acquire_image_scan_lock($lock_timeout);
+                if ($lock_token === '') {
+                    if ($debug_mode) { error_log('Impossible de reprendre le scan d\'images (verrou expiré).'); }
+                    $retry_delay = max(60, $batch_delay_s);
+                    $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
+                    if (false === $scheduled) {
+                        error_log(sprintf('BLC: Failed to reschedule image batch #%d after lock expiration.', $batch));
+                        do_action('blc_check_image_batch_schedule_failed', $batch, $is_full_scan, 'expired_lock');
+                    }
+                    return null;
+                }
+            } elseif ($active_token !== $stored_token) {
+                if ($lock_active) {
+                    if ($debug_mode) { error_log('Analyse d\'images ignorée : un autre processus détient le verrou.'); }
+                    return null;
+                }
+
+                $lock_token = blc_acquire_image_scan_lock($lock_timeout);
+                if ($lock_token === '') {
+                    if ($debug_mode) { error_log('Impossible de rafraîchir le verrou du scan d\'images.'); }
+                    $retry_delay = max(60, $batch_delay_s);
+                    $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_image_batch', array($batch, $is_full_scan));
+                    if (false === $scheduled) {
+                        error_log(sprintf('BLC: Failed to reschedule image batch #%d after failing to refresh lock.', $batch));
+                        do_action('blc_check_image_batch_schedule_failed', $batch, $is_full_scan, 'lock_refresh');
+                    }
+                    return null;
+                }
+            } else {
+                $lock_token = $stored_token;
+                blc_refresh_image_scan_lock($lock_token, $lock_timeout);
+            }
+
+            return $lock_token;
+        }
+
+        private function fetchBatch($batch, $batch_size, $table_name, $image_dataset_row_types, $lock_token, $lock_timeout, $batch_delay_s, $debug_mode) {
             $args = [
                 'post_type'      => blc_get_scannable_post_types(),
                 'post_status'    => blc_get_scannable_post_statuses(),
@@ -581,7 +740,6 @@ if (!class_exists('ImageScanQueue')) {
             ];
             $query = new WP_Query($args);
             $posts = $query->posts;
-            $checked_local_paths = [];
 
             $total_items = isset($query->found_posts) ? max(0, (int) $query->found_posts) : 0;
             $max_pages = isset($query->max_num_pages) ? (int) $query->max_num_pages : 0;
@@ -640,6 +798,41 @@ if (!class_exists('ImageScanQueue')) {
                 }
             }
 
+            return [
+                'posts'             => $posts,
+                'query'             => $query,
+                'total_items'       => $total_items,
+                'processed_items'   => $processed_items,
+                'processed_batches' => $processed_batches,
+                'total_batches'     => $total_batches,
+                'remaining_batches' => $remaining_batches,
+                'scan_run_token'    => $scan_run_token,
+            ];
+        }
+
+        private function buildSiteContext() {
+            $site_url = home_url();
+            $home_url_with_trailing_slash = trailingslashit($site_url);
+            $site_scheme = parse_url($site_url, PHP_URL_SCHEME);
+            if (!is_string($site_scheme) || $site_scheme === '') {
+                $site_scheme = 'https';
+            }
+
+            $site_host_for_metadata = '';
+            $site_host_candidate = parse_url($site_url, PHP_URL_HOST);
+            if (is_string($site_host_candidate) && $site_host_candidate !== '') {
+                $site_host_for_metadata = blc_normalize_remote_host($site_host_candidate);
+            }
+
+            return [
+                'home_url_with_trailing_slash' => $home_url_with_trailing_slash,
+                'site_scheme'                  => $site_scheme,
+                'site_host_for_metadata'       => $site_host_for_metadata,
+                'normalized_site_host'         => $site_host_for_metadata,
+            ];
+        }
+
+        private function buildUploadContext($debug_mode) {
             $upload_dir_info = wp_upload_dir();
             $missing_upload_pieces = [];
             if (empty($upload_dir_info['baseurl'])) { $missing_upload_pieces[] = 'baseurl'; }
@@ -662,6 +855,7 @@ if (!class_exists('ImageScanQueue')) {
                 $upload_basedir = trailingslashit((string) $upload_dir_info['basedir']);
                 $normalized_basedir = $upload_basedir !== '' ? wp_normalize_path($upload_basedir) : '';
             }
+
             $upload_baseurl_host = '';
             if ($upload_baseurl !== '') {
                 $raw_upload_host = function_exists('wp_parse_url')
@@ -671,27 +865,24 @@ if (!class_exists('ImageScanQueue')) {
                     $upload_baseurl_host = blc_normalize_remote_host($raw_upload_host);
                 }
             }
-            $site_url = home_url();
-            $home_url_with_trailing_slash = trailingslashit($site_url);
-            $site_scheme = parse_url($site_url, PHP_URL_SCHEME);
-            if (!is_string($site_scheme) || $site_scheme === '') {
-                $site_scheme = 'https';
-            }
-            $site_host_for_metadata = '';
-            $site_host_candidate = parse_url($site_url, PHP_URL_HOST);
-            if (is_string($site_host_candidate) && $site_host_candidate !== '') {
-                $site_host_for_metadata = blc_normalize_remote_host($site_host_candidate);
-            }
-            $normalized_site_host = $site_host_for_metadata;
+
+            return [
+                'upload_baseurl'      => $upload_baseurl,
+                'upload_basedir'      => $upload_basedir,
+                'normalized_basedir'  => $normalized_basedir,
+                'upload_baseurl_host' => $upload_baseurl_host,
+            ];
+        }
+
+        private function scanPostImages($posts, $site_context, $upload_context, $table_name, $scan_run_token, $image_dataset_row_types, $remote_image_scan_enabled, $debug_mode, array &$checked_local_paths) {
+            global $wpdb;
 
             $blog_charset = get_bloginfo('charset');
             if (empty($blog_charset)) { $blog_charset = 'UTF-8'; }
 
-            $batch_exception = null;
-            $batch_wp_error = null;
-
             $pending_image_inserts = [];
-            $register_pending_image_insert = static function ($post_id, $row_bytes) use (&$pending_image_inserts, $wpdb) {
+            $this->pendingImageInserts = [];
+            $register_pending_image_insert = function ($post_id, $row_bytes) use (&$pending_image_inserts, $wpdb) {
                 $post_id = (int) $post_id;
                 if ($post_id <= 0) {
                     return;
@@ -706,11 +897,34 @@ if (!class_exists('ImageScanQueue')) {
                     $pending_image_inserts[$post_id] = [];
                 }
 
-                $pending_image_inserts[$post_id][] = [
+                $entry = [
                     'id'    => $row_id,
                     'bytes' => (int) $row_bytes,
                 ];
+
+                $pending_image_inserts[$post_id][] = $entry;
+
+                if (!isset($this->pendingImageInserts[$post_id])) {
+                    $this->pendingImageInserts[$post_id] = [];
+                }
+
+                $this->pendingImageInserts[$post_id][] = $entry;
             };
+
+            $batch_exception = null;
+            $batch_wp_error = null;
+
+            $normalizer = new BlcImageUrlNormalizer(
+                $site_context['home_url_with_trailing_slash'],
+                $site_context['site_scheme'],
+                $site_context['normalized_site_host'],
+                $upload_context['upload_baseurl_host'],
+                $upload_context['upload_baseurl'],
+                $upload_context['upload_basedir'],
+                $upload_context['normalized_basedir'],
+                $remote_image_scan_enabled,
+                $debug_mode
+            );
 
             try {
                 foreach ($posts as $post) {
@@ -728,208 +942,33 @@ if (!class_exists('ImageScanQueue')) {
                             continue;
                         }
 
-                    $permalink = get_permalink($post);
+                        $permalink = get_permalink($post);
 
-                    foreach ($dom->getElementsByTagName('img') as $image_node) {
-                        $process_image_candidate = static function ($candidate_url) use (
-                            &$checked_local_paths,
-                            $home_url_with_trailing_slash,
-                            $site_scheme,
-                            $permalink,
-                            $normalized_site_host,
-                            $upload_baseurl_host,
-                            $upload_baseurl,
-                            $upload_basedir,
-                            $normalized_basedir,
-                            $debug_mode,
-                            $post,
-                            $table_name,
-                            $wpdb,
-                            $post_title_for_storage,
-                            $register_pending_image_insert,
-                            $site_host_for_metadata,
-                            $remote_image_scan_enabled
-                        ) {
-                            $candidate_url = trim((string) $candidate_url);
-                            if ($candidate_url === '') {
-                                return;
+                        foreach ($dom->getElementsByTagName('img') as $image_node) {
+                            $candidate_lookup = [];
+                            $src_value = trim(wp_kses_decode_entities($image_node->getAttribute('src')));
+                            if ($src_value !== '') {
+                                $candidate_lookup[$src_value] = true;
+                                $this->handleImageCandidate(
+                                    $src_value,
+                                    $permalink,
+                                    $post,
+                                    $table_name,
+                                    $post_title_for_storage,
+                                    $site_context['site_host_for_metadata'],
+                                    $register_pending_image_insert,
+                                    $checked_local_paths,
+                                    $normalizer,
+                                    $debug_mode
+                                );
                             }
 
-                            $normalized_image_url = blc_normalize_link_url(
-                                $candidate_url,
-                                $home_url_with_trailing_slash,
-                                $site_scheme,
-                                $permalink
-                            );
-
-                            if (!is_string($normalized_image_url) || $normalized_image_url === '') {
-                                return;
+                            $srcset_value_raw = wp_kses_decode_entities($image_node->getAttribute('srcset'));
+                            $srcset_value = trim((string) $srcset_value_raw);
+                            if ($srcset_value === '') {
+                                continue;
                             }
 
-                            $image_host_raw = parse_url($normalized_image_url, PHP_URL_HOST);
-                            $image_host = is_string($image_host_raw) ? blc_normalize_remote_host($image_host_raw) : '';
-                            if ($image_host === '') {
-                                return;
-                            }
-
-                            $hosts_match_site = ($image_host !== '' && $normalized_site_host !== '' && $image_host === $normalized_site_host);
-                            $hosts_match_upload = ($image_host !== '' && $upload_baseurl_host !== '' && $image_host === $upload_baseurl_host);
-                            $is_remote_upload_candidate = false;
-
-                            if (!$hosts_match_site && !$hosts_match_upload) {
-                                if (!$remote_image_scan_enabled) {
-                                    if ($debug_mode) {
-                                        error_log("  -> Image distante ignorée (analyse désactivée) : " . $normalized_image_url);
-                                    }
-                                    return;
-                                }
-
-                                $is_safe_remote_host = blc_is_safe_remote_host($image_host);
-                                if (!$is_safe_remote_host) {
-                                    if ($debug_mode) {
-                                        error_log("  -> Image ignorée (IP non autorisée) : " . $normalized_image_url);
-                                    }
-                                    return;
-                                }
-
-                                $is_remote_upload_candidate = true;
-                            } elseif (!$hosts_match_site && $hosts_match_upload) {
-                                $is_safe_remote_host = blc_is_safe_remote_host($image_host);
-                                if (!$is_safe_remote_host) {
-                                    if ($debug_mode) {
-                                        error_log("  -> Image ignorée (IP non autorisée) : " . $normalized_image_url);
-                                    }
-                                    return;
-                                }
-                            }
-                            if (empty($upload_baseurl) || empty($upload_basedir) || empty($normalized_basedir)) {
-                                return;
-                            }
-
-                            $image_scheme = parse_url($normalized_image_url, PHP_URL_SCHEME);
-                            $normalized_upload_baseurl = $upload_baseurl;
-                            if ($image_scheme && $upload_baseurl !== '') {
-                                $normalized_upload_baseurl = set_url_scheme($upload_baseurl, $image_scheme);
-                            }
-
-                            $normalized_upload_baseurl_length = strlen($normalized_upload_baseurl);
-                            if ($normalized_upload_baseurl_length === 0) {
-                                return;
-                            }
-                            if (
-                                !$is_remote_upload_candidate &&
-                                strncasecmp($normalized_image_url, $normalized_upload_baseurl, $normalized_upload_baseurl_length) !== 0
-                            ) {
-                                return;
-                            }
-
-                            $image_path_from_url = function_exists('wp_parse_url')
-                                ? wp_parse_url($normalized_image_url, PHP_URL_PATH)
-                                : parse_url($normalized_image_url, PHP_URL_PATH);
-                            if (!is_string($image_path_from_url) || $image_path_from_url === '') {
-                                return;
-                            }
-
-                            $image_path = wp_normalize_path($image_path_from_url);
-
-                            $parsed_upload_baseurl = function_exists('wp_parse_url') ? wp_parse_url($normalized_upload_baseurl) : parse_url($normalized_upload_baseurl);
-                            $upload_base_path = '';
-                            if (is_array($parsed_upload_baseurl) && !empty($parsed_upload_baseurl['path'])) {
-                                $upload_base_path = wp_normalize_path($parsed_upload_baseurl['path']);
-                            }
-
-                            $upload_base_path_trimmed = ltrim(trailingslashit($upload_base_path), '/');
-                            $upload_base_path_trimmed_length = strlen($upload_base_path_trimmed);
-                            $image_path_trimmed = ltrim($image_path, '/');
-
-                            if (
-                                $upload_base_path_trimmed_length === 0 ||
-                                strncasecmp($image_path_trimmed, $upload_base_path_trimmed, $upload_base_path_trimmed_length) !== 0
-                            ) {
-                                return;
-                            }
-
-                            $relative_path = ltrim(substr($image_path_trimmed, $upload_base_path_trimmed_length), '/');
-                            if ($relative_path === '') {
-                                return;
-                            }
-
-                            $decoded_relative_path = rawurldecode($relative_path);
-                            $decoded_relative_path = ltrim($decoded_relative_path, '/\\');
-                            if ($decoded_relative_path === '') {
-                                return;
-                            }
-
-                            if (preg_match('#(^|[\\/])\.\.([\\/]|$)#', $decoded_relative_path)) {
-                                return;
-                            }
-
-                            $file_path = wp_normalize_path(trailingslashit($upload_basedir) . $decoded_relative_path);
-                            if (strpos($file_path, $normalized_basedir) !== 0) {
-                                return;
-                            }
-
-                            if (!isset($checked_local_paths[$file_path]) || !is_array($checked_local_paths[$file_path])) {
-                                $checked_local_paths[$file_path] = [
-                                    'exists' => file_exists($file_path),
-                                    'reported_posts' => [],
-                                ];
-                            }
-
-                            if (!isset($checked_local_paths[$file_path]['reported_posts']) || !is_array($checked_local_paths[$file_path]['reported_posts'])) {
-                                $checked_local_paths[$file_path]['reported_posts'] = [];
-                            }
-
-                            if (!empty($checked_local_paths[$file_path]['exists'])) {
-                                return;
-                            }
-
-                            if (isset($checked_local_paths[$file_path]['reported_posts'][$post->ID])) {
-                                return;
-                            }
-
-                            if ($debug_mode) {
-                                error_log("  -> Image Cassée Trouvée : " . $candidate_url);
-                            }
-                            $url_for_storage    = blc_prepare_url_for_storage($candidate_url);
-                            $image_filename = wp_basename($decoded_relative_path);
-                            $anchor_for_storage = blc_prepare_text_field_for_storage($image_filename);
-                            $metadata  = blc_get_url_metadata_for_storage($candidate_url, $normalized_image_url, $site_host_for_metadata);
-                            $row_bytes = blc_calculate_row_storage_footprint_bytes($url_for_storage, $anchor_for_storage, $post_title_for_storage);
-                            $checked_at_gmt = current_time('mysql', true);
-                            $row_type = $is_remote_upload_candidate ? 'remote-image' : 'image';
-                            $inserted = $wpdb->insert(
-                                $table_name,
-                                [
-                                    'url'             => $url_for_storage,
-                                    'anchor'          => $anchor_for_storage,
-                                    'post_id'         => $post->ID,
-                                    'post_title'      => $post_title_for_storage,
-                                    'type'            => $row_type,
-                                    'url_host'        => $metadata['host'],
-                                    'is_internal'     => $metadata['is_internal'],
-                                    'http_status'     => null,
-                                    'last_checked_at' => $checked_at_gmt,
-                                ],
-                                ['%s', '%s', '%d', '%s', '%s', '%s', '%d', '%d', '%s']
-                            );
-                            if ($inserted) {
-                                $checked_local_paths[$file_path]['reported_posts'][$post->ID] = true;
-                                $register_pending_image_insert($post->ID, $row_bytes);
-                                blc_adjust_dataset_storage_footprint('image', $row_bytes);
-                            }
-                        };
-
-                        $candidate_lookup = [];
-                        $src_value = trim(wp_kses_decode_entities($image_node->getAttribute('src')));
-                        if ($src_value !== '') {
-                            $candidate_lookup[$src_value] = true;
-                            $process_image_candidate($src_value);
-                        }
-
-                        $srcset_value_raw = wp_kses_decode_entities($image_node->getAttribute('srcset'));
-                        $srcset_value = trim((string) $srcset_value_raw);
-                        if ($srcset_value !== '') {
                             $srcset_entries = explode(',', $srcset_value);
                             foreach ($srcset_entries as $entry) {
                                 $entry = trim($entry);
@@ -952,17 +991,32 @@ if (!class_exists('ImageScanQueue')) {
                                 }
 
                                 $candidate_lookup[$candidate] = true;
-                                $process_image_candidate($candidate);
+                                $this->handleImageCandidate(
+                                    $candidate,
+                                    $permalink,
+                                    $post,
+                                    $table_name,
+                                    $post_title_for_storage,
+                                    $site_context['site_host_for_metadata'],
+                                    $register_pending_image_insert,
+                                    $checked_local_paths,
+                                    $normalizer,
+                                    $debug_mode
+                                );
                             }
                         }
-                    }
                     } catch (\Throwable $caught_exception) {
                         $batch_exception = $caught_exception;
                         break;
                     }
 
                     if ($scan_run_token !== '') {
-                        $commit_result = blc_commit_dataset_refresh($table_name, $image_dataset_row_types, $scan_run_token, 'image', [$post->ID]);
+                        try {
+                            $commit_result = blc_commit_dataset_refresh($table_name, $image_dataset_row_types, $scan_run_token, 'image', [$post->ID]);
+                        } catch (\Throwable $commit_exception) {
+                            $batch_exception = $commit_exception;
+                            break;
+                        }
                         if (is_wp_error($commit_result)) {
                             $batch_wp_error = $commit_result;
                             break;
@@ -971,113 +1025,151 @@ if (!class_exists('ImageScanQueue')) {
                         if (isset($pending_image_inserts[$post->ID])) {
                             unset($pending_image_inserts[$post->ID]);
                         }
-                    }
-                }
 
-                $should_cleanup_pending_images = ($batch_exception !== null || $batch_wp_error instanceof \WP_Error);
-                if ($should_cleanup_pending_images && !empty($pending_image_inserts)) {
-                    foreach ($pending_image_inserts as $post_pending_entries) {
-                        foreach ($post_pending_entries as $entry) {
-                            $row_id = isset($entry['id']) ? (int) $entry['id'] : 0;
-                            $bytes  = isset($entry['bytes']) ? (int) $entry['bytes'] : 0;
-
-                            if ($row_id > 0) {
-                                $wpdb->delete($table_name, ['id' => $row_id], ['%d']);
-                            }
-
-                            if ($bytes !== 0) {
-                                blc_adjust_dataset_storage_footprint('image', -$bytes);
-                            }
+                        if (isset($this->pendingImageInserts[$post->ID])) {
+                            unset($this->pendingImageInserts[$post->ID]);
                         }
                     }
-
-                    $pending_image_inserts = [];
-                }
-
-                if ($scan_run_token !== '' && $should_cleanup_pending_images) {
-                    blc_restore_dataset_refresh($table_name, $image_dataset_row_types, $scan_run_token);
-                }
-
-                if ($batch_exception instanceof \Throwable) {
-                    if ($lock_token !== '') {
-                        blc_release_image_scan_lock($lock_token);
-                    }
-                    throw $batch_exception;
-                }
-
-                if ($batch_wp_error instanceof \WP_Error) {
-                    if ($lock_token !== '') {
-                        blc_release_image_scan_lock($lock_token);
-                    }
-                    return $batch_wp_error;
-                }
-
-                if ($query->max_num_pages > ($batch + 1)) {
-                    // On utilise un hook de batch différent pour ne pas interférer
-                    blc_refresh_image_scan_lock($lock_token, $lock_timeout);
-                    $scheduled = wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_image_batch', array($batch + 1, true));
-                    if (false === $scheduled) {
-                        error_log(sprintf('BLC: Failed to schedule next image batch #%d.', $batch + 1));
-                        do_action('blc_check_image_batch_schedule_failed', $batch + 1, true, 'next_batch');
-
-                        if ($lock_token !== '') {
-                            blc_release_image_scan_lock($lock_token);
-                        }
-
-                        delete_option('blc_image_scan_lock_token');
-
-                        blc_update_image_scan_status([
-                            'state'           => 'failed',
-                            'last_error'      => __('Impossible de programmer le lot suivant.', 'liens-morts-detector-jlg'),
-                            'message'         => __('Impossible de programmer le lot suivant.', 'liens-morts-detector-jlg'),
-                            'total_items'     => $total_items,
-                            'processed_items' => $processed_items,
-                            'is_full_scan'    => true,
-                        ]);
-
-                        return new WP_Error(
-                            'blc_image_schedule_failed',
-                            sprintf('Failed to schedule next image batch #%d.', $batch + 1)
-                        );
-                    }
-
-                    blc_update_image_scan_status([
-                        'state'             => 'running',
-                        'current_batch'     => (int) $batch,
-                        'processed_batches' => $processed_batches,
-                        'total_batches'     => $total_batches,
-                        'remaining_batches' => max(0, $remaining_batches),
-                        'total_items'       => $total_items,
-                        'processed_items'   => $processed_items,
-                        'is_full_scan'      => true,
-                        'message'           => sprintf(
-                            /* translators: 1: completed batch number, 2: next batch number. */
-                            __('Lot %1$d terminé. Lot %2$d planifié.', 'liens-morts-detector-jlg'),
-                            $processed_batches,
-                            min($total_batches, $processed_batches + 1)
-                        ),
-                    ]);
-                } else {
-                    if ($debug_mode) { error_log("--- Scan IMAGES terminé ---"); }
-                    update_option('blc_last_image_check_time', current_time('timestamp', true));
-                    blc_maybe_send_scan_summary('image');
-                    blc_update_image_scan_status([
-                        'state'             => 'completed',
-                        'current_batch'     => (int) $batch,
-                        'processed_batches' => $processed_batches,
-                        'total_batches'     => $total_batches,
-                        'remaining_batches' => 0,
-                        'total_items'       => $total_items,
-                        'processed_items'   => max($total_items, $processed_items),
-                        'is_full_scan'      => true,
-                        'message'           => $total_items > 0
-                            ? __('Analyse terminée. Tous les lots ont été traités.', 'liens-morts-detector-jlg')
-                            : __('Analyse terminée. Aucun contenu à analyser.', 'liens-morts-detector-jlg'),
-                    ]);
-                    blc_release_image_scan_lock($lock_token);
                 }
             } finally {
-                wp_reset_postdata();
+            }
+
+            $should_cleanup_pending_images = ($batch_exception !== null || $batch_wp_error instanceof \WP_Error);
+
+            return [
+                'pending_image_inserts' => $this->pendingImageInserts,
+                'exception'            => $batch_exception,
+                'wp_error'             => $batch_wp_error,
+                'should_cleanup'       => $should_cleanup_pending_images,
+            ];
+        }
+
+        private function handleImageCandidate(
+            $candidate_url,
+            $permalink,
+            $post,
+            $table_name,
+            $post_title_for_storage,
+            $site_host_for_metadata,
+            callable $register_pending_image_insert,
+            array &$checked_local_paths,
+            BlcImageUrlNormalizer $normalizer,
+            $debug_mode
+        ) {
+            $normalized = $normalizer->normalize($candidate_url, $permalink);
+            if ($normalized === null) {
+                return;
+            }
+
+            $file_path = $normalized['file_path'];
+
+            if (!isset($checked_local_paths[$file_path]) || !is_array($checked_local_paths[$file_path])) {
+                $checked_local_paths[$file_path] = [
+                    'exists'         => file_exists($file_path),
+                    'reported_posts' => [],
+                ];
+            }
+
+            if (!isset($checked_local_paths[$file_path]['reported_posts']) || !is_array($checked_local_paths[$file_path]['reported_posts'])) {
+                $checked_local_paths[$file_path]['reported_posts'] = [];
+            }
+
+            if (!empty($checked_local_paths[$file_path]['exists'])) {
+                return;
+            }
+
+            if (isset($checked_local_paths[$file_path]['reported_posts'][$post->ID])) {
+                return;
+            }
+
+            $this->persistBrokenImage(
+                $normalized,
+                $post,
+                $table_name,
+                $post_title_for_storage,
+                $site_host_for_metadata,
+                $register_pending_image_insert,
+                $checked_local_paths,
+                $debug_mode
+            );
+        }
+
+        private function persistBrokenImage(
+            array $normalized,
+            $post,
+            $table_name,
+            $post_title_for_storage,
+            $site_host_for_metadata,
+            callable $register_pending_image_insert,
+            array &$checked_local_paths,
+            $debug_mode
+        ) {
+            global $wpdb;
+
+            $candidate_url = $normalized['original_url'];
+            $normalized_url = $normalized['normalized_url'];
+            $file_path = $normalized['file_path'];
+            $decoded_relative_path = $normalized['decoded_relative_path'];
+            $is_remote_upload_candidate = !empty($normalized['is_remote_upload_candidate']);
+
+            if ($debug_mode) {
+                error_log("  -> Image Cassée Trouvée : " . $candidate_url);
+            }
+
+            $url_for_storage = blc_prepare_url_for_storage($candidate_url);
+            $image_filename = wp_basename($decoded_relative_path);
+            $anchor_for_storage = blc_prepare_text_field_for_storage($image_filename);
+            $metadata = blc_get_url_metadata_for_storage($candidate_url, $normalized_url, $site_host_for_metadata);
+            $row_bytes = blc_calculate_row_storage_footprint_bytes($url_for_storage, $anchor_for_storage, $post_title_for_storage);
+            $checked_at_gmt = current_time('mysql', true);
+            $row_type = $is_remote_upload_candidate ? 'remote-image' : 'image';
+
+            $inserted = $wpdb->insert(
+                $table_name,
+                [
+                    'url'             => $url_for_storage,
+                    'anchor'          => $anchor_for_storage,
+                    'post_id'         => $post->ID,
+                    'post_title'      => $post_title_for_storage,
+                    'type'            => $row_type,
+                    'url_host'        => $metadata['host'],
+                    'is_internal'     => $metadata['is_internal'],
+                    'http_status'     => null,
+                    'last_checked_at' => $checked_at_gmt,
+                ],
+                ['%s', '%s', '%d', '%s', '%s', '%s', '%d', '%d', '%s']
+            );
+            if ($inserted) {
+                $checked_local_paths[$file_path]['reported_posts'][$post->ID] = true;
+                $register_pending_image_insert($post->ID, $row_bytes);
+                blc_adjust_dataset_storage_footprint('image', $row_bytes);
+            }
+        }
+
+        private function cleanupOnFailure($pending_image_inserts, $should_cleanup_pending_images, $table_name, $image_dataset_row_types, $scan_run_token) {
+            global $wpdb;
+
+            if ($should_cleanup_pending_images && !empty($pending_image_inserts)) {
+                foreach ($pending_image_inserts as $post_pending_entries) {
+                    foreach ($post_pending_entries as $entry) {
+                        $row_id = isset($entry['id']) ? (int) $entry['id'] : 0;
+                        $bytes  = isset($entry['bytes']) ? (int) $entry['bytes'] : 0;
+
+                        if ($row_id > 0) {
+                            $wpdb->delete($table_name, ['id' => $row_id], ['%d']);
+                        }
+
+                        if ($bytes !== 0) {
+                            blc_adjust_dataset_storage_footprint('image', -$bytes);
+                        }
+                    }
+                }
+
+                $this->pendingImageInserts = [];
+            }
+
+            if ($scan_run_token !== '' && $should_cleanup_pending_images) {
+                blc_restore_dataset_refresh($table_name, $image_dataset_row_types, $scan_run_token);
             }
         }
     }

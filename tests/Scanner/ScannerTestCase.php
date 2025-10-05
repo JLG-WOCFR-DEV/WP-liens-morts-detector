@@ -370,13 +370,11 @@ abstract class ScannerTestCase extends TestCase
             });
         }
 
-        if (!function_exists('sanitize_key')) {
-            Functions\when('sanitize_key')->alias(function ($key) {
-                $key = strtolower(is_scalar($key) ? (string) $key : '');
+        Functions\when('sanitize_key')->alias(function ($key) {
+            $key = strtolower(is_scalar($key) ? (string) $key : '');
 
-                return preg_replace('/[^a-z0-9_\-]/', '', $key);
-            });
-        }
+            return preg_replace('/[^a-z0-9_\-]/', '', $key);
+        });
 
         Functions\when('maybe_unserialize')->alias(function ($value) {
             if (!is_string($value)) {
