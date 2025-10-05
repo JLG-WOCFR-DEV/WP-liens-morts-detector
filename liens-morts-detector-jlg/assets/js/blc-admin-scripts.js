@@ -14,6 +14,8 @@ jQuery(document).ready(function($) {
         cancelButton: 'Annuler',
         closeButton: 'Fermer',
         closeLabel: 'Fermer la fenêtre modale',
+        simpleConfirmModalConfirm: 'Confirmer',
+        simpleConfirmModalCancel: 'Annuler',
         emptyUrlMessage: 'Veuillez saisir une URL.',
         invalidUrlMessage: 'Veuillez saisir une URL valide.',
         sameUrlMessage: "La nouvelle URL doit être différente de l'URL actuelle.",
@@ -407,8 +409,28 @@ jQuery(document).ready(function($) {
             confirmPromise: null,
             resolvePromise: null,
             rejectPromise: null,
-            wasConfirmed: false
+            wasConfirmed: false,
+            mode: 'input'
         };
+
+        function applyMode(options) {
+            var requestedMode = options && typeof options.mode === 'string' ? options.mode : '';
+
+            if (requestedMode === 'simple') {
+                state.mode = 'simple';
+                state.showInput = false;
+                return;
+            }
+
+            if (options && options.showInput === false) {
+                state.mode = 'simple';
+                state.showInput = false;
+                return;
+            }
+
+            state.mode = 'input';
+            state.showInput = true;
+        }
 
         function resetPromiseState() {
             state.confirmPromise = null;
@@ -517,6 +539,7 @@ jQuery(document).ready(function($) {
             state.onConfirm = null;
             state.showInput = true;
             state.showCancel = true;
+            state.mode = 'input';
             var shouldReject = !state.wasConfirmed && typeof state.rejectPromise === 'function';
             var rejectFn = state.rejectPromise;
 
@@ -564,7 +587,7 @@ jQuery(document).ready(function($) {
             options = options || {};
 
             state.onConfirm = typeof options.onConfirm === 'function' ? options.onConfirm : null;
-            state.showInput = options.showInput !== false;
+            applyMode(options);
             state.showCancel = options.showCancel !== false;
             resetPromiseState();
             var promise = createConfirmationPromise();
@@ -590,11 +613,23 @@ jQuery(document).ready(function($) {
 
             var confirmText = options.confirmText;
             if (!confirmText) {
-                confirmText = state.showInput ? messages.editModalConfirm : messages.unlinkModalConfirm;
+                if (state.mode === 'simple') {
+                    confirmText = messages.simpleConfirmModalConfirm || messages.editModalConfirm;
+                } else {
+                    confirmText = messages.editModalConfirm;
+                }
             }
             $confirm.text(confirmText || messages.editModalConfirm || 'Confirmer');
 
-            var cancelText = options.cancelText || messages.cancelButton || 'Annuler';
+            var cancelText = options.cancelText;
+            if (!cancelText) {
+                if (state.mode === 'simple') {
+                    cancelText = messages.simpleConfirmModalCancel || messages.cancelButton;
+                } else {
+                    cancelText = messages.cancelButton;
+                }
+            }
+            cancelText = cancelText || 'Annuler';
             $cancel.text(cancelText);
 
             if (state.showCancel) {
@@ -733,6 +768,7 @@ jQuery(document).ready(function($) {
 
         function confirm(options) {
             var config = $.extend({}, options, {
+                mode: 'simple',
                 showInput: false
             });
 
@@ -985,14 +1021,6 @@ jQuery(document).ready(function($) {
             detectedTarget = '';
         }
         detectedTarget = detectedTarget.trim();
-        var contextExcerpt = linkElement.data('contextExcerpt');
-        if (typeof contextExcerpt !== 'string') {
-            contextExcerpt = '';
-        }
-        var contextHtml = linkElement.data('contextHtml');
-        if (typeof contextHtml !== 'string') {
-            contextHtml = '';
-        }
 
         var defaultValue = detectedTarget || oldUrl || messages.editPromptDefault;
         var promptMessage = (messages.editPromptMessage || '').replace('%s', oldUrl || '');
@@ -1044,7 +1072,8 @@ jQuery(document).ready(function($) {
             }
 
             var missingTitle = messages.applyRedirectMissingModalTitle || messages.applyRedirectModalTitle || '';
-            var missingPromise = modal.confirm({
+            var missingPromise = modal.open({
+                mode: 'simple',
                 title: missingTitle,
                 message: missingMessage,
                 confirmText: messages.closeButton || messages.cancelButton || 'Fermer',
@@ -1080,22 +1109,39 @@ jQuery(document).ready(function($) {
             occurrenceIndex = '';
         }
         var nonce = linkElement.data('nonce');
+        var contextExcerpt = linkElement.data('contextExcerpt');
+        if (typeof contextExcerpt !== 'string') {
+            contextExcerpt = '';
+        }
+        var contextHtml = linkElement.data('contextHtml');
+        if (typeof contextHtml !== 'string') {
+            contextHtml = '';
+        }
 
         var confirmationTemplate = messages.applyRedirectModalMessage
             || messages.applyRedirectConfirmation
             || '';
         var confirmationMessage = confirmationTemplate ? formatTemplate(confirmationTemplate, detectedTarget) : '';
 
-        var promise = modal.confirm({
+        var confirmPromise = modal.open({
+            mode: 'simple',
             title: messages.applyRedirectModalTitle || messages.editModalTitle,
             message: confirmationMessage,
             confirmText: messages.applyRedirectModalConfirm || messages.editModalConfirm,
             cancelText: messages.cancelButton,
             closeLabel: messages.closeLabel,
             showCancel: true,
-            onConfirm: function(_value, helpers) {
+            context: contextExcerpt,
+            contextHtml: contextHtml,
+            contextLabel: messages.contextLabel
+        });
+
+        if (confirmPromise && typeof confirmPromise.then === 'function') {
+            confirmPromise.then(function(result) {
+                var modalHelpers = result && result.helpers ? result.helpers : modal.helpers;
+
                 processLinkUpdate(linkElement, {
-                    helpers: helpers,
+                    helpers: modalHelpers,
                     value: detectedTarget,
                     oldUrl: oldUrl,
                     postId: postId,
@@ -1104,11 +1150,7 @@ jQuery(document).ready(function($) {
                     nonce: nonce,
                     action: 'blc_apply_detected_redirect'
                 });
-            }
-        });
-
-        if (promise && typeof promise.catch === 'function') {
-            promise.catch(function() {});
+            }).catch(function() {});
         }
     });
 
