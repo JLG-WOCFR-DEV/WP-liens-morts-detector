@@ -375,6 +375,10 @@ class ScanQueue {
             $batch_size = blc_normalize_link_batch_size($batch_size);
             $last_check_time = (int) get_option('blc_last_check_time', 0);
             $table_name      = $wpdb->prefix . 'blc_broken_links';
+            $link_dataset_row_types = blc_get_dataset_row_types('link');
+            if (empty($link_dataset_row_types)) {
+                $link_dataset_row_types = ['link'];
+            }
 
             // Limiter la requête aux types de contenus publics (repli sur « post ») tout en conservant la pagination existante.
             $args = [
@@ -435,19 +439,21 @@ class ScanQueue {
             ]);
 
             $cleanup_size = 0;
+            $type_placeholders = implode(',', array_fill(0, count($link_dataset_row_types), '%s'));
             if (method_exists($wpdb, 'get_var')) {
-                $cleanup_size = (int) $wpdb->get_var(
-                    $wpdb->prepare(
-                        "SELECT SUM(COALESCE(LENGTH(blc.url), 0) + COALESCE(LENGTH(blc.anchor), 0) + COALESCE(LENGTH(blc.post_title), 0))
+                $cleanup_query = "SELECT SUM(COALESCE(LENGTH(blc.url), 0) + COALESCE(LENGTH(blc.anchor), 0) + COALESCE(LENGTH(blc.post_title), 0))
                          FROM $table_name AS blc
                          LEFT JOIN {$wpdb->posts} AS posts ON blc.post_id = posts.ID
-                         WHERE blc.type = %s AND posts.ID IS NULL",
-                        'link'
-                    )
+                         WHERE blc.type IN ($type_placeholders) AND posts.ID IS NULL";
+                $cleanup_size = (int) $wpdb->get_var(
+                    $wpdb->prepare($cleanup_query, $link_dataset_row_types)
                 );
             }
-            $cleanup_sql = "DELETE blc FROM $table_name AS blc LEFT JOIN {$wpdb->posts} AS posts ON blc.post_id = posts.ID WHERE blc.type = %s AND posts.ID IS NULL";
-            $deleted_orphans = $wpdb->query($wpdb->prepare($cleanup_sql, 'link'));
+            $cleanup_delete_sql = $wpdb->prepare(
+                "DELETE blc FROM $table_name AS blc LEFT JOIN {$wpdb->posts} AS posts ON blc.post_id = posts.ID WHERE blc.type IN ($type_placeholders) AND posts.ID IS NULL",
+                $link_dataset_row_types
+            );
+            $deleted_orphans = $wpdb->query($cleanup_delete_sql);
             if ($deleted_orphans && $cleanup_size > 0) {
                 blc_adjust_dataset_storage_footprint('link', -$cleanup_size);
             }
@@ -460,7 +466,7 @@ class ScanQueue {
             $scan_run_token = '';
             if (!empty($post_ids_in_batch)) {
                 $scan_run_token = blc_generate_scan_run_token();
-                $stage_result = blc_stage_dataset_refresh($table_name, 'link', $scan_run_token, $post_ids_in_batch);
+                $stage_result = blc_stage_dataset_refresh($table_name, $link_dataset_row_types, $scan_run_token, $post_ids_in_batch);
                 if (is_wp_error($stage_result)) {
                     if ($lock_token !== '') {
                         blc_release_link_scan_lock($lock_token);
@@ -473,7 +479,7 @@ class ScanQueue {
             $global_link_sources = [];
             $register_global_source = static function (array $source) use (&$global_link_sources) {
                 $html = isset($source['html']) ? (string) $source['html'] : '';
-                if (trim($html) === '' || stripos($html, '<a') === false) {
+                if (!blc_html_contains_scannable_sources($html)) {
                     return;
                 }
 
@@ -661,7 +667,7 @@ class ScanQueue {
                     $scan_run_token = blc_generate_scan_run_token();
                 }
 
-                $stage_result = blc_stage_dataset_refresh($table_name, 'link', $scan_run_token, [0]);
+                $stage_result = blc_stage_dataset_refresh($table_name, $link_dataset_row_types, $scan_run_token, [0]);
                 if (is_wp_error($stage_result)) {
                     if ($lock_token !== '') {
                         blc_release_link_scan_lock($lock_token);
@@ -1251,6 +1257,7 @@ class ScanQueue {
                 string $permalink_for_links
             ) use (
                 &$link_occurrence_counters,
+                $link_dataset_row_types,
                 $site_url,
                 $site_scheme,
                 $site_host,
@@ -1280,11 +1287,18 @@ class ScanQueue {
                 $remote_request_client,
                 $remote_request_queue
             ) {
-                return function (string $original_url, string $anchor_text, string $context_html, string $context_excerpt) use (
+                return function (
+                    string $original_url,
+                    string $anchor_text,
+                    string $context_html,
+                    string $context_excerpt,
+                    array $node_metadata = []
+                ) use (
                     &$link_occurrence_counters,
                     $source_post_id,
                     $storage_title,
                     $permalink_for_links,
+                    $link_dataset_row_types,
                     $site_url,
                     $site_scheme,
                     $site_host,
@@ -1314,6 +1328,14 @@ class ScanQueue {
                     $remote_request_client,
                     $remote_request_queue
                 ) {
+                    $entry_type = isset($node_metadata['type']) ? sanitize_key((string) $node_metadata['type']) : 'link';
+                    if ($entry_type === '') {
+                        $entry_type = 'link';
+                    }
+                    if (!in_array($entry_type, $link_dataset_row_types, true)) {
+                        $entry_type = 'link';
+                    }
+
                     if (!isset($link_occurrence_counters[$source_post_id])) {
                         $link_occurrence_counters[$source_post_id] = [];
                     }
@@ -1329,7 +1351,7 @@ class ScanQueue {
                         return;
                     }
 
-                    $metadata  = blc_get_url_metadata_for_storage($original_url, $normalized_url, $site_host);
+                    $url_metadata  = blc_get_url_metadata_for_storage($original_url, $normalized_url, $site_host);
                     $row_bytes = blc_calculate_row_storage_footprint_bytes(
                         $url_for_storage,
                         $anchor_for_storage,
@@ -1351,7 +1373,7 @@ class ScanQueue {
                         return;
                     }
 
-                    $counter_key = $url_for_storage;
+                    $counter_key = $entry_type . '|' . $url_for_storage;
                     if (!isset($post_counters[$counter_key])) {
                         $post_counters[$counter_key] = 0;
                     }
@@ -1388,10 +1410,10 @@ class ScanQueue {
                                         'anchor'          => $anchor_for_storage,
                                         'post_id'         => $source_post_id,
                                         'post_title'      => $storage_title,
-                                        'type'            => 'link',
+                                        'type'            => $entry_type,
                                         'occurrence_index'=> $occurrence_index,
-                                        'url_host'        => $metadata['host'],
-                                        'is_internal'     => $metadata['is_internal'],
+                                        'url_host'        => $url_metadata['host'],
+                                        'is_internal'     => $url_metadata['is_internal'],
                                         'http_status'     => null,
                                         'last_checked_at' => $checked_at_gmt,
                                         'redirect_target_url' => $detected_target_for_storage,
@@ -1456,10 +1478,10 @@ class ScanQueue {
                                     'anchor'              => $anchor_for_storage,
                                     'post_id'             => $source_post_id,
                                     'post_title'          => $storage_title,
-                                    'type'                => 'link',
+                                    'type'                => $entry_type,
                                     'occurrence_index'    => $occurrence_index,
-                                    'url_host'            => $metadata['host'],
-                                    'is_internal'         => $metadata['is_internal'],
+                                    'url_host'            => $url_metadata['host'],
+                                    'is_internal'         => $url_metadata['is_internal'],
                                     'http_status'         => null,
                                     'last_checked_at'     => $checked_at_gmt,
                                     'redirect_target_url' => $detected_target_for_storage,
@@ -1560,7 +1582,8 @@ class ScanQueue {
                         $source_post_id,
                         $storage_title,
                         $occurrence_index,
-                        $metadata,
+                        $entry_type,
+                        $url_metadata,
                         $checked_at_gmt,
                         &$detected_target_for_storage,
                         $context_html_value,
@@ -1604,10 +1627,10 @@ class ScanQueue {
                                     'anchor'          => $anchor_for_storage,
                                     'post_id'         => $source_post_id,
                                     'post_title'      => $storage_title,
-                                    'type'            => 'link',
+                                    'type'            => $entry_type,
                                     'occurrence_index'=> $occurrence_index,
-                                    'url_host'        => $metadata['host'],
-                                    'is_internal'     => $metadata['is_internal'],
+                                    'url_host'        => $url_metadata['host'],
+                                    'is_internal'     => $url_metadata['is_internal'],
                                     'http_status'     => ($response_code !== null) ? (int) $response_code : null,
                                     'last_checked_at' => $checked_at_gmt,
                                     'redirect_target_url' => $detected_target_for_storage,
@@ -1802,7 +1825,7 @@ class ScanQueue {
                                 $comment_id = isset($comment_item['comment_ID']) ? (int) $comment_item['comment_ID'] : 0;
                             }
 
-                            if (trim($comment_content) === '' || stripos($comment_content, '<a') === false) {
+                            if (!blc_html_contains_scannable_sources($comment_content)) {
                                 continue;
                             }
 
@@ -1835,7 +1858,7 @@ class ScanQueue {
                                 }
 
                                 $meta_content = (string) $meta_entry;
-                                if (trim($meta_content) === '' || stripos($meta_content, '<a') === false) {
+                                if (!blc_html_contains_scannable_sources($meta_content)) {
                                     continue;
                                 }
 
@@ -1853,7 +1876,7 @@ class ScanQueue {
 
                         foreach ($link_sources as $source) {
                             $html = isset($source['html']) ? (string) $source['html'] : '';
-                            if (trim($html) === '' || stripos($html, '<a') === false) {
+                            if (!blc_html_contains_scannable_sources($html)) {
                                 continue;
                             }
 
@@ -1871,13 +1894,14 @@ class ScanQueue {
                             $storage_title = isset($source['storage_title']) ? (string) $source['storage_title'] : $primary_storage_title;
 
                             $processor = $create_link_processor($source_post_id, $storage_title, $permalink_for_links);
-                            $dom_processed = blc_process_link_nodes_from_html($html, $blog_charset, $processor);
+                            $callbacks = array_fill_keys($link_dataset_row_types, $processor);
+                            $dom_processed = blc_process_link_nodes_from_html($html, $blog_charset, $callbacks);
                             $remote_request_queue->drain();
 
                             if (!$dom_processed) {
                                 if (!empty($source['restore_on_failure']) && $scan_run_token !== '') {
                                     error_log(sprintf('BLC: DOM creation failed during link scan for post ID %d; restoring staged entries.', $post->ID));
-                                    blc_restore_dataset_refresh($table_name, 'link', $scan_run_token, [$post->ID]);
+                                    blc_restore_dataset_refresh($table_name, $link_dataset_row_types, $scan_run_token, [$post->ID]);
                                     continue 2;
                                 }
                             }
@@ -1889,7 +1913,7 @@ class ScanQueue {
                     }
 
                     if ($scan_run_token !== '') {
-                        $commit_result = blc_commit_dataset_refresh($table_name, 'link', $scan_run_token, 'link', [$post->ID]);
+                        $commit_result = blc_commit_dataset_refresh($table_name, $link_dataset_row_types, $scan_run_token, 'link', [$post->ID]);
                         if (is_wp_error($commit_result)) {
                             $batch_wp_error = $commit_result;
                             break;
@@ -1910,7 +1934,7 @@ class ScanQueue {
 
                     foreach ($global_link_sources as $widget_source) {
                         $html = isset($widget_source['html']) ? (string) $widget_source['html'] : '';
-                        if (trim($html) === '' || stripos($html, '<a') === false) {
+                        if (!blc_html_contains_scannable_sources($html)) {
                             continue;
                         }
 
@@ -1935,12 +1959,13 @@ class ScanQueue {
                         }
 
                         $processor = $create_link_processor($source_post_id, $storage_title, $permalink_for_links);
-                        blc_process_link_nodes_from_html($html, $blog_charset, $processor);
+                        $callbacks = array_fill_keys($link_dataset_row_types, $processor);
+                        blc_process_link_nodes_from_html($html, $blog_charset, $callbacks);
                         $remote_request_queue->drain();
                     }
 
                     if ($scan_run_token !== '') {
-                        $commit_result = blc_commit_dataset_refresh($table_name, 'link', $scan_run_token, 'link', [0]);
+                        $commit_result = blc_commit_dataset_refresh($table_name, $link_dataset_row_types, $scan_run_token, 'link', [0]);
                         if (is_wp_error($commit_result)) {
                             $batch_wp_error = $commit_result;
                         }
@@ -1972,7 +1997,7 @@ class ScanQueue {
                 }
 
                 if ($scan_run_token !== '' && $should_cleanup_pending_links) {
-                    blc_restore_dataset_refresh($table_name, 'link', $scan_run_token);
+                    blc_restore_dataset_refresh($table_name, $link_dataset_row_types, $scan_run_token);
                 }
 
                 if ($batch_exception instanceof \Throwable) {

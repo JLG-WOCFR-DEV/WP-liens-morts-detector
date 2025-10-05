@@ -2446,42 +2446,463 @@ function blc_create_dom_from_content($content, $charset = 'UTF-8') {
  *
  * @return bool Whether the DOM could be created successfully.
  */
-function blc_process_link_nodes_from_html($html, $charset, callable $callback) {
+function blc_html_contains_scannable_sources($html) {
+    $snippet = (string) $html;
+    if (trim($snippet) === '') {
+        return false;
+    }
+
+    $needles = ['<a', '<iframe', '<script', '<link', '<form', 'style=', '<style', 'background:', 'background-image', 'url('];
+    foreach ($needles as $needle) {
+        if (stripos($snippet, $needle) !== false) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Iterate over relevant HTML nodes and dispatch callbacks for each detected target.
+ *
+ * @param string                          $html      Raw HTML content.
+ * @param string                          $charset   Charset used to decode the snippet before DOM parsing.
+ * @param callable|array<string, callable> $callbacks Callback map receiving the extracted URL and context information.
+ *                                                    Each callback uses the signature
+ *                                                    function (string $url, string $label, string $context_html,
+ *                                                    string $context_excerpt, array $metadata = []): void.
+ *
+ * @return bool Whether the DOM could be created successfully.
+ */
+function blc_process_link_nodes_from_html($html, $charset, $callbacks) {
+    if (is_callable($callbacks)) {
+        $callbacks = ['link' => $callbacks];
+    }
+
+    if (!is_array($callbacks)) {
+        $callbacks = [];
+    }
+
+    $callbacks = array_filter(
+        $callbacks,
+        static function ($callback) {
+            return is_callable($callback);
+        }
+    );
+
+    if ($callbacks === []) {
+        return true;
+    }
+
     $dom = blc_create_dom_from_content($html, $charset);
     if (!$dom instanceof DOMDocument) {
         return false;
     }
 
-    foreach ($dom->getElementsByTagName('a') as $link_node) {
-        $original_url = trim(wp_kses_decode_entities($link_node->getAttribute('href')));
-        if ($original_url === '') {
-            continue;
-        }
-
-        $anchor_text = wp_strip_all_tags($link_node->textContent);
-        $anchor_text = trim(preg_replace('/\s+/u', ' ', $anchor_text));
-        if ($anchor_text === '') {
-            $anchor_text = sprintf('[%s]', __('Lien sans texte', 'liens-morts-detector-jlg'));
-        }
-
-        $context_html = '';
-        if ($link_node->ownerDocument instanceof DOMDocument) {
-            $rendered = $link_node->ownerDocument->saveHTML($link_node);
+    $render_node_html = static function (\DOMNode $node) {
+        if ($node->ownerDocument instanceof DOMDocument) {
+            $rendered = $node->ownerDocument->saveHTML($node);
             if (is_string($rendered)) {
-                $context_html = trim($rendered);
+                return trim($rendered);
             }
         }
 
-        $context_excerpt = '';
-        if ($link_node->parentNode instanceof \DOMNode) {
-            $context_excerpt = trim($link_node->parentNode->textContent);
+        return '';
+    };
+
+    $extract_excerpt = static function (\DOMNode $node, $fallback) {
+        if ($node instanceof \DOMElement) {
+            $excerpt = trim($node->textContent);
+            if ($excerpt !== '') {
+                return $excerpt;
+            }
+        } elseif ($node->parentNode instanceof \DOMNode) {
+            $excerpt = trim($node->parentNode->textContent);
+            if ($excerpt !== '') {
+                return $excerpt;
+            }
         }
 
-        if ($context_excerpt === '') {
+        return (string) $fallback;
+    };
+
+    $sanitize_label = static function ($label) {
+        $text = trim((string) $label);
+        if ($text === '') {
+            return '';
+        }
+
+        if (function_exists('wp_strip_all_tags')) {
+            $text = wp_strip_all_tags($text);
+        }
+
+        $text = preg_replace('/\s+/u', ' ', $text);
+
+        return trim((string) $text);
+    };
+
+    $dispatch = static function (
+        $type,
+        $url,
+        $anchor_text,
+        $context_html,
+        $context_excerpt,
+        array $metadata = []
+    ) use ($callbacks) {
+        if (!isset($callbacks[$type]) || !is_callable($callbacks[$type])) {
+            return;
+        }
+
+        $metadata = array_merge(['type' => $type], $metadata);
+
+        call_user_func($callbacks[$type], $url, $anchor_text, $context_html, $context_excerpt, $metadata);
+    };
+
+    if (isset($callbacks['link'])) {
+        foreach ($dom->getElementsByTagName('a') as $link_node) {
+            if (!$link_node instanceof \DOMElement) {
+                continue;
+            }
+
+            $original_url = trim(wp_kses_decode_entities($link_node->getAttribute('href')));
+            if ($original_url === '') {
+                continue;
+            }
+
+            $anchor_text = $sanitize_label($link_node->textContent);
+            if ($anchor_text === '') {
+                $anchor_text = sprintf('[%s]', __('Lien sans texte', 'liens-morts-detector-jlg'));
+            }
+
+            $context_html = $render_node_html($link_node);
+            $context_excerpt = $extract_excerpt($link_node, $anchor_text);
+
+            $dispatch(
+                'link',
+                $original_url,
+                $anchor_text,
+                $context_html,
+                $context_excerpt,
+                [
+                    'tag'       => 'a',
+                    'attribute' => 'href',
+                ]
+            );
+        }
+    }
+
+    if (isset($callbacks['iframe'])) {
+        foreach ($dom->getElementsByTagName('iframe') as $iframe_node) {
+            if (!$iframe_node instanceof \DOMElement) {
+                continue;
+            }
+
+            $iframe_src = trim(wp_kses_decode_entities($iframe_node->getAttribute('src')));
+            if ($iframe_src === '') {
+                continue;
+            }
+
+            $anchor_text = sprintf('[%s]', __('Iframe', 'liens-morts-detector-jlg'));
+            $context_html = $render_node_html($iframe_node);
+            $context_excerpt = $extract_excerpt($iframe_node, $anchor_text);
+
+            $dispatch(
+                'iframe',
+                $iframe_src,
+                $anchor_text,
+                $context_html,
+                $context_excerpt,
+                [
+                    'tag'       => 'iframe',
+                    'attribute' => 'src',
+                ]
+            );
+        }
+    }
+
+    if (isset($callbacks['script'])) {
+        foreach ($dom->getElementsByTagName('script') as $script_node) {
+            if (!$script_node instanceof \DOMElement) {
+                continue;
+            }
+
+            $script_src = trim(wp_kses_decode_entities($script_node->getAttribute('src')));
+            if ($script_src === '') {
+                continue;
+            }
+
+            $anchor_text = sprintf('[%s]', __('Script', 'liens-morts-detector-jlg'));
+            $context_html = $render_node_html($script_node);
+            $context_excerpt = $extract_excerpt($script_node, $anchor_text);
+
+            $metadata = [
+                'tag'       => 'script',
+                'attribute' => 'src',
+            ];
+
+            $script_type = trim((string) $script_node->getAttribute('type'));
+            if ($script_type !== '') {
+                $metadata['script_type'] = strtolower($script_type);
+            }
+
+            $dispatch(
+                'script',
+                $script_src,
+                $anchor_text,
+                $context_html,
+                $context_excerpt,
+                $metadata
+            );
+        }
+    }
+
+    if (isset($callbacks['link-rel'])) {
+        foreach ($dom->getElementsByTagName('link') as $head_link) {
+            if (!$head_link instanceof \DOMElement) {
+                continue;
+            }
+
+            $rel_href = trim(wp_kses_decode_entities($head_link->getAttribute('href')));
+            if ($rel_href === '') {
+                continue;
+            }
+
+            $rel_value = strtolower(trim((string) $head_link->getAttribute('rel')));
+            $anchor_label = $rel_value !== ''
+                ? sprintf('[link rel="%s"]', $rel_value)
+                : __('[link]', 'liens-morts-detector-jlg');
+
+            $context_html = $render_node_html($head_link);
+            $context_excerpt = $extract_excerpt($head_link, $anchor_label);
+
+            $metadata = [
+                'tag'       => 'link',
+                'attribute' => 'href',
+            ];
+
+            if ($rel_value !== '') {
+                $metadata['rel'] = $rel_value;
+            }
+
+            $dispatch(
+                'link-rel',
+                $rel_href,
+                $anchor_label,
+                $context_html,
+                $context_excerpt,
+                $metadata
+            );
+        }
+    }
+
+    if (isset($callbacks['form'])) {
+        foreach ($dom->getElementsByTagName('form') as $form_node) {
+            if (!$form_node instanceof \DOMElement) {
+                continue;
+            }
+
+            $action_url = trim(wp_kses_decode_entities($form_node->getAttribute('action')));
+            if ($action_url === '') {
+                continue;
+            }
+
+            $method = strtoupper(trim((string) $form_node->getAttribute('method')));
+            $anchor_text = $method !== ''
+                ? sprintf('[form %s]', $method)
+                : __('[form]', 'liens-morts-detector-jlg');
+
+            $context_html = $render_node_html($form_node);
+            $context_excerpt = $extract_excerpt($form_node, $anchor_text);
+
+            $metadata = [
+                'tag'       => 'form',
+                'attribute' => 'action',
+            ];
+
+            if ($method !== '') {
+                $metadata['method'] = $method;
+            }
+
+            $dispatch(
+                'form',
+                $action_url,
+                $anchor_text,
+                $context_html,
+                $context_excerpt,
+                $metadata
+            );
+        }
+    }
+
+    if (isset($callbacks['css-background'])) {
+        $extract_urls_from_css_value = static function ($value) {
+            $matches = [];
+            $urls = [];
+
+            if (!is_string($value)) {
+                return $urls;
+            }
+
+            if (preg_match_all('/url\(\s*(?:\'([^\']*)\'|"([^\"]*)"|([^)]*))\s*\)/i', $value, $matches, PREG_SET_ORDER)) {
+                foreach ($matches as $match) {
+                    $candidate = '';
+                    if (isset($match[1]) && $match[1] !== '') {
+                        $candidate = $match[1];
+                    } elseif (isset($match[2]) && $match[2] !== '') {
+                        $candidate = $match[2];
+                    } elseif (isset($match[3])) {
+                        $candidate = $match[3];
+                    }
+
+                    $candidate = trim($candidate, "\"' \t\r\n");
+                    if ($candidate === '') {
+                        continue;
+                    }
+
+                    $lower_candidate = strtolower($candidate);
+                    if (strpos($lower_candidate, 'data:') === 0 || strpos($lower_candidate, 'javascript:') === 0) {
+                        continue;
+                    }
+
+                    $urls[] = $candidate;
+                }
+            }
+
+            return $urls;
+        };
+
+        $parse_inline_backgrounds = static function ($style_value) use ($extract_urls_from_css_value) {
+            $declarations = preg_split('/;/', (string) $style_value);
+            $results = [];
+
+            foreach ($declarations as $declaration) {
+                $parts = explode(':', $declaration, 2);
+                if (count($parts) !== 2) {
+                    continue;
+                }
+
+                $property = strtolower(trim($parts[0]));
+                if ($property === '' || strpos($property, 'background') === false) {
+                    continue;
+                }
+
+                $value = trim($parts[1]);
+                foreach ($extract_urls_from_css_value($value) as $url) {
+                    $results[] = [
+                        'property' => $property,
+                        'url'      => $url,
+                    ];
+                }
+            }
+
+            return $results;
+        };
+
+        $parse_style_block_backgrounds = static function ($css_value) use ($extract_urls_from_css_value) {
+            $matches = [];
+            $results = [];
+            $css = (string) $css_value;
+
+            if (preg_match_all('/(background(?:-[a-z-]+)?)\s*:\s*([^;{}]*url\([^)]*\)[^;{}]*)/i', $css, $matches, PREG_SET_ORDER)) {
+                foreach ($matches as $match) {
+                    $property = strtolower(trim($match[1]));
+                    $value = $match[2];
+
+                    foreach ($extract_urls_from_css_value($value) as $url) {
+                        $results[] = [
+                            'property' => $property,
+                            'url'      => $url,
+                        ];
+                    }
+                }
+            }
+
+            return $results;
+        };
+
+        foreach ($dom->getElementsByTagName('*') as $element) {
+            if (!$element instanceof \DOMElement) {
+                continue;
+            }
+
+            if (!$element->hasAttribute('style')) {
+                continue;
+            }
+
+            $style_value = $element->getAttribute('style');
+            $backgrounds = $parse_inline_backgrounds($style_value);
+
+            if ($backgrounds === []) {
+                continue;
+            }
+
+            $context_html = $render_node_html($element);
+            $tag_name = strtolower((string) $element->tagName);
+            $base_anchor_text = sprintf('[%s background]', $tag_name !== '' ? $tag_name : __('élément', 'liens-morts-detector-jlg'));
+            $context_excerpt = $extract_excerpt($element, $base_anchor_text);
+
+            foreach ($backgrounds as $background) {
+                $url = trim($background['url']);
+                if ($url === '') {
+                    continue;
+                }
+
+                $metadata = [
+                    'tag'          => $tag_name,
+                    'attribute'    => 'style',
+                    'css_property' => $background['property'],
+                    'source'       => 'inline-style',
+                ];
+
+                $dispatch(
+                    'css-background',
+                    $url,
+                    $base_anchor_text,
+                    $context_html,
+                    $context_excerpt,
+                    $metadata
+                );
+            }
+        }
+
+        foreach ($dom->getElementsByTagName('style') as $style_node) {
+            if (!$style_node instanceof \DOMElement) {
+                continue;
+            }
+
+            $css = $style_node->textContent;
+            $backgrounds = $parse_style_block_backgrounds($css);
+            if ($backgrounds === []) {
+                continue;
+            }
+
+            $context_html = $render_node_html($style_node);
+            $anchor_text = sprintf('[%s]', __('CSS', 'liens-morts-detector-jlg'));
             $context_excerpt = $anchor_text;
-        }
 
-        $callback($original_url, $anchor_text, $context_html, $context_excerpt);
+            foreach ($backgrounds as $background) {
+                $url = trim($background['url']);
+                if ($url === '') {
+                    continue;
+                }
+
+                $metadata = [
+                    'tag'          => 'style',
+                    'attribute'    => null,
+                    'css_property' => $background['property'],
+                    'source'       => 'style-block',
+                ];
+
+                $dispatch(
+                    'css-background',
+                    $url,
+                    $anchor_text,
+                    $context_html,
+                    $context_excerpt,
+                    $metadata
+                );
+            }
+        }
     }
 
     return true;

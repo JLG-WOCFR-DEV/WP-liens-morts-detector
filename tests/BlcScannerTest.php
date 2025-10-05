@@ -977,6 +977,44 @@ class BlcScannerTest extends TestCase
         $this->assertSame('liens-morts-detector-jlg', $lastCall['domain']);
     }
 
+    public function test_blc_process_link_nodes_from_html_handles_extended_sources(): void
+    {
+        $html = <<<'HTML'
+<div>
+    <a href="https://example.com/page">Read more</a>
+    <iframe src="https://example.com/embed"></iframe>
+    <script src="https://cdn.example.com/script.js"></script>
+    <link rel="stylesheet" href="https://cdn.example.com/theme.css" />
+    <form action="https://example.com/process" method="post"></form>
+    <div style="background-image: url('https://example.com/image.jpg');">Hero</div>
+    <style>.hero { background: url("https://example.com/bg.png"); }</style>
+</div>
+HTML;
+
+        $captured = [];
+        $callbacks = [];
+        foreach (\blc_get_dataset_row_types('link') as $type) {
+            $callbacks[$type] = function ($url, $anchor, $context_html, $context_excerpt, array $metadata) use (&$captured) {
+                $captured[] = [
+                    'type' => $metadata['type'] ?? '',
+                    'url'  => $url,
+                ];
+            };
+        }
+
+        $result = blc_process_link_nodes_from_html($html, 'UTF-8', $callbacks);
+
+        $this->assertTrue($result, 'DOM processing should succeed for valid HTML.');
+
+        $types = array_values(array_unique(array_map(static function ($entry) {
+            return $entry['type'];
+        }, $captured)));
+
+        foreach (['link', 'iframe', 'script', 'link-rel', 'form', 'css-background'] as $expected_type) {
+            $this->assertContains($expected_type, $types, sprintf('Type %s should be detected.', $expected_type));
+        }
+    }
+
     public function test_blc_commit_dataset_refresh_uses_plugin_domain_for_errors(): void
     {
         global $wpdb;
@@ -2946,12 +2984,13 @@ class BlcScannerTest extends TestCase
 
         $markQueryFound = false;
         $deleteQueryFound = false;
+        $typeCondition = "type IN ('" . implode("','", \blc_get_dataset_row_types('link')) . "')";
         foreach ($wpdb->queries as $query) {
             $sql = $query['sql'] ?? '';
-            if (strpos($sql, 'SET scan_run_id') !== false && strpos($sql, "type = 'link'") !== false) {
+            if (strpos($sql, 'SET scan_run_id') !== false && strpos($sql, $typeCondition) !== false) {
                 $markQueryFound = true;
             }
-            if (strpos($sql, 'DELETE FROM wp_blc_broken_links') !== false && strpos($sql, 'scan_run_id') !== false && strpos($sql, "type = 'link'") !== false) {
+            if (strpos($sql, 'DELETE FROM wp_blc_broken_links') !== false && strpos($sql, 'scan_run_id') !== false && strpos($sql, $typeCondition) !== false) {
                 $deleteQueryFound = true;
             }
         }
@@ -3228,12 +3267,13 @@ class BlcScannerTest extends TestCase
 
         $markQueryFound = false;
         $deleteQueryFound = false;
+        $typeCondition = "type IN ('" . implode("','", \blc_get_dataset_row_types('link')) . "')";
         foreach ($wpdb->queries as $query) {
             $sql = $query['sql'] ?? '';
-            if (strpos($sql, 'SET scan_run_id') !== false && strpos($sql, "type = 'link'") !== false) {
+            if (strpos($sql, 'SET scan_run_id') !== false && strpos($sql, $typeCondition) !== false) {
                 $markQueryFound = true;
             }
-            if (strpos($sql, 'DELETE FROM wp_blc_broken_links') !== false && strpos($sql, 'scan_run_id') !== false && strpos($sql, "type = 'link'") !== false) {
+            if (strpos($sql, 'DELETE FROM wp_blc_broken_links') !== false && strpos($sql, 'scan_run_id') !== false && strpos($sql, $typeCondition) !== false) {
                 $deleteQueryFound = true;
             }
         }
@@ -3280,12 +3320,13 @@ class BlcScannerTest extends TestCase
 
         $restoreQueryFound = false;
         $deleteQueryFound = false;
+        $typeCondition = "type IN ('" . implode("','", \blc_get_dataset_row_types('link')) . "')";
         foreach ($wpdb->queries as $query) {
             $sql = $query['sql'] ?? '';
-            if (strpos($sql, 'SET scan_run_id = NULL') !== false && strpos($sql, "type = 'link'") !== false) {
+            if (strpos($sql, 'SET scan_run_id = NULL') !== false && strpos($sql, $typeCondition) !== false) {
                 $restoreQueryFound = true;
             }
-            if (strpos($sql, 'DELETE FROM wp_blc_broken_links') !== false && strpos($sql, 'scan_run_id') !== false && strpos($sql, "type = 'link'") !== false) {
+            if (strpos($sql, 'DELETE FROM wp_blc_broken_links') !== false && strpos($sql, 'scan_run_id') !== false && strpos($sql, $typeCondition) !== false) {
                 $deleteQueryFound = true;
             }
         }
@@ -3337,9 +3378,10 @@ class BlcScannerTest extends TestCase
         $this->assertArrayNotHasKey('blc_link_scan_lock_token', $this->options, 'Lock token should be cleared after commit failures.');
 
         $restoreQueryFound = false;
+        $typeCondition = "type IN ('" . implode("','", \blc_get_dataset_row_types('link')) . "')";
         foreach ($wpdb->queries as $query) {
             $sql = $query['sql'] ?? '';
-            if (strpos($sql, 'SET scan_run_id = NULL') !== false && strpos($sql, "type = 'link'") !== false) {
+            if (strpos($sql, 'SET scan_run_id = NULL') !== false && strpos($sql, $typeCondition) !== false) {
                 $restoreQueryFound = true;
                 break;
             }

@@ -6,7 +6,7 @@ if (!defined('ABSPATH')) {
 }
 
 if (!defined('BLC_DB_VERSION')) {
-    define('BLC_DB_VERSION', '1.10.0');
+    define('BLC_DB_VERSION', '1.11.0');
 }
 
 if (!defined('BLC_TEXT_FIELD_LENGTH')) {
@@ -81,6 +81,10 @@ function blc_maybe_upgrade_database() {
         blc_maybe_add_column($table_name, 'redirect_target_url', 'longtext NULL');
         blc_maybe_add_column($table_name, 'context_html', 'longtext NULL');
         blc_maybe_add_column($table_name, 'context_excerpt', 'text NULL');
+    }
+
+    if (!$installed_version || version_compare($installed_version, '1.11.0', '<')) {
+        blc_migrate_column_to_varchar($table_name, 'type', 32, false);
     }
 
     update_option('blc_plugin_db_version', BLC_DB_VERSION);
@@ -347,7 +351,7 @@ function blc_activate_site() {
         anchor varchar(" . BLC_TEXT_FIELD_LENGTH . ") NULL,
         post_id bigint(20) unsigned NOT NULL,
         post_title varchar(" . BLC_TEXT_FIELD_LENGTH . ") NULL,
-        type varchar(20) NOT NULL,
+        type varchar(32) NOT NULL,
         occurrence_index int(10) NULL DEFAULT NULL,
         url_host varchar(191) NULL,
         is_internal tinyint(1) NOT NULL DEFAULT 0,

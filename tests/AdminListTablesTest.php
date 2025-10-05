@@ -604,7 +604,7 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString("WHEN (url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_row_query);
         $prepare_call = end($wpdb->prepare_calls);
         $this->assertIsArray($prepare_call);
-        $this->assertSame('link', end($prepare_call[1]));
+        $type_args = $prepare_call[1];
         $this->assertContains('https://example.com%', $prepare_call[1]);
         $this->assertContains('^https://example\\.com(?:[/?#]|$)', $prepare_call[1]);
         $this->assertContains('http://example.com%', $prepare_call[1]);
@@ -615,6 +615,11 @@ class AdminListTablesTest extends TestCase
         $this->assertContains('%://%', $prepare_call[1]);
         $this->assertContains('//%', $prepare_call[1]);
         $this->assertContains('%:%', $prepare_call[1]);
+        foreach (\blc_get_dataset_row_types('link') as $expected_type) {
+            $this->assertContains($expected_type, $type_args);
+        }
+        $this->assertArrayHasKey('resource_all', $views);
+        $this->assertStringContainsString('data-resource-type', $views['resource_all']);
     }
 
     public function test_links_get_views_counts_internal_includes_http_links(): void
@@ -635,6 +640,23 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString("url LIKE 'http://example.com%'", $wpdb->last_get_row_query);
         $this->assertArrayHasKey('internal', $views);
         $this->assertStringContainsString("Internes <span class='count'>(1)</span>", $views['internal']);
+    }
+
+    public function test_links_prepare_items_applies_resource_type_filter(): void
+    {
+        global $wpdb;
+        $wpdb = new DummyWpdb();
+        $wpdb->get_var_return_values = [0];
+        $wpdb->results_to_return = [];
+
+        $_GET['resource_type'] = 'iframe';
+
+        $table = new \BLC_Links_List_Table();
+        $table->prepare_items();
+
+        $this->assertStringContainsString("type = 'iframe'", $wpdb->last_get_results_query);
+
+        unset($_GET['resource_type']);
     }
 
     public function test_images_prepare_items_supports_injected_data_with_pagination(): void

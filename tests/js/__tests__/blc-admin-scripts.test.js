@@ -61,6 +61,12 @@ describe('blc-admin-scripts accessibility helper', () => {
         window.jQuery = $;
         window.$ = $;
 
+        window.wp = {
+            a11y: {
+                speak: jest.fn()
+            }
+        };
+
         require(path.resolve(__dirname, '../../..', 'liens-morts-detector-jlg/assets/js/blc-admin-scripts.js'));
     });
 
@@ -218,5 +224,81 @@ describe('blc-admin-scripts test notification button', () => {
         expect(payload.status_filters).toEqual(['status_404_410']);
 
         deferred.resolve({ success: true, data: { message: 'ok' } });
+    });
+});
+
+describe('blc-admin-scripts resource type persistence', () => {
+    let originalReady;
+    let originalLocationHref;
+
+    beforeEach(() => {
+        jest.resetModules();
+        document.body.innerHTML = `
+            <div class="wrap blc-dashboard-links-page">
+                <a href="?page=blc-dashboard&resource_type=iframe" data-resource-type="iframe">Iframes</a>
+            </div>
+        `;
+
+        originalReady = $.fn.ready;
+        $.fn.ready = function(fn) {
+            fn.call(document, $);
+            return this;
+        };
+
+        originalLocationHref = window.location.href;
+        window.history.replaceState({}, '', '/wp-admin/admin.php?page=blc-dashboard');
+
+        window.localStorage.clear();
+        window.localStorage.setItem('blcDashboardLinkType', 'all');
+
+        window.wp = {
+            a11y: {
+                speak: jest.fn()
+            }
+        };
+
+        global.jQuery = $;
+        global.$ = $;
+        window.jQuery = $;
+        window.$ = $;
+
+        require(path.resolve(__dirname, '../../..', 'liens-morts-detector-jlg/assets/js/blc-admin-scripts.js'));
+    });
+
+    afterEach(() => {
+        delete window.blcAdminMessages;
+        delete window.blcAdmin;
+        delete window.wp;
+        delete global.jQuery;
+        delete global.$;
+        delete window.jQuery;
+        delete window.$;
+        window.localStorage.removeItem('blc_links_resource_type');
+        window.localStorage.removeItem('blcDashboardLinkType');
+
+        window.history.replaceState({}, '', originalLocationHref);
+
+        if (originalReady) {
+            $.fn.ready = originalReady;
+        } else {
+            delete $.fn.ready;
+        }
+
+        jest.resetModules();
+    });
+
+    it('stores selected resource type when clicking filter links', () => {
+        const link = document.querySelector('a[data-resource-type]');
+        expect(link).not.toBeNull();
+        expect(window.localStorage.getItem('blc_links_resource_type')).toBeNull();
+        const events = $._data(document, 'events');
+        const clickHandlers = (events && events.click) ? events.click : [];
+        const delegated = clickHandlers.find((entry) => entry.selector === 'a[data-resource-type]');
+
+        expect(delegated).toBeDefined();
+
+        const event = $.Event('click', { target: link, currentTarget: link });
+        delegated.handler.call(link, event);
+        expect(window.localStorage.getItem('blc_links_resource_type')).toBe('iframe');
     });
 });

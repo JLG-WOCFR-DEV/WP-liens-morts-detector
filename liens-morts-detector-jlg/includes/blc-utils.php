@@ -1659,7 +1659,7 @@ function blc_get_dataset_row_types($dataset_type) {
     if ($normalized === 'image') {
         $types = ['image', 'remote-image'];
     } elseif ($normalized === 'link') {
-        $types = ['link'];
+        $types = ['link', 'iframe', 'script', 'link-rel', 'form', 'css-background'];
     } elseif ($normalized === '') {
         $types = [];
     } else {

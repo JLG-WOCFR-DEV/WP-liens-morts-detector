@@ -2746,6 +2746,16 @@ jQuery(document).ready(function($) {
         return;
     }
 
+    var resourceStorageKey = 'blc_links_resource_type';
+
+    $(document).on('click', 'a[data-resource-type]', function() {
+        var resourceType = $(this).data('resource-type');
+        if (typeof resourceType === 'undefined' || resourceType === null || resourceType === '') {
+            resourceType = 'all';
+        }
+        window.localStorage.setItem(resourceStorageKey, String(resourceType));
+    });
+
     var storedType = window.localStorage.getItem(STORAGE_KEY) || '';
     var hasLinkType = params.has('link_type') && params.get('link_type') !== null;
 

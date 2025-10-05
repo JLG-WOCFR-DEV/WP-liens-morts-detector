@@ -44,7 +44,14 @@ class BLC_Links_List_Table extends WP_List_Table {
      *
      * @var array<string,int>|null
      */
-    private $status_counts_cache = null;
+    private $status_counts_cache = [];
+
+    /**
+     * Cache local pour les compteurs par type de ressource.
+     *
+     * @var array<string, array<string,int>>
+     */
+    private $resource_type_counts_cache = [];
 
     /**
      * Constructeur de la classe.
@@ -224,6 +231,161 @@ class BLC_Links_List_Table extends WP_List_Table {
             $ignored_count
         );
 
+        $resource_views = $this->build_resource_views($current === 'ignored');
+        if (!empty($resource_views)) {
+            $views['resource_separator'] = '<span class="blc-views-separator" aria-hidden="true">|</span>';
+            foreach ($resource_views as $resource_key => $resource_view) {
+                $views[$resource_key] = $resource_view;
+            }
+        }
+
+        return $views;
+    }
+
+    /**
+     * Retourne le type de ressource HTML sélectionné via la requête.
+     */
+    private function get_selected_resource_type(): string {
+        $labels = $this->get_resource_type_labels();
+        $selected = 'all';
+
+        if (isset($_GET['resource_type'])) {
+            $raw = $_GET['resource_type'];
+            if (is_scalar($raw)) {
+                $candidate = sanitize_key((string) $raw);
+                if ($candidate !== '' && isset($labels[$candidate])) {
+                    if ($candidate === 'all' || in_array($candidate, $this->get_html_resource_row_types(), true)) {
+                        $selected = $candidate;
+                    }
+                }
+            }
+        }
+
+        return $selected;
+    }
+
+    /**
+     * Retourne la liste des types de lignes pour le jeu de données des liens.
+     *
+     * @return string[]
+     */
+    private function get_html_resource_row_types(): array {
+        static $cached = null;
+
+        if ($cached === null) {
+            $cached = blc_get_dataset_row_types('link');
+        }
+
+        return $cached;
+    }
+
+    /**
+     * Libellés affichés pour chaque type de ressource.
+     *
+     * @return array<string,string>
+     */
+    private function get_resource_type_labels(): array {
+        return [
+            'all'             => __('Tous les éléments HTML', 'liens-morts-detector-jlg'),
+            'link'            => __('Liens <a>', 'liens-morts-detector-jlg'),
+            'iframe'          => __('Iframes', 'liens-morts-detector-jlg'),
+            'script'          => __('Scripts', 'liens-morts-detector-jlg'),
+            'link-rel'        => __('Balises <link>', 'liens-morts-detector-jlg'),
+            'form'            => __('Formulaires', 'liens-morts-detector-jlg'),
+            'css-background'  => __('Arrière-plans CSS', 'liens-morts-detector-jlg'),
+        ];
+    }
+
+    /**
+     * Calcule le nombre d'entrées par type de ressource.
+     *
+     * @param bool $is_ignored_view Indique si la vue "ignorés" est active.
+     *
+     * @return array<string,int>
+     */
+    private function get_resource_type_counts(bool $is_ignored_view): array {
+        $cache_key = $is_ignored_view ? 'ignored' : 'active';
+
+        if (isset($this->resource_type_counts_cache[$cache_key])) {
+            return $this->resource_type_counts_cache[$cache_key];
+        }
+
+        $types = $this->get_html_resource_row_types();
+        $counts = array_fill_keys($types, 0);
+
+        if ($types === []) {
+            $this->resource_type_counts_cache[$cache_key] = $counts;
+            return $counts;
+        }
+
+        global $wpdb;
+
+        $table_name  = $wpdb->prefix . 'blc_broken_links';
+        $condition   = $is_ignored_view ? 'ignored_at IS NOT NULL' : 'ignored_at IS NULL';
+        $placeholders = implode(',', array_fill(0, count($types), '%s'));
+
+        $query = $wpdb->prepare(
+            "SELECT type, COUNT(*) AS total FROM $table_name WHERE type IN ($placeholders) AND $condition GROUP BY type",
+            $types
+        );
+
+        $rows = $wpdb->get_results($query, ARRAY_A);
+        if (is_array($rows)) {
+            foreach ($rows as $row) {
+                $type = isset($row['type']) ? (string) $row['type'] : '';
+                if ($type !== '' && array_key_exists($type, $counts)) {
+                    $counts[$type] = (int) $row['total'];
+                }
+            }
+        }
+
+        $this->resource_type_counts_cache[$cache_key] = $counts;
+
+        return $counts;
+    }
+
+    /**
+     * Génère les liens de filtre pour les types de ressources HTML.
+     *
+     * @param bool $is_ignored_view Indique si la vue "ignorés" est active.
+     *
+     * @return array<string,string>
+     */
+    private function build_resource_views(bool $is_ignored_view): array {
+        $types = $this->get_html_resource_row_types();
+        if ($types === []) {
+            return [];
+        }
+
+        $labels = $this->get_resource_type_labels();
+        $selected = $this->get_selected_resource_type();
+        $counts = $this->get_resource_type_counts($is_ignored_view);
+
+        $views = [];
+        $total = array_sum($counts);
+
+        $all_class = ($selected === 'all') ? 'current' : '';
+        $views['resource_all'] = sprintf(
+            "<a href='%s' class='%s' data-resource-type='all'>%s <span class='count'>(%d)</span></a>",
+            esc_url(remove_query_arg('resource_type')),
+            esc_attr($all_class),
+            esc_html($labels['all']),
+            $total
+        );
+
+        foreach ($types as $type) {
+            $count = isset($counts[$type]) ? (int) $counts[$type] : 0;
+            $class = ($selected === $type) ? 'current' : '';
+            $views['resource_' . $type] = sprintf(
+                "<a href='%s' class='%s' data-resource-type='%s'>%s <span class='count'>(%d)</span></a>",
+                esc_url(add_query_arg('resource_type', $type)),
+                esc_attr($class),
+                esc_attr($type),
+                esc_html($labels[$type] ?? $type),
+                $count
+            );
+        }
+
         return $views;
     }
 
@@ -233,11 +395,31 @@ class BLC_Links_List_Table extends WP_List_Table {
      * @return array<string,int>
      */
     public function get_status_counts() {
-        if (is_array($this->status_counts_cache)) {
-            return $this->status_counts_cache;
+        $resource_type = $this->get_selected_resource_type();
+        if (isset($this->status_counts_cache[$resource_type])) {
+            return $this->status_counts_cache[$resource_type];
         }
 
         global $wpdb;
+
+        $types_for_query = $resource_type === 'all'
+            ? $this->get_html_resource_row_types()
+            : [$resource_type];
+
+        if ($types_for_query === []) {
+            $defaults = [
+                'active_count'        => 0,
+                'ignored_count'       => 0,
+                'internal_count'      => 0,
+                'not_found_count'     => 0,
+                'server_error_count'  => 0,
+                'redirect_count'      => 0,
+                'needs_recheck_count' => 0,
+            ];
+            $this->status_counts_cache[$resource_type] = $defaults;
+
+            return $defaults;
+        }
 
         $table_name = $wpdb->prefix . 'blc_broken_links';
         $internal_condition = $this->build_internal_url_condition();
@@ -245,6 +427,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         $legacy_params      = $internal_condition['case_params'];
         $needs_recheck_clause = '(last_checked_at IS NULL OR last_checked_at = %s OR last_checked_at <= %s)';
         $needs_recheck_params = [$this->get_unchecked_sentinel_value(), $this->get_recheck_threshold_gmt()];
+        $type_placeholders = implode(',', array_fill(0, count($types_for_query), '%s'));
 
         $counts_query = $wpdb->prepare(
             "SELECT
@@ -262,8 +445,8 @@ class BLC_Links_List_Table extends WP_List_Table {
                 SUM(CASE WHEN ignored_at IS NULL AND http_status BETWEEN 300 AND 399 THEN 1 ELSE 0 END) AS redirect_count,
                 SUM(CASE WHEN ignored_at IS NULL AND $needs_recheck_clause THEN 1 ELSE 0 END) AS needs_recheck_count
              FROM $table_name
-             WHERE type = %s",
-            array_merge($legacy_params, $needs_recheck_params, ['link'])
+             WHERE type IN ($type_placeholders)",
+            array_merge($legacy_params, $needs_recheck_params, $types_for_query)
         );
 
         $counts = $wpdb->get_row($counts_query, ARRAY_A);
@@ -282,9 +465,10 @@ class BLC_Links_List_Table extends WP_List_Table {
             'needs_recheck_count' => 0,
         );
 
-        $this->status_counts_cache = array_map('intval', wp_parse_args($counts, $defaults));
+        $normalized_counts = array_map('intval', wp_parse_args($counts, $defaults));
+        $this->status_counts_cache[$resource_type] = $normalized_counts;
 
-        return $this->status_counts_cache;
+        return $normalized_counts;
     }
 
     /**
@@ -814,8 +998,25 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         $is_ignored_view = ($current_view === 'ignored');
 
-        $where  = ['type = %s'];
-        $params = ['link'];
+        $where  = [];
+        $params = [];
+
+        $selected_resource_type = $this->get_selected_resource_type();
+        $resource_types_for_query = $selected_resource_type === 'all'
+            ? $this->get_html_resource_row_types()
+            : [$selected_resource_type];
+
+        if ($resource_types_for_query === []) {
+            $resource_types_for_query = ['link'];
+        }
+
+        if (count($resource_types_for_query) === 1) {
+            $where[] = 'type = %s';
+            $params[] = $resource_types_for_query[0];
+        } else {
+            $where[] = 'type IN (' . implode(',', array_fill(0, count($resource_types_for_query), '%s')) . ')';
+            $params = array_merge($params, $resource_types_for_query);
+        }
 
         if ($search_term !== '') {
             $like = '%' . $wpdb->esc_like($search_term) . '%';
