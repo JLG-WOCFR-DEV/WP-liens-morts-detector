@@ -568,25 +568,24 @@ function blc_dashboard_links_page() {
         }
     }
 
-    $status_counts = array_map(
-        'intval',
-        wp_parse_args(
-            is_array($status_counts) ? $status_counts : array(),
-            array(
-                'active_count'        => 0,
-                'not_found_count'     => 0,
-                'server_error_count'  => 0,
-                'redirect_count'      => 0,
-                'needs_recheck_count' => 0,
-            )
-        )
-    );
+    $status_counts = is_array($status_counts) ? $status_counts : [];
+    $count_keys = [
+        'active_count'        => 0,
+        'not_found_count'     => 0,
+        'server_error_count'  => 0,
+        'redirect_count'      => 0,
+        'needs_recheck_count' => 0,
+    ];
 
-    $broken_links_count  = $status_counts['active_count'];
-    $not_found_count     = $status_counts['not_found_count'];
-    $server_error_count  = $status_counts['server_error_count'];
-    $redirect_count      = $status_counts['redirect_count'];
-    $needs_recheck_count = $status_counts['needs_recheck_count'];
+    foreach ($count_keys as $key => $default_value) {
+        $count_keys[$key] = isset($status_counts[$key]) ? (int) $status_counts[$key] : $default_value;
+    }
+
+    $broken_links_count  = $count_keys['active_count'];
+    $not_found_count     = $count_keys['not_found_count'];
+    $server_error_count  = $count_keys['server_error_count'];
+    $redirect_count      = $count_keys['redirect_count'];
+    $needs_recheck_count = $count_keys['needs_recheck_count'];
 
     $stats_card_blueprint = array(
         'all'        => array(
