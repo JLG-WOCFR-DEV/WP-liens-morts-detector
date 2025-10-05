@@ -2,6 +2,8 @@
 
 namespace JLG\BrokenLinks\Scanner;
 
+use DOMDocument;
+use DOMXPath;
 use Requests_Exception;
 use Requests_Response;
 use WP_Error;
@@ -101,6 +103,9 @@ class ScanQueue {
                 $get_timeout_limits['max']
             );
             $scan_method     = get_option('blc_scan_method', 'precise');
+            $soft_404_min_length_option = get_option('blc_soft_404_min_length', 120);
+            $soft_404_error_patterns_option = get_option('blc_soft_404_error_patterns', '');
+            $soft_404_ignore_selectors_option = get_option('blc_soft_404_ignore_selectors', '');
             $excluded_domains_raw = get_option('blc_excluded_domains', '');
             $max_concurrent_requests_option = get_option('blc_concurrent_requests', 3);
             if (!is_int($max_concurrent_requests_option)) {
@@ -1094,7 +1099,13 @@ class ScanQueue {
                                 'head_request_disallowed'    => $headRequestDisallowed,
                             ];
                         } else {
-                            $this->triggerCallback($job, $headResponse, $headRequestDisallowed, $fallbackDueToTemporaryStatus);
+                            $this->triggerCallback(
+                                $job,
+                                $headResponse,
+                                $headRequestDisallowed,
+                                $fallbackDueToTemporaryStatus,
+                                false
+                            );
                         }
                     }
 
@@ -1117,15 +1128,22 @@ class ScanQueue {
                             $entry['job'],
                             $response,
                             $entry['head_request_disallowed'],
-                            $entry['fallback_due_to_temporary']
+                            $entry['fallback_due_to_temporary'],
+                            true
                         );
                     }
                 }
 
-                private function triggerCallback(array $job, $response, bool $headRequestDisallowed, bool $fallbackDueToTemporaryStatus): void
+                private function triggerCallback(
+                    array $job,
+                    $response,
+                    bool $headRequestDisallowed,
+                    bool $fallbackDueToTemporaryStatus,
+                    bool $usedGetRequest
+                ): void
                 {
                     $callback = $job['callback'];
-                    $callback($response, $headRequestDisallowed, $fallbackDueToTemporaryStatus);
+                    $callback($response, $headRequestDisallowed, $fallbackDueToTemporaryStatus, $usedGetRequest);
                 }
 
                 private function buildRequest(string $url, string $method, array $args): array
@@ -1278,7 +1296,10 @@ class ScanQueue {
                 $is_full_scan,
                 $bypass_rest_window,
                 $remote_request_client,
-                $remote_request_queue
+                $remote_request_queue,
+                $soft_404_min_length_option,
+                $soft_404_error_patterns_option,
+                $soft_404_ignore_selectors_option
             ) {
                 return function (string $original_url, string $anchor_text, string $context_html, string $context_excerpt) use (
                     &$link_occurrence_counters,
@@ -1312,7 +1333,10 @@ class ScanQueue {
                     $is_full_scan,
                     $bypass_rest_window,
                     $remote_request_client,
-                    $remote_request_queue
+                    $remote_request_queue,
+                    $soft_404_min_length_option,
+                    $soft_404_error_patterns_option,
+                    $soft_404_ignore_selectors_option
                 ) {
                     if (!isset($link_occurrence_counters[$source_post_id])) {
                         $link_occurrence_counters[$source_post_id] = [];
@@ -1487,6 +1511,7 @@ class ScanQueue {
                     $cache_entry = null;
                     $should_use_cache = false;
                     $skip_remote_check = false;
+                    $soft_404_reason = '';
 
                     if ($scan_cache_identifier !== '') {
                         $cache_entry_key = md5($normalized_url);
@@ -1513,6 +1538,10 @@ class ScanQueue {
                             $should_use_cache = true;
                         } elseif ($cache_action === 'ok') {
                             $should_use_cache = true;
+                        }
+
+                        if (isset($cache_entry['soft_404_reason'])) {
+                            $soft_404_reason = (string) $cache_entry['soft_404_reason'];
                         }
 
                         if ($should_use_cache && isset($cache_entry['response_code'])) {
@@ -1547,6 +1576,7 @@ class ScanQueue {
                         &$should_retry_later,
                         &$should_insert_broken_link,
                         &$response_code,
+                        &$soft_404_reason,
                         &$temporary_retry_scheduled,
                         $batch_delay_s,
                         $normalized_url,
@@ -1570,7 +1600,8 @@ class ScanQueue {
                         &$scan_cache_data,
                         &$scan_cache_dirty,
                         $cache_entry_key,
-                        $should_use_cache
+                        $should_use_cache,
+                        $debug_mode
                     ) {
                         if ($should_retry_later) {
                             if (!$temporary_retry_scheduled) {
@@ -1622,6 +1653,10 @@ class ScanQueue {
                             }
                         }
 
+                        if ($soft_404_reason !== '' && $debug_mode) {
+                            error_log(sprintf('  -> Soft 404 détectée : %s (%s)', $normalized_url, $soft_404_reason));
+                        }
+
                         if (!$should_use_cache && $cache_entry_key !== '') {
                             $cache_timestamp = time();
                             $cache_action = 'ok';
@@ -1638,6 +1673,10 @@ class ScanQueue {
 
                             if ($response_code !== null) {
                                 $new_cache_entry['response_code'] = $response_code;
+                            }
+
+                            if ($soft_404_reason !== '') {
+                                $new_cache_entry['soft_404_reason'] = $soft_404_reason;
                             }
 
                             $scan_cache_data[$cache_entry_key] = $new_cache_entry;
@@ -1666,16 +1705,27 @@ class ScanQueue {
                             $get_request_args,
                             $scan_method,
                             $temporary_http_statuses,
-                            function ($response, bool $head_request_disallowed, bool $fallback_due_to_temporary_status) use (
+                            function (
+                                $response,
+                                bool $head_request_disallowed,
+                                bool $fallback_due_to_temporary_status,
+                                bool $used_get_request
+                            ) use (
                                 &$should_retry_later,
                                 &$should_insert_broken_link,
                                 &$response_code,
                                 &$detected_target_for_storage,
+                                &$soft_404_reason,
                                 $remote_request_client,
                                 $temporary_http_statuses,
                                 $normalized_url,
-                                $finalize_remote_outcome
+                                $finalize_remote_outcome,
+                                $soft_404_min_length_option,
+                                $soft_404_error_patterns_option,
+                                $soft_404_ignore_selectors_option,
+                                $get_request_args
                             ) {
+                                $soft_404_reason = '';
                                 if (!is_wp_error($response)) {
                                     $resolved_target_url = blc_determine_response_target_url($response, $normalized_url);
                                     if ($resolved_target_url !== '') {
@@ -1737,12 +1787,273 @@ class ScanQueue {
                                         }
                                     }
                                 } else {
-                                    $response_code = (int) $remote_request_client->responseCode($response);
+                                    $effective_response = $response;
+                                    $response_code = (int) $remote_request_client->responseCode($effective_response);
                                     if ($response_code >= 400) {
                                         if (in_array($response_code, $temporary_http_statuses, true)) {
                                             $should_retry_later = true;
                                         } else {
                                             $should_insert_broken_link = true;
+                                        }
+                                    } else {
+                                        $body_content = '';
+                                        if (is_array($effective_response) && array_key_exists('body', $effective_response)) {
+                                            $body_content = (string) $effective_response['body'];
+                                        } else {
+                                            $body_content = (string) wp_remote_retrieve_body($effective_response);
+                                        }
+
+                                        $followup_failed = false;
+                                        if ($body_content === '' && !$used_get_request) {
+                                            $followup_response = $remote_request_client->get($normalized_url, $get_request_args);
+                                            if (is_wp_error($followup_response)) {
+                                                $followup_failed = true;
+                                            } else {
+                                                $effective_response = $followup_response;
+                                                $response_code = (int) $remote_request_client->responseCode($effective_response);
+                                                if ($response_code >= 400) {
+                                                    if (in_array($response_code, $temporary_http_statuses, true)) {
+                                                        $should_retry_later = true;
+                                                    } else {
+                                                        $should_insert_broken_link = true;
+                                                    }
+                                                }
+
+                                                if (!$should_insert_broken_link) {
+                                                    $resolved_target_url = blc_determine_response_target_url($effective_response, $normalized_url);
+                                                    if ($resolved_target_url !== '') {
+                                                        $detected_target_for_storage = blc_prepare_url_for_storage($resolved_target_url);
+                                                    }
+                                                }
+
+                                                if (is_array($effective_response) && array_key_exists('body', $effective_response)) {
+                                                    $body_content = (string) $effective_response['body'];
+                                                } else {
+                                                    $body_content = (string) wp_remote_retrieve_body($effective_response);
+                                                }
+                                            }
+                                        }
+
+                                        if (!$should_retry_later && !$should_insert_broken_link && !$followup_failed) {
+                                            $min_length = is_numeric($soft_404_min_length_option)
+                                                ? (int) $soft_404_min_length_option
+                                                : 0;
+                                            $min_length = max(0, (int) apply_filters(
+                                                'blc_soft_404_min_length',
+                                                $min_length,
+                                                $normalized_url,
+                                                $effective_response
+                                            ));
+
+                                            $raw_patterns = (string) $soft_404_error_patterns_option;
+                                            $pattern_candidates = [];
+                                            if ($raw_patterns !== '') {
+                                                $split_patterns = preg_split('/[\r\n,]+/', $raw_patterns);
+                                                if (is_array($split_patterns)) {
+                                                    $pattern_candidates = $split_patterns;
+                                                }
+                                            }
+
+                                            $patterns = array_values(array_filter(array_map('trim', $pattern_candidates), static function ($value) {
+                                                return $value !== '';
+                                            }));
+                                            $patterns = apply_filters(
+                                                'blc_soft_404_error_patterns',
+                                                $patterns,
+                                                $normalized_url,
+                                                $effective_response
+                                            );
+                                            if (!is_array($patterns)) {
+                                                $patterns = [];
+                                            }
+                                            $patterns = array_values(array_filter(array_map('strval', $patterns), static function ($value) {
+                                                return $value !== '';
+                                            }));
+
+                                            $raw_selectors = (string) $soft_404_ignore_selectors_option;
+                                            $selector_candidates = [];
+                                            if ($raw_selectors !== '') {
+                                                $split_selectors = preg_split('/[\r\n,]+/', $raw_selectors);
+                                                if (is_array($split_selectors)) {
+                                                    $selector_candidates = $split_selectors;
+                                                }
+                                            }
+
+                                            $ignore_selectors = array_values(array_filter(array_map('trim', $selector_candidates), static function ($value) {
+                                                return $value !== '';
+                                            }));
+                                            $ignore_selectors = apply_filters(
+                                                'blc_soft_404_ignore_selectors',
+                                                $ignore_selectors,
+                                                $normalized_url,
+                                                $effective_response
+                                            );
+                                            if (!is_array($ignore_selectors)) {
+                                                $ignore_selectors = [];
+                                            }
+                                            $ignore_selectors = array_values(array_filter(array_map('strval', $ignore_selectors), static function ($value) {
+                                                return $value !== '';
+                                            }));
+
+                                            $title_text = '';
+                                            $h1_text = '';
+                                            $text_for_analysis = '';
+
+                                            if ($body_content !== '') {
+                                                $previous_internal_errors = libxml_use_internal_errors(true);
+                                                $dom = new DOMDocument();
+                                                $loaded = false;
+                                                $html_to_parse = $body_content;
+                                                if (stripos($html_to_parse, '<html') === false) {
+                                                    $html_to_parse = '<!DOCTYPE html><html><body>' . $html_to_parse . '</body></html>';
+                                                }
+
+                                                try {
+                                                    $loaded = $dom->loadHTML('<?xml encoding="utf-8" ?>' . $html_to_parse);
+                                                } catch (\Throwable $exception) {
+                                                    $loaded = false;
+                                                }
+
+                                                if ($loaded) {
+                                                    $xpath = new DOMXPath($dom);
+                                                    $title_nodes = $dom->getElementsByTagName('title');
+                                                    if ($title_nodes->length > 0) {
+                                                        $title_text = trim($title_nodes->item(0)->textContent ?? '');
+                                                    }
+
+                                                    $h1_nodes = $dom->getElementsByTagName('h1');
+                                                    if ($h1_nodes->length > 0) {
+                                                        $h1_text = trim($h1_nodes->item(0)->textContent ?? '');
+                                                    }
+
+                                                    if (!empty($ignore_selectors)) {
+                                                        $xpathLiteral = static function (string $value): string {
+                                                            if (strpos($value, "'") === false) {
+                                                                return "'" . $value . "'";
+                                                            }
+
+                                                            if (strpos($value, '"') === false) {
+                                                                return '"' . $value . '"';
+                                                            }
+
+                                                            $parts = explode("'", $value);
+                                                            $escapedParts = array_map(static function ($part) {
+                                                                return "'" . $part . "'";
+                                                            }, $parts);
+
+                                                            return 'concat(' . implode(', "\'", ', $escapedParts) . ')';
+                                                        };
+
+                                                        foreach ($ignore_selectors as $selector) {
+                                                            $selector = trim($selector);
+                                                            if ($selector === '') {
+                                                                continue;
+                                                            }
+
+                                                            $nodes_to_remove = [];
+                                                            if (strpos($selector, '#') === 0) {
+                                                                $id = substr($selector, 1);
+                                                                if ($id !== '') {
+                                                                    $node = $dom->getElementById($id);
+                                                                    if ($node instanceof \DOMNode) {
+                                                                        $nodes_to_remove[] = $node;
+                                                                    }
+                                                                }
+                                                            } elseif (strpos($selector, '.') === 0) {
+                                                                $class = substr($selector, 1);
+                                                                if ($class !== '') {
+                                                                    $query = sprintf(
+                                                                        '//*[contains(concat(" ", normalize-space(@class), " "), %s)]',
+                                                                        $xpathLiteral($class)
+                                                                    );
+                                                                    $matched_nodes = $xpath->query($query);
+                                                                    if ($matched_nodes instanceof \DOMNodeList) {
+                                                                        foreach ($matched_nodes as $matched_node) {
+                                                                            $nodes_to_remove[] = $matched_node;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            } else {
+                                                                $tag = preg_replace('/[^A-Za-z0-9_-]/', '', $selector);
+                                                                if ($tag !== '') {
+                                                                    $matched_nodes = $dom->getElementsByTagName($tag);
+                                                                    if ($matched_nodes instanceof \DOMNodeList) {
+                                                                        foreach ($matched_nodes as $matched_node) {
+                                                                            $nodes_to_remove[] = $matched_node;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+
+                                                            foreach ($nodes_to_remove as $node_to_remove) {
+                                                                if ($node_to_remove instanceof \DOMNode && $node_to_remove->parentNode instanceof \DOMNode) {
+                                                                    $node_to_remove->parentNode->removeChild($node_to_remove);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    $text_for_analysis = trim(preg_replace('/\s+/u', ' ', $dom->textContent ?? ''));
+                                                }
+
+                                                libxml_clear_errors();
+                                                libxml_use_internal_errors($previous_internal_errors);
+
+                                                if (!$loaded) {
+                                                    $text_for_analysis = trim(preg_replace('/\s+/u', ' ', wp_strip_all_tags($body_content)));
+                                                }
+                                            }
+
+                                            if ($text_for_analysis === '') {
+                                                $text_for_analysis = trim(preg_replace('/\s+/u', ' ', wp_strip_all_tags($body_content)));
+                                            }
+
+                                            $length_callback = function_exists('mb_strlen') ? 'mb_strlen' : 'strlen';
+                                            $soft_length = (int) $length_callback($text_for_analysis);
+
+                                            $lower_text = function_exists('mb_strtolower')
+                                                ? mb_strtolower($text_for_analysis)
+                                                : strtolower($text_for_analysis);
+
+                                            $matched_patterns = [];
+                                            foreach ($patterns as $pattern) {
+                                                $pattern_lower = function_exists('mb_strtolower') ? mb_strtolower($pattern) : strtolower($pattern);
+                                                if ($pattern_lower === '') {
+                                                    continue;
+                                                }
+
+                                                $contains = false;
+                                                if (function_exists('mb_stripos')) {
+                                                    $contains = mb_stripos($lower_text, $pattern_lower) !== false;
+                                                } else {
+                                                    $contains = stripos($lower_text, $pattern_lower) !== false;
+                                                }
+
+                                                if ($contains) {
+                                                    $matched_patterns[] = $pattern;
+                                                }
+                                            }
+
+                                            $soft_404_reasons = [];
+                                            if ($min_length > 0 && $soft_length < $min_length) {
+                                                $soft_404_reasons[] = sprintf('longueur %d < %d', $soft_length, $min_length);
+                                            }
+
+                                            if (!empty($matched_patterns)) {
+                                                $soft_404_reasons[] = sprintf('motifs : %s', implode(', ', $matched_patterns));
+                                            }
+
+                        
+                                            if (!empty($soft_404_reasons)) {
+                                                $soft_404_reason = sprintf(
+                                                    '%s | title="%s" | h1="%s"',
+                                                    implode('; ', $soft_404_reasons),
+                                                    $title_text !== '' ? $title_text : '-',
+                                                    $h1_text !== '' ? $h1_text : '-'
+                                                );
+
+                                                $should_insert_broken_link = true;
+                                            }
                                         }
                                     }
                                 }
