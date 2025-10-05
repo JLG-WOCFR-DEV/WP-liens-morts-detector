@@ -5,6 +5,7 @@ if (!defined('ABSPATH')) exit;
 
 require_once __DIR__ . '/Scanner/RemoteRequestClient.php';
 require_once __DIR__ . '/Scanner/ImageUrlNormalizer.php';
+require_once __DIR__ . '/Scanner/ImageNormalizationContext.php';
 
 if (!function_exists('blc_get_default_link_scan_status')) {
     /**
@@ -541,6 +542,12 @@ if (!class_exists('ImageScanQueue')) {
             $checked_local_paths = [];
             $site_context = $this->buildSiteContext();
             $upload_context = $this->buildUploadContext($debug_mode);
+            $normalization_context = new BlcImageNormalizationContext(
+                $site_context,
+                $upload_context,
+                $remote_image_scan_enabled,
+                $debug_mode
+            );
 
             $scan_result = [
                 'pending_image_inserts' => [],
@@ -552,12 +559,10 @@ if (!class_exists('ImageScanQueue')) {
             try {
                 $scan_result = $this->scanPostImages(
                     $posts,
-                    $site_context,
-                    $upload_context,
+                    $normalization_context,
                     $table_name,
                     $scan_run_token,
                     $image_dataset_row_types,
-                    $remote_image_scan_enabled,
                     $debug_mode,
                     $checked_local_paths
                 );
@@ -874,7 +879,7 @@ if (!class_exists('ImageScanQueue')) {
             ];
         }
 
-        private function scanPostImages($posts, $site_context, $upload_context, $table_name, $scan_run_token, $image_dataset_row_types, $remote_image_scan_enabled, $debug_mode, array &$checked_local_paths) {
+        private function scanPostImages($posts, BlcImageNormalizationContext $normalization_context, $table_name, $scan_run_token, $image_dataset_row_types, $debug_mode, array &$checked_local_paths) {
             global $wpdb;
 
             $blog_charset = get_bloginfo('charset');
@@ -914,17 +919,8 @@ if (!class_exists('ImageScanQueue')) {
             $batch_exception = null;
             $batch_wp_error = null;
 
-            $normalizer = new BlcImageUrlNormalizer(
-                $site_context['home_url_with_trailing_slash'],
-                $site_context['site_scheme'],
-                $site_context['normalized_site_host'],
-                $upload_context['upload_baseurl_host'],
-                $upload_context['upload_baseurl'],
-                $upload_context['upload_basedir'],
-                $upload_context['normalized_basedir'],
-                $remote_image_scan_enabled,
-                $debug_mode
-            );
+            $normalizer = $normalization_context->createNormalizer();
+            $site_host_for_metadata = $normalization_context->getSiteHostForMetadata();
 
             try {
                 foreach ($posts as $post) {
@@ -955,7 +951,7 @@ if (!class_exists('ImageScanQueue')) {
                                     $post,
                                     $table_name,
                                     $post_title_for_storage,
-                                    $site_context['site_host_for_metadata'],
+                                    $site_host_for_metadata,
                                     $register_pending_image_insert,
                                     $checked_local_paths,
                                     $normalizer,
@@ -997,7 +993,7 @@ if (!class_exists('ImageScanQueue')) {
                                     $post,
                                     $table_name,
                                     $post_title_for_storage,
-                                    $site_context['site_host_for_metadata'],
+                                    $site_host_for_metadata,
                                     $register_pending_image_insert,
                                     $checked_local_paths,
                                     $normalizer,
