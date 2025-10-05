@@ -13,6 +13,10 @@ if (!function_exists('blc_reset_link_check_schedule')) {
     require_once __DIR__ . '/blc-cron.php';
 }
 
+if (!function_exists('blc_get_notification_status_filter_definitions')) {
+    require_once __DIR__ . '/blc-scanner.php';
+}
+
 add_action('admin_init', 'blc_register_settings');
 
 /**
@@ -2233,12 +2237,18 @@ function blc_get_notification_webhook_channel_choices() {
  * @return array<string, string>
  */
 function blc_get_notification_status_filter_choices() {
-    return array(
-        'status_404_410'   => __('404 / 410 (contenu introuvable)', 'liens-morts-detector-jlg'),
-        'status_5xx'       => __('Erreurs serveur (5xx)', 'liens-morts-detector-jlg'),
-        'status_redirects' => __('Redirections (3xx)', 'liens-morts-detector-jlg'),
-        'status_other'     => __('Autres statuts (timeouts, 4xx hors 404/410, etc.)', 'liens-morts-detector-jlg'),
-    );
+    $definitions = blc_get_notification_status_filter_definitions();
+    $choices = array();
+
+    foreach ($definitions as $key => $definition) {
+        if (!isset($definition['label'])) {
+            continue;
+        }
+
+        $choices[$key] = (string) $definition['label'];
+    }
+
+    return $choices;
 }
 
 /**
