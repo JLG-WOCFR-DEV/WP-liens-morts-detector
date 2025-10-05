@@ -148,6 +148,187 @@ jQuery(document).ready(function($) {
     })();
 
     window.blcAdmin = window.blcAdmin || {};
+
+    var soft404Module = (function() {
+        function normalizeList(value) {
+            if (Array.isArray(value)) {
+                return value
+                    .map(function(item) { return typeof item === 'string' ? item : String(item); })
+                    .filter(function(item) { return item.trim() !== ''; });
+            }
+
+            if (typeof value === 'string') {
+                return value
+                    .split(/\r?\n/)
+                    .map(function(item) { return item.trim(); })
+                    .filter(function(item) { return item !== ''; });
+            }
+
+            return [];
+        }
+
+        function decodeEntities(text) {
+            if (typeof text !== 'string' || !text) {
+                return '';
+            }
+
+            var textarea = document.createElement('textarea');
+            textarea.innerHTML = text;
+            return textarea.value;
+        }
+
+        function stripHtml(html) {
+            if (typeof html !== 'string' || !html) {
+                return '';
+            }
+
+            var withoutScripts = html.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ');
+            var withoutTags = withoutScripts.replace(/<[^>]+>/g, ' ');
+            var decoded = decodeEntities(withoutTags);
+
+            return decoded.replace(/\s+/g, ' ').trim();
+        }
+
+        function extractTitle(html) {
+            if (typeof html !== 'string' || !html) {
+                return '';
+            }
+
+            var match = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+            if (!match || !match[1]) {
+                return '';
+            }
+
+            return decodeEntities(match[1]).replace(/\s+/g, ' ').trim();
+        }
+
+        function matchesPattern(pattern, candidate) {
+            if (typeof pattern !== 'string' || pattern === '' || typeof candidate !== 'string' || candidate === '') {
+                return false;
+            }
+
+            if (pattern.charAt(0) === '/') {
+                var lastSlash = pattern.lastIndexOf('/');
+                if (lastSlash > 0) {
+                    var body = pattern.slice(1, lastSlash);
+                    var flags = pattern.slice(lastSlash + 1) || 'i';
+                    try {
+                        var regex = new RegExp(body, flags);
+                        return regex.test(candidate);
+                    } catch (error) {
+                        return false;
+                    }
+                }
+            }
+
+            return candidate.toLowerCase().indexOf(pattern.toLowerCase()) !== -1;
+        }
+
+        function matchesAny(patterns, candidates) {
+            if (!Array.isArray(patterns) || !patterns.length) {
+                return false;
+            }
+
+            for (var i = 0; i < patterns.length; i += 1) {
+                var pattern = patterns[i];
+                if (typeof pattern !== 'string' || !pattern) {
+                    continue;
+                }
+
+                for (var j = 0; j < candidates.length; j += 1) {
+                    var candidate = candidates[j];
+                    if (typeof candidate !== 'string' || !candidate) {
+                        continue;
+                    }
+
+                    if (matchesPattern(pattern, candidate)) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        function computeLength(text) {
+            if (typeof text !== 'string') {
+                return 0;
+            }
+
+            return text.length;
+        }
+
+        var rawConfig = window.blcAdminSoft404Config || {};
+        var normalizedConfig = {
+            minLength: Number.isFinite(parseInt(rawConfig.minLength, 10)) ? parseInt(rawConfig.minLength, 10) : 0,
+            titleIndicators: normalizeList(rawConfig.titleIndicators),
+            bodyIndicators: normalizeList(rawConfig.bodyIndicators),
+            ignorePatterns: normalizeList(rawConfig.ignorePatterns),
+            labels: {
+                length: rawConfig.labels && rawConfig.labels.length ? rawConfig.labels.length : 'Contenu trop court',
+                title: rawConfig.labels && rawConfig.labels.title ? rawConfig.labels.title : 'Titre suspect',
+                body: rawConfig.labels && rawConfig.labels.body ? rawConfig.labels.body : 'Message d’erreur détecté'
+            }
+        };
+
+        if (!Number.isFinite(normalizedConfig.minLength) || normalizedConfig.minLength < 0) {
+            normalizedConfig.minLength = 0;
+        }
+
+        function detectSoft404(response) {
+            var payload = response;
+            if (typeof payload === 'string') {
+                payload = { body: payload };
+            } else if (!payload || typeof payload !== 'object') {
+                payload = {};
+            }
+
+            var body = typeof payload.body === 'string' ? payload.body : '';
+            var explicitTitle = typeof payload.title === 'string' ? payload.title : '';
+            var title = explicitTitle || extractTitle(body);
+            var bodyText = stripHtml(body);
+            var reasons = [];
+            var ignored = matchesAny(normalizedConfig.ignorePatterns, [body, bodyText, title]);
+
+            if (!ignored) {
+                if (normalizedConfig.minLength > 0) {
+                    var length = computeLength(bodyText);
+                    if (length < normalizedConfig.minLength) {
+                        reasons.push('length');
+                    }
+                }
+
+                if (title && matchesAny(normalizedConfig.titleIndicators, [title])) {
+                    reasons.push('title');
+                }
+
+                if (matchesAny(normalizedConfig.bodyIndicators, [body, bodyText])) {
+                    reasons.push('body');
+                }
+            }
+
+            var uniqueReasons = Array.from(new Set(reasons));
+
+            return {
+                isSoft404: uniqueReasons.length > 0,
+                reasons: uniqueReasons,
+                ignored: ignored,
+                title: title,
+                bodyText: bodyText,
+                minLength: normalizedConfig.minLength,
+                labels: normalizedConfig.labels
+            };
+        }
+
+        return {
+            detect: detectSoft404,
+            getConfig: function() {
+                return normalizedConfig;
+            }
+        };
+    })();
+
+    window.blcAdmin.soft404 = soft404Module;
     window.blcAdmin.accessibility = accessibility;
 
     function createNoticeElement(type, message) {

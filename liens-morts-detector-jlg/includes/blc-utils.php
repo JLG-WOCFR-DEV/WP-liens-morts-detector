@@ -1659,7 +1659,7 @@ function blc_get_dataset_row_types($dataset_type) {
     if ($normalized === 'image') {
         $types = ['image', 'remote-image'];
     } elseif ($normalized === 'link') {
-        $types = ['link'];
+        $types = ['link', 'iframe', 'script', 'stylesheet', 'form', 'css-background'];
     } elseif ($normalized === '') {
         $types = [];
     } else {
@@ -1827,4 +1827,133 @@ function blc_url_looks_like_bare_domain($url) {
     }
 
     return true;
+}
+
+/**
+ * Convertit une valeur issue d'un champ multi-lignes en liste normalisée.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string[]
+ */
+function blc_parse_multiline_text_option($value) {
+    if (is_array($value)) {
+        $value = implode("\n", array_map('strval', $value));
+    }
+
+    if (!is_string($value) || $value === '') {
+        return [];
+    }
+
+    $normalized = str_replace(["\r\n", "\r"], "\n", $value);
+    $lines = explode("\n", $normalized);
+
+    $results = [];
+    foreach ($lines as $line) {
+        $line = trim((string) $line);
+        if ($line === '') {
+            continue;
+        }
+
+        $results[] = $line;
+    }
+
+    if ($results === []) {
+        return [];
+    }
+
+    return array_values(array_unique($results));
+}
+
+/**
+ * Valeurs par défaut pour les titres suspects de soft 404.
+ *
+ * @return string[]
+ */
+function blc_get_soft_404_default_title_indicators() {
+    return [
+        '404',
+        'page not found',
+        'page introuvable',
+        'not found',
+        'does not exist',
+    ];
+}
+
+/**
+ * Valeurs par défaut pour les motifs de contenu signalant une soft 404.
+ *
+ * @return string[]
+ */
+function blc_get_soft_404_default_body_indicators() {
+    return [
+        '404 not found',
+        'page introuvable',
+        'nous n\'avons pas trouvé',
+        'the page you requested cannot be found',
+    ];
+}
+
+/**
+ * Valeurs par défaut pour les motifs à ignorer lors de la détection de soft 404.
+ *
+ * @return string[]
+ */
+function blc_get_soft_404_default_ignore_patterns() {
+    return [];
+}
+
+/**
+ * Récupère la configuration normalisée des heuristiques soft 404.
+ *
+ * @return array{min_length:int,title_indicators:string[],body_indicators:string[],ignore_patterns:string[]}
+ */
+function blc_get_soft_404_heuristics() {
+    $default_titles = blc_get_soft_404_default_title_indicators();
+    $default_bodies = blc_get_soft_404_default_body_indicators();
+    $default_ignore = blc_get_soft_404_default_ignore_patterns();
+
+    $min_length_option = get_option('blc_soft_404_min_length', 512);
+    $min_length = max(0, (int) $min_length_option);
+
+    $raw_titles = get_option('blc_soft_404_title_indicators', implode("\n", $default_titles));
+    $raw_bodies = get_option('blc_soft_404_body_indicators', implode("\n", $default_bodies));
+    $raw_ignore = get_option('blc_soft_404_ignore_patterns', implode("\n", $default_ignore));
+
+    $title_indicators = blc_parse_multiline_text_option($raw_titles);
+    $body_indicators = blc_parse_multiline_text_option($raw_bodies);
+    $ignore_patterns = blc_parse_multiline_text_option($raw_ignore);
+
+    $min_length = (int) apply_filters('blc_soft_404_min_length', $min_length);
+
+    $title_indicators = apply_filters('blc_soft_404_title_indicators', $title_indicators, $min_length);
+    if (!is_array($title_indicators)) {
+        $title_indicators = [];
+    }
+    $title_indicators = array_values(array_unique(array_filter(array_map('strval', $title_indicators), static function ($item) {
+        return trim($item) !== '';
+    })));
+
+    $body_indicators = apply_filters('blc_soft_404_body_indicators', $body_indicators, $min_length);
+    if (!is_array($body_indicators)) {
+        $body_indicators = [];
+    }
+    $body_indicators = array_values(array_unique(array_filter(array_map('strval', $body_indicators), static function ($item) {
+        return trim($item) !== '';
+    })));
+
+    $ignore_patterns = apply_filters('blc_soft_404_ignore_patterns', $ignore_patterns, $min_length);
+    if (!is_array($ignore_patterns)) {
+        $ignore_patterns = [];
+    }
+    $ignore_patterns = array_values(array_unique(array_filter(array_map('strval', $ignore_patterns), static function ($item) {
+        return trim($item) !== '';
+    })));
+
+    return [
+        'min_length'       => $min_length,
+        'title_indicators' => $title_indicators,
+        'body_indicators'  => $body_indicators,
+        'ignore_patterns'  => $ignore_patterns,
+    ];
 }

@@ -154,6 +154,46 @@ function blc_register_settings() {
 
     register_setting(
         $option_group,
+        'blc_soft_404_min_length',
+        array(
+            'type'              => 'integer',
+            'sanitize_callback' => 'blc_sanitize_soft_404_min_length_option',
+            'default'           => 512,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_soft_404_title_indicators',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_soft_404_patterns_option',
+            'default'           => implode("\n", blc_get_soft_404_default_title_indicators()),
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_soft_404_body_indicators',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_soft_404_patterns_option',
+            'default'           => implode("\n", blc_get_soft_404_default_body_indicators()),
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_soft_404_ignore_patterns',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_soft_404_patterns_option',
+            'default'           => implode("\n", blc_get_soft_404_default_ignore_patterns()),
+        )
+    );
+
+    register_setting(
+        $option_group,
         'blc_image_scan_schedule_enabled',
         array(
             'type'              => 'boolean',
@@ -444,6 +484,74 @@ function blc_register_settings_sections() {
             'description' => __('Durée maximale accordée à chaque requête GET lors du fallback. (Défaut : 10)', 'liens-morts-detector-jlg'),
             'constraints' => 'get',
             'label_for'   => 'blc_get_request_timeout',
+        )
+    );
+
+    add_settings_section(
+        'blc_soft_404_section',
+        __('Détection des soft 404', 'liens-morts-detector-jlg'),
+        '__return_false',
+        $page
+    );
+
+    add_settings_field(
+        'blc_soft_404_min_length',
+        __('📏 Longueur minimale du contenu', 'liens-morts-detector-jlg'),
+        'blc_render_number_field',
+        $page,
+        'blc_soft_404_section',
+        array(
+            'option_name' => 'blc_soft_404_min_length',
+            'min'         => 0,
+            'step'        => 10,
+            'unit'        => __('caractères', 'liens-morts-detector-jlg'),
+            'description' => __('Considère une page suspecte si le texte est plus court que ce seuil. (Défaut : 512)', 'liens-morts-detector-jlg'),
+            'label_for'   => 'blc_soft_404_min_length',
+        )
+    );
+
+    add_settings_field(
+        'blc_soft_404_title_indicators',
+        __('🔍 Titres suspects', 'liens-morts-detector-jlg'),
+        'blc_render_multiline_text_field',
+        $page,
+        'blc_soft_404_section',
+        array(
+            'option_name' => 'blc_soft_404_title_indicators',
+            'rows'        => 4,
+            'default'     => implode("\n", blc_get_soft_404_default_title_indicators()),
+            'description' => __('Une valeur par ligne. Les correspondances sont insensibles à la casse. Utilisez /motif/i pour un motif regex.', 'liens-morts-detector-jlg'),
+            'label_for'   => 'blc_soft_404_title_indicators',
+        )
+    );
+
+    add_settings_field(
+        'blc_soft_404_body_indicators',
+        __('🧩 Gabarits de contenu', 'liens-morts-detector-jlg'),
+        'blc_render_multiline_text_field',
+        $page,
+        'blc_soft_404_section',
+        array(
+            'option_name' => 'blc_soft_404_body_indicators',
+            'rows'        => 5,
+            'default'     => implode("\n", blc_get_soft_404_default_body_indicators()),
+            'description' => __('Déclenche une alerte si le corps de la page contient ces expressions (insensible à la casse, regex acceptées).', 'liens-morts-detector-jlg'),
+            'label_for'   => 'blc_soft_404_body_indicators',
+        )
+    );
+
+    add_settings_field(
+        'blc_soft_404_ignore_patterns',
+        __('🚫 Motifs à ignorer', 'liens-morts-detector-jlg'),
+        'blc_render_multiline_text_field',
+        $page,
+        'blc_soft_404_section',
+        array(
+            'option_name' => 'blc_soft_404_ignore_patterns',
+            'rows'        => 4,
+            'default'     => implode("\n", blc_get_soft_404_default_ignore_patterns()),
+            'description' => __('Empêche la détection si ces motifs apparaissent (utile pour vos propres pages 200 légitimes).', 'liens-morts-detector-jlg'),
+            'label_for'   => 'blc_soft_404_ignore_patterns',
         )
     );
 
@@ -1056,6 +1164,46 @@ function blc_render_number_field($args) {
     if ('' !== $unit) {
         echo ' ' . esc_html($unit);
     }
+
+    if (!empty($args['description'])) {
+        echo '<p class="description">' . esc_html($args['description']) . '</p>';
+    }
+}
+
+/**
+ * Affiche un champ multi-lignes destiné aux listes de motifs.
+ *
+ * @param array $args Paramètres d'affichage.
+ *
+ * @return void
+ */
+function blc_render_multiline_text_field($args) {
+    $option_name = isset($args['option_name']) ? (string) $args['option_name'] : '';
+    if ('' === $option_name) {
+        return;
+    }
+
+    $default = isset($args['default']) && is_string($args['default']) ? $args['default'] : '';
+    $value = get_option($option_name, $default);
+    if (!is_string($value)) {
+        $value = '';
+    }
+
+    $rows = isset($args['rows']) ? (int) $args['rows'] : 4;
+    if ($rows < 3) {
+        $rows = 3;
+    }
+
+    $placeholder = isset($args['placeholder']) && is_string($args['placeholder']) ? $args['placeholder'] : '';
+
+    printf(
+        '<textarea id="%1$s" name="%2$s" rows="%3$d" class="large-text code" placeholder="%4$s">%5$s</textarea>',
+        esc_attr($option_name),
+        esc_attr($option_name),
+        $rows,
+        esc_attr($placeholder),
+        esc_textarea($value)
+    );
 
     if (!empty($args['description'])) {
         echo '<p class="description">' . esc_html($args['description']) . '</p>';
@@ -2026,6 +2174,43 @@ function blc_sanitize_get_timeout_option($value) {
     );
 
     return blc_normalize_timeout_option($value, $previous, $limits['min'], $limits['max']);
+}
+
+/**
+ * Sanitize la longueur minimale utilisée pour détecter les soft 404.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return int
+ */
+function blc_sanitize_soft_404_min_length_option($value) {
+    $sanitized = is_numeric($value) ? (int) $value : 0;
+
+    if ($sanitized < 0) {
+        $sanitized = 0;
+    }
+
+    return $sanitized;
+}
+
+/**
+ * Sanitize les motifs de détection soft 404.
+ *
+ * @param mixed $value Valeur brute.
+ *
+ * @return string
+ */
+function blc_sanitize_soft_404_patterns_option($value) {
+    $raw = is_scalar($value) ? (string) $value : '';
+
+    if (function_exists('sanitize_textarea_field')) {
+        return sanitize_textarea_field($raw);
+    }
+
+    $stripped = strip_tags($raw);
+    $stripped = preg_replace('/[\x00-\x1F\x7F]/u', '', $stripped);
+
+    return trim($stripped);
 }
 
 /**

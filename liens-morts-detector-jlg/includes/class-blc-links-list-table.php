@@ -150,6 +150,12 @@ class BLC_Links_List_Table extends WP_List_Table {
         $server_error_count = isset($counts['server_error_count']) ? (int) $counts['server_error_count'] : 0;
         $redirect_count     = isset($counts['redirect_count']) ? (int) $counts['redirect_count'] : 0;
         $needs_recheck_count = isset($counts['needs_recheck_count']) ? (int) $counts['needs_recheck_count'] : 0;
+        $type_active_counts = isset($counts['type_active_counts']) && is_array($counts['type_active_counts'])
+            ? $counts['type_active_counts']
+            : [];
+        $link_row_types = $this->get_filterable_link_row_types();
+        $available_type_index = array_fill_keys($link_row_types, true);
+        $reference_type_labels = $this->get_reference_type_labels();
 
         $total_count = $active_count;
         $all_class = ($current === 'all' ? 'current' : '');
@@ -178,6 +184,23 @@ class BLC_Links_List_Table extends WP_List_Table {
             esc_html__('Externes', 'liens-morts-detector-jlg'),
             $external_count
         );
+
+        foreach ($reference_type_labels as $type_slug => $label) {
+            if (!isset($available_type_index[$type_slug])) {
+                continue;
+            }
+
+            $type_count = isset($type_active_counts[$type_slug]) ? (int) $type_active_counts[$type_slug] : 0;
+            $type_class = ($current === $type_slug ? 'current' : '');
+
+            $views[$type_slug] = sprintf(
+                "<a href='%s' class='%s'>%s <span class='count'>(%d)</span></a>",
+                esc_url(add_query_arg('link_type', $type_slug)),
+                esc_attr($type_class),
+                esc_html($label),
+                $type_count
+            );
+        }
 
         $not_found_class = ($current === 'status_404_410' ? 'current' : '');
         $views['status_404_410'] = sprintf(
@@ -240,6 +263,9 @@ class BLC_Links_List_Table extends WP_List_Table {
         global $wpdb;
 
         $table_name = $wpdb->prefix . 'blc_broken_links';
+        $link_row_types = $this->get_filterable_link_row_types();
+
+        $type_placeholders = implode(',', array_fill(0, count($link_row_types), '%s'));
         $internal_condition = $this->build_internal_url_condition();
         $legacy_case        = $internal_condition['case_template'];
         $legacy_params      = $internal_condition['case_params'];
@@ -262,8 +288,8 @@ class BLC_Links_List_Table extends WP_List_Table {
                 SUM(CASE WHEN ignored_at IS NULL AND http_status BETWEEN 300 AND 399 THEN 1 ELSE 0 END) AS redirect_count,
                 SUM(CASE WHEN ignored_at IS NULL AND $needs_recheck_clause THEN 1 ELSE 0 END) AS needs_recheck_count
              FROM $table_name
-             WHERE type = %s",
-            array_merge($legacy_params, $needs_recheck_params, ['link'])
+             WHERE type IN ($type_placeholders)",
+            array_merge($legacy_params, $needs_recheck_params, $link_row_types)
         );
 
         $counts = $wpdb->get_row($counts_query, ARRAY_A);
@@ -282,9 +308,85 @@ class BLC_Links_List_Table extends WP_List_Table {
             'needs_recheck_count' => 0,
         );
 
-        $this->status_counts_cache = array_map('intval', wp_parse_args($counts, $defaults));
+        $base_counts = wp_parse_args($counts, $defaults);
+        $base_counts = array_map('intval', $base_counts);
+
+        $type_active_counts = [];
+        $type_total_counts  = [];
+
+        $type_count_query = $wpdb->prepare(
+            "SELECT type, COUNT(*) AS total_count, SUM(CASE WHEN ignored_at IS NULL THEN 1 ELSE 0 END) AS active_count
+             FROM $table_name
+             WHERE type IN ($type_placeholders)
+             GROUP BY type",
+            $link_row_types
+        );
+
+        $type_rows = $wpdb->get_results($type_count_query, ARRAY_A);
+        if (is_array($type_rows)) {
+            foreach ($type_rows as $type_row) {
+                $type_slug = isset($type_row['type']) ? (string) $type_row['type'] : '';
+                if ($type_slug === '') {
+                    continue;
+                }
+
+                $type_total_counts[$type_slug] = isset($type_row['total_count']) ? (int) $type_row['total_count'] : 0;
+                $type_active_counts[$type_slug] = isset($type_row['active_count']) ? (int) $type_row['active_count'] : 0;
+            }
+        }
+
+        $base_counts['type_active_counts'] = $type_active_counts;
+        $base_counts['type_total_counts']  = $type_total_counts;
+
+        $this->status_counts_cache = $base_counts;
 
         return $this->status_counts_cache;
+    }
+
+    /**
+     * Retrieve the sanitized row types for the link dataset.
+     *
+     * @return string[]
+     */
+    protected function get_filterable_link_row_types() {
+        $types = blc_get_dataset_row_types('link');
+        if (!is_array($types)) {
+            return ['link'];
+        }
+
+        $types = array_values(array_filter(
+            array_map(
+                static function ($type) {
+                    return is_string($type) ? trim($type) : '';
+                },
+                $types
+            ),
+            static function ($value) {
+                return $value !== '';
+            }
+        ));
+
+        if ($types === []) {
+            return ['link'];
+        }
+
+        return $types;
+    }
+
+    /**
+     * Labels used for the per-type views.
+     *
+     * @return array<string,string>
+     */
+    protected function get_reference_type_labels() {
+        return [
+            'link'            => __('Liens HTML', 'liens-morts-detector-jlg'),
+            'iframe'          => __('Iframes', 'liens-morts-detector-jlg'),
+            'script'          => __('Scripts externes', 'liens-morts-detector-jlg'),
+            'stylesheet'      => __('Balises <link>', 'liens-morts-detector-jlg'),
+            'form'            => __('Formulaires', 'liens-morts-detector-jlg'),
+            'css-background'  => __('Arrière-plans CSS', 'liens-morts-detector-jlg'),
+        ];
     }
 
     /**
@@ -814,8 +916,23 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         $is_ignored_view = ($current_view === 'ignored');
 
-        $where  = ['type = %s'];
-        $params = ['link'];
+        $link_row_types = $this->get_filterable_link_row_types();
+        $type_filter = $link_row_types;
+        if (in_array($current_view, $link_row_types, true)) {
+            $type_filter = [$current_view];
+        }
+
+        $where  = [];
+        $params = [];
+
+        if (count($type_filter) === 1) {
+            $where[] = 'type = %s';
+            $params[] = $type_filter[0];
+        } else {
+            $type_placeholders = implode(',', array_fill(0, count($type_filter), '%s'));
+            $where[] = "type IN ($type_placeholders)";
+            $params = array_merge($params, $type_filter);
+        }
 
         if ($search_term !== '') {
             $like = '%' . $wpdb->esc_like($search_term) . '%';

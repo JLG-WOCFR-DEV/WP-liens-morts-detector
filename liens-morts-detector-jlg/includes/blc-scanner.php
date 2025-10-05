@@ -2437,51 +2437,448 @@ function blc_create_dom_from_content($content, $charset = 'UTF-8') {
 }
 
 /**
- * Iterate over every <a> element present in a raw HTML snippet.
+ * Determine whether a HTML snippet is likely to contain scannable references.
  *
- * @param string   $html     Raw HTML content.
- * @param string   $charset  Charset used to decode the snippet before DOM parsing.
- * @param callable $callback Callback receiving the original href, anchor text and context information.
- *                           Signature: function (string $href, string $anchor_text, string $context_html, string $context_excerpt): void.
+ * @param string $html Raw HTML content.
+ *
+ * @return bool
+ */
+function blc_html_contains_reference_candidates($html) {
+    $html = (string) $html;
+    if (trim($html) === '') {
+        return false;
+    }
+
+    $haystack = strtolower($html);
+    $needles = ['<a', '<iframe', '<script', '<link', '<form', 'style=', '<style', 'url('];
+
+    foreach ($needles as $needle) {
+        if (strpos($haystack, $needle) !== false) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Iterate over scannable HTML references (anchors, embeds, scripts, forms, CSS backgrounds, ...).
+ *
+ * @param string                                $html      Raw HTML content.
+ * @param string                                $charset   Charset used to decode the snippet before DOM parsing.
+ * @param callable|array<string, callable>      $callbacks Callback(s) receiving the reference details.
+ *                                                        Signature: function (
+ *                                                        string $url,
+ *                                                        string $label,
+ *                                                        string $context_html,
+ *                                                        string $context_excerpt,
+ *                                                        string $reference_type,
+ *                                                        array $metadata = []
+ *                                                    ): void.
  *
  * @return bool Whether the DOM could be created successfully.
  */
-function blc_process_link_nodes_from_html($html, $charset, callable $callback) {
+function blc_process_link_nodes_from_html($html, $charset, $callbacks) {
+    if (is_callable($callbacks)) {
+        $callbacks = ['link' => $callbacks];
+    } elseif (is_array($callbacks)) {
+        $normalized_callbacks = [];
+        foreach ($callbacks as $key => $callback) {
+            if (!is_callable($callback)) {
+                continue;
+            }
+
+            $normalized_key = '';
+            if (is_string($key)) {
+                $normalized_key = strtolower(trim($key));
+            }
+
+            switch ($normalized_key) {
+                case '':
+                case 'a':
+                case 'anchor':
+                case 'html-link':
+                case 'link':
+                    $normalized_callbacks['link'] = $callback;
+                    break;
+                case 'iframe':
+                    $normalized_callbacks['iframe'] = $callback;
+                    break;
+                case 'script':
+                    $normalized_callbacks['script'] = $callback;
+                    break;
+                case 'stylesheet':
+                case 'link-rel':
+                case 'rel':
+                    $normalized_callbacks['stylesheet'] = $callback;
+                    break;
+                case 'form':
+                    $normalized_callbacks['form'] = $callback;
+                    break;
+                case 'css':
+                case 'background':
+                case 'css-background':
+                    $normalized_callbacks['css-background'] = $callback;
+                    break;
+                default:
+                    $normalized_callbacks[$normalized_key] = $callback;
+                    break;
+            }
+        }
+
+        $callbacks = $normalized_callbacks;
+    } else {
+        $callbacks = [];
+    }
+
+    if ($callbacks === []) {
+        return true;
+    }
+
     $dom = blc_create_dom_from_content($html, $charset);
     if (!$dom instanceof DOMDocument) {
         return false;
     }
 
-    foreach ($dom->getElementsByTagName('a') as $link_node) {
-        $original_url = trim(wp_kses_decode_entities($link_node->getAttribute('href')));
-        if ($original_url === '') {
-            continue;
-        }
+    $invoke_callback = static function (callable $callback, $url, $label, $context_html, $context_excerpt, $reference_type, array $metadata = []) {
+        $callback($url, $label, $context_html, $context_excerpt, $reference_type, $metadata);
+    };
 
-        $anchor_text = wp_strip_all_tags($link_node->textContent);
-        $anchor_text = trim(preg_replace('/\s+/u', ' ', $anchor_text));
-        if ($anchor_text === '') {
-            $anchor_text = sprintf('[%s]', __('Lien sans texte', 'liens-morts-detector-jlg'));
-        }
+    if (isset($callbacks['link'])) {
+        foreach ($dom->getElementsByTagName('a') as $link_node) {
+            if (!$link_node instanceof \DOMElement) {
+                continue;
+            }
 
-        $context_html = '';
-        if ($link_node->ownerDocument instanceof DOMDocument) {
-            $rendered = $link_node->ownerDocument->saveHTML($link_node);
-            if (is_string($rendered)) {
-                $context_html = trim($rendered);
+            $original_url = trim(wp_kses_decode_entities($link_node->getAttribute('href')));
+            if ($original_url === '') {
+                continue;
+            }
+
+            $anchor_text = wp_strip_all_tags($link_node->textContent);
+            $anchor_text = trim(preg_replace('/\s+/u', ' ', $anchor_text));
+            if ($anchor_text === '') {
+                $anchor_text = sprintf('[%s]', __('Lien sans texte', 'liens-morts-detector-jlg'));
+            }
+
+            $context_html = '';
+            if ($link_node->ownerDocument instanceof DOMDocument) {
+                $rendered = $link_node->ownerDocument->saveHTML($link_node);
+                if (is_string($rendered)) {
+                    $context_html = trim($rendered);
+                }
+            }
+
+            $context_excerpt = '';
+            if ($link_node->parentNode instanceof \DOMNode) {
+                $context_excerpt = trim($link_node->parentNode->textContent);
+            }
+
+            if ($context_excerpt === '') {
+                $context_excerpt = $anchor_text;
+            }
+
+            $invoke_callback($callbacks['link'], $original_url, $anchor_text, $context_html, $context_excerpt, 'link', ['tag' => 'a']);
+        }
+    }
+
+    if (isset($callbacks['iframe'])) {
+        foreach ($dom->getElementsByTagName('iframe') as $iframe_node) {
+            if (!$iframe_node instanceof \DOMElement) {
+                continue;
+            }
+
+            $src = trim(wp_kses_decode_entities($iframe_node->getAttribute('src')));
+            if ($src === '') {
+                continue;
+            }
+
+            $label_candidates = [
+                $iframe_node->getAttribute('title'),
+                $iframe_node->getAttribute('aria-label'),
+                $iframe_node->getAttribute('name'),
+            ];
+
+            $iframe_label = '';
+            foreach ($label_candidates as $candidate) {
+                $candidate = trim(wp_strip_all_tags($candidate));
+                if ($candidate !== '') {
+                    $iframe_label = $candidate;
+                    break;
+                }
+            }
+
+            if ($iframe_label === '') {
+                $iframe_label = __('Iframe intégrée', 'liens-morts-detector-jlg');
+            }
+
+            $context_html = '';
+            if ($iframe_node->ownerDocument instanceof DOMDocument) {
+                $rendered = $iframe_node->ownerDocument->saveHTML($iframe_node);
+                if (is_string($rendered)) {
+                    $context_html = trim($rendered);
+                }
+            }
+
+            $invoke_callback($callbacks['iframe'], $src, $iframe_label, $context_html, $iframe_label, 'iframe', ['tag' => 'iframe']);
+        }
+    }
+
+    if (isset($callbacks['script'])) {
+        foreach ($dom->getElementsByTagName('script') as $script_node) {
+            if (!$script_node instanceof \DOMElement) {
+                continue;
+            }
+
+            $src = trim(wp_kses_decode_entities($script_node->getAttribute('src')));
+            if ($src === '') {
+                continue;
+            }
+
+            $script_label = trim(wp_strip_all_tags($script_node->getAttribute('id')));
+            if ($script_label !== '') {
+                $script_label = sprintf(__('Script « %s »', 'liens-morts-detector-jlg'), $script_label);
+            } else {
+                $script_label = __('Script externe', 'liens-morts-detector-jlg');
+            }
+
+            $context_html = '';
+            if ($script_node->ownerDocument instanceof DOMDocument) {
+                $rendered = $script_node->ownerDocument->saveHTML($script_node);
+                if (is_string($rendered)) {
+                    $context_html = trim($rendered);
+                }
+            }
+
+            $invoke_callback($callbacks['script'], $src, $script_label, $context_html, $script_label, 'script', ['tag' => 'script']);
+        }
+    }
+
+    if (isset($callbacks['stylesheet'])) {
+        foreach ($dom->getElementsByTagName('link') as $link_tag) {
+            if (!$link_tag instanceof \DOMElement) {
+                continue;
+            }
+
+            $href = trim(wp_kses_decode_entities($link_tag->getAttribute('href')));
+            if ($href === '') {
+                continue;
+            }
+
+            $rel_attribute = trim(strtolower($link_tag->getAttribute('rel')));
+            $stylesheet_label = '';
+
+            if ($rel_attribute !== '') {
+                if (strpos($rel_attribute, 'stylesheet') !== false) {
+                    $stylesheet_label = __('Feuille de style', 'liens-morts-detector-jlg');
+                } elseif (strpos($rel_attribute, 'icon') !== false) {
+                    $stylesheet_label = __('Icône du site', 'liens-morts-detector-jlg');
+                } else {
+                    $stylesheet_label = sprintf(__('Lien rel="%s"', 'liens-morts-detector-jlg'), $rel_attribute);
+                }
+            }
+
+            if ($stylesheet_label === '') {
+                $stylesheet_label = __('Lien de ressource', 'liens-morts-detector-jlg');
+            }
+
+            $context_html = '';
+            if ($link_tag->ownerDocument instanceof DOMDocument) {
+                $rendered = $link_tag->ownerDocument->saveHTML($link_tag);
+                if (is_string($rendered)) {
+                    $context_html = trim($rendered);
+                }
+            }
+
+            $invoke_callback($callbacks['stylesheet'], $href, $stylesheet_label, $context_html, $stylesheet_label, 'stylesheet', ['tag' => 'link', 'rel' => $rel_attribute]);
+        }
+    }
+
+    if (isset($callbacks['form'])) {
+        foreach ($dom->getElementsByTagName('form') as $form_node) {
+            if (!$form_node instanceof \DOMElement) {
+                continue;
+            }
+
+            $action = trim(wp_kses_decode_entities($form_node->getAttribute('action')));
+            if ($action === '') {
+                continue;
+            }
+
+            $method = strtoupper(trim($form_node->getAttribute('method')));
+            if ($method === '') {
+                $method = 'GET';
+            }
+
+            $identifier_candidates = [
+                $form_node->getAttribute('id'),
+                $form_node->getAttribute('name'),
+            ];
+
+            $identifier = '';
+            foreach ($identifier_candidates as $candidate) {
+                $candidate = trim(wp_strip_all_tags($candidate));
+                if ($candidate !== '') {
+                    $identifier = $candidate;
+                    break;
+                }
+            }
+
+            if ($identifier !== '') {
+                $form_label = sprintf(__('Formulaire « %1$s » (%2$s)', 'liens-morts-detector-jlg'), $identifier, $method);
+            } else {
+                $form_label = sprintf(__('Formulaire (%s)', 'liens-morts-detector-jlg'), $method);
+            }
+
+            $context_html = '';
+            if ($form_node->ownerDocument instanceof DOMDocument) {
+                $rendered = $form_node->ownerDocument->saveHTML($form_node);
+                if (is_string($rendered)) {
+                    $context_html = trim($rendered);
+                }
+            }
+
+            $invoke_callback($callbacks['form'], $action, $form_label, $context_html, $form_label, 'form', ['tag' => 'form', 'method' => $method]);
+        }
+    }
+
+    if (isset($callbacks['css-background'])) {
+        $extract_background_urls = static function ($css) {
+            $results = [];
+            if (!is_string($css) || trim($css) === '') {
+                return $results;
+            }
+
+            $declarations = preg_split('/;/', $css);
+            if (!is_array($declarations)) {
+                $declarations = [$css];
+            }
+
+            $url_pattern = '/url\(\s*(["\']?)([^)"\']+)(\1)\s*\)/i';
+            $decode_flags = defined('ENT_HTML5') ? ENT_QUOTES | ENT_HTML5 : ENT_QUOTES;
+
+            foreach ($declarations as $declaration) {
+                if (strpos($declaration, ':') === false) {
+                    continue;
+                }
+
+                [$property, $value] = array_map('trim', explode(':', $declaration, 2));
+                if ($property === '') {
+                    continue;
+                }
+
+                $property_normalized = strtolower($property);
+                if (strpos($property_normalized, 'background') !== 0) {
+                    continue;
+                }
+
+                if (!preg_match_all($url_pattern, $value, $matches)) {
+                    continue;
+                }
+
+                foreach ($matches[2] as $matched_url) {
+                    $results[] = [
+                        'url'      => trim(html_entity_decode($matched_url, $decode_flags, 'UTF-8')),
+                        'property' => $property_normalized,
+                    ];
+                }
+            }
+
+            return $results;
+        };
+
+        foreach ($dom->getElementsByTagName('*') as $element) {
+            if (!$element instanceof \DOMElement) {
+                continue;
+            }
+
+            $style_attribute = $element->getAttribute('style');
+            if ($style_attribute === '') {
+                continue;
+            }
+
+            $style_attribute = wp_kses_decode_entities($style_attribute);
+            $background_urls = $extract_background_urls($style_attribute);
+            if ($background_urls === []) {
+                continue;
+            }
+
+            $context_html = '';
+            if ($element->ownerDocument instanceof DOMDocument) {
+                $rendered = $element->ownerDocument->saveHTML($element);
+                if (is_string($rendered)) {
+                    $context_html = trim($rendered);
+                }
+            }
+
+            foreach ($background_urls as $background) {
+                $background_url = $background['url'];
+                if ($background_url === '') {
+                    continue;
+                }
+
+                $property = $background['property'];
+                $label = sprintf(__('Arrière-plan CSS (%s)', 'liens-morts-detector-jlg'), $property);
+                $excerpt = sprintf(__('Déclaration CSS (%s)', 'liens-morts-detector-jlg'), $property);
+
+                $invoke_callback(
+                    $callbacks['css-background'],
+                    $background_url,
+                    $label,
+                    $context_html,
+                    $excerpt,
+                    'css-background',
+                    [
+                        'source'   => 'inline-style',
+                        'property' => $property,
+                    ]
+                );
             }
         }
 
-        $context_excerpt = '';
-        if ($link_node->parentNode instanceof \DOMNode) {
-            $context_excerpt = trim($link_node->parentNode->textContent);
-        }
+        foreach ($dom->getElementsByTagName('style') as $style_node) {
+            if (!$style_node instanceof \DOMElement) {
+                continue;
+            }
 
-        if ($context_excerpt === '') {
-            $context_excerpt = $anchor_text;
-        }
+            $css_content = wp_kses_decode_entities($style_node->textContent);
+            $background_urls = $extract_background_urls($css_content);
+            if ($background_urls === []) {
+                continue;
+            }
 
-        $callback($original_url, $anchor_text, $context_html, $context_excerpt);
+            $context_html = '';
+            if ($style_node->ownerDocument instanceof DOMDocument) {
+                $rendered = $style_node->ownerDocument->saveHTML($style_node);
+                if (is_string($rendered)) {
+                    $context_html = trim($rendered);
+                }
+            }
+
+            foreach ($background_urls as $background) {
+                $background_url = $background['url'];
+                if ($background_url === '') {
+                    continue;
+                }
+
+                $property = $background['property'];
+                $label = sprintf(__('Arrière-plan CSS (%s)', 'liens-morts-detector-jlg'), $property);
+                $excerpt = sprintf(__('Déclaration CSS (%s)', 'liens-morts-detector-jlg'), $property);
+
+                $invoke_callback(
+                    $callbacks['css-background'],
+                    $background_url,
+                    $label,
+                    $context_html,
+                    $excerpt,
+                    'css-background',
+                    [
+                        'source'   => 'style-tag',
+                        'property' => $property,
+                    ]
+                );
+            }
+        }
     }
 
     return true;
