@@ -1463,6 +1463,54 @@ function blc_generate_scan_summary_email($dataset_type, $args = null) {
 }
 
 /**
+ * Retrieve the available HTTP status categories and their SQL definitions.
+ *
+ * @return array<string, array{label:string, sql:callable|string}>
+ */
+function blc_get_notification_status_filter_definitions() {
+    $definitions = array(
+        'status_404_410'   => array(
+            'label' => __('404 / 410 (contenu introuvable)', 'liens-morts-detector-jlg'),
+            'sql'   => static function ($column) {
+                return sprintf('%1$s IN (404, 410)', $column);
+            },
+        ),
+        'status_5xx'       => array(
+            'label' => __('Erreurs serveur (5xx)', 'liens-morts-detector-jlg'),
+            'sql'   => static function ($column) {
+                return sprintf('(%1$s BETWEEN 500 AND 599)', $column);
+            },
+        ),
+        'status_redirects' => array(
+            'label' => __('Redirections (3xx)', 'liens-morts-detector-jlg'),
+            'sql'   => static function ($column) {
+                return sprintf('(%1$s BETWEEN 300 AND 399)', $column);
+            },
+        ),
+        'status_other'     => array(
+            'label' => __('Autres statuts (timeouts, 4xx hors 404/410, etc.)', 'liens-morts-detector-jlg'),
+            'sql'   => static function ($column) {
+                return sprintf(
+                    '(%1$s IS NULL OR %1$s = 0 OR %1$s = \'\' OR (%1$s NOT BETWEEN 300 AND 399 AND %1$s NOT BETWEEN 500 AND 599 AND %1$s NOT IN (404, 410)))',
+                    $column
+                );
+            },
+        ),
+    );
+
+    if (function_exists('apply_filters')) {
+        /**
+         * Permet de personnaliser les catégories de statuts HTTP disponibles pour les notifications.
+         *
+         * @param array<string, array{label:string, sql:callable|string}> $definitions Définitions par défaut.
+         */
+        $definitions = apply_filters('blc_notification_status_filter_definitions', $definitions);
+    }
+
+    return is_array($definitions) ? $definitions : array();
+}
+
+/**
  * Build the SQL clause used to filter HTTP statuses based on selected categories.
  *
  * @param string[] $filters Selected categories.
@@ -1476,26 +1524,39 @@ function blc_get_notification_status_filter_sql_clause(array $filters, $column =
         $column = 'http_status';
     }
 
+    $definitions = blc_get_notification_status_filter_definitions();
     $clauses = array();
 
-    $definitions = array(
-        'status_404_410'   => sprintf('%1$s IN (404, 410)', $column),
-        'status_5xx'       => sprintf('(%1$s BETWEEN 500 AND 599)', $column),
-        'status_redirects' => sprintf('(%1$s BETWEEN 300 AND 399)', $column),
-        'status_other'     => sprintf(
-            '(%1$s IS NULL OR %1$s = 0 OR %1$s = \'\' OR (%1$s NOT BETWEEN 300 AND 399 AND %1$s NOT BETWEEN 500 AND 599 AND %1$s NOT IN (404, 410)))',
-            $column
-        ),
-    );
-
     foreach ($filters as $filter) {
-        if (isset($definitions[$filter])) {
-            $clauses[] = $definitions[$filter];
+        if (!isset($definitions[$filter])) {
+            continue;
         }
+
+        $definition = $definitions[$filter];
+        $raw_clause = '';
+
+        if (isset($definition['sql'])) {
+            if (is_callable($definition['sql'])) {
+                $raw_clause = call_user_func($definition['sql'], $column);
+            } elseif (is_string($definition['sql'])) {
+                $raw_clause = sprintf($definition['sql'], $column);
+            }
+        }
+
+        $normalized_clause = trim((string) $raw_clause);
+        if ($normalized_clause === '') {
+            continue;
+        }
+
+        $clauses[] = $normalized_clause;
     }
 
     if ($clauses === array()) {
         return '';
+    }
+
+    if (count($clauses) === 1) {
+        return reset($clauses);
     }
 
     return '(' . implode(' OR ', $clauses) . ')';
