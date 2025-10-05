@@ -34,6 +34,51 @@ namespace {
             }
         }
     }
+
+    if (!class_exists('Requests_Response_Headers')) {
+        class Requests_Response_Headers
+        {
+            /** @var array<string, string> */
+            private array $data = [];
+
+            /**
+             * @return array<string, string>
+             */
+            public function getAll(): array
+            {
+                return $this->data;
+            }
+        }
+    }
+
+    if (!class_exists('Requests_Response')) {
+        class Requests_Response
+        {
+            /** @var string */
+            public $body = '';
+
+            /** @var int */
+            public $status_code = 0;
+
+            /** @var string */
+            public $status_text = '';
+
+            /** @var Requests_Response_Headers */
+            public $headers;
+
+            public function __construct()
+            {
+                $this->headers = new Requests_Response_Headers();
+            }
+        }
+    }
+
+    if (!function_exists('blc_get_notification_status_filters')) {
+        function blc_get_notification_status_filters($override = null)
+        {
+            return [];
+        }
+    }
 }
 
 namespace Tests\Scanner {
@@ -190,7 +235,7 @@ final class ScanQueueRunBatchTest extends ScannerTestCase
                 (object) [
                     'ID'           => 501,
                     'post_title'   => 'Soft 404 Page',
-                    'post_content' => '<p>Dummy</p>',
+                    'post_content' => '<p><a href="https://example.com/soft-404">Source</a></p>',
                     'post_status'  => 'publish',
                     'post_type'    => 'post',
                 ],
@@ -204,10 +249,6 @@ final class ScanQueueRunBatchTest extends ScannerTestCase
         $this->options['blc_soft_404_body_indicators'] = "Erreur 404\nPage introuvable";
         $this->options['blc_soft_404_ignore_patterns'] = '';
 
-        Functions\when('blc_process_link_nodes_from_html')->alias(function ($html, $charset, $callback) {
-            $callback('https://example.com/soft-404', 'Soft link', '<a href="https://example.com/soft-404">Soft</a>', 'Soft link');
-            return true;
-        });
 
         Functions\when('wp_safe_remote_head')->alias(fn() => new \WP_Error('http_error', 'HEAD blocked'));
 
@@ -228,6 +269,87 @@ final class ScanQueueRunBatchTest extends ScannerTestCase
         $this->assertSame('https://example.com/soft-404', $row['url']);
     }
 
+    public function test_run_batch_inserts_broken_link_for_requests_response_soft_404(): void
+    {
+        $this->prepareLinkScanEnvironment();
+
+        $GLOBALS['wp_query_queue'] = [[
+            'posts' => [
+                (object) [
+                    'ID'           => 501,
+                    'post_title'   => 'Parallel Soft 404',
+                    'post_content' => '<p><a href="https://example.com/request-soft-404">Source</a></p>',
+                    'post_status'  => 'publish',
+                    'post_type'    => 'post',
+                ],
+            ],
+            'max_num_pages' => 1,
+        ]];
+        $GLOBALS['wp_query_last_args'] = [];
+
+        $this->options['blc_soft_404_min_length'] = 120;
+        $this->options['blc_soft_404_title_indicators'] = '';
+        $this->options['blc_soft_404_body_indicators'] = '';
+        $this->options['blc_soft_404_ignore_patterns'] = '';
+
+        $response_body = '<html><head><title>Oops</title></head><body><p>Page indisponible</p></body></html>';
+
+        Functions\when('apply_filters')->alias(function ($hook, $value, ...$args) use ($response_body) {
+            if ($hook === 'blc_parallel_requests_dispatcher') {
+                return static function (array $requests) use ($response_body) {
+                    $responses = [];
+
+                    foreach ($requests as $key => $_request) {
+                        if (strpos((string) $key, 'head-') === 0) {
+                            $head_response = new \Requests_Response();
+                            $head_response->status_code = 200;
+                            $head_response->status_text = 'OK';
+                            $responses[$key] = $head_response;
+                            continue;
+                        }
+
+                        $get_response = new \Requests_Response();
+                        $get_response->status_code = 200;
+                        $get_response->status_text = 'OK';
+                        $get_response->body = $response_body;
+                        $responses[$key] = $get_response;
+                    }
+
+                    return $responses;
+                };
+            }
+
+            if ($hook === 'blc_soft_404_detection') {
+                return $value;
+            }
+
+            return $value;
+        });
+
+        Functions\when('wp_remote_retrieve_response_code')->alias(function ($response) {
+            if ($response instanceof \Requests_Response) {
+                return (int) $response->status_code;
+            }
+
+            if (is_array($response) && isset($response['response']['code'])) {
+                return (int) $response['response']['code'];
+            }
+
+            return 0;
+        });
+
+        $queue = new ScanQueue(new RemoteRequestClient());
+        $result = $queue->runBatch(0, true, true);
+
+        $this->assertNull($result);
+        $this->assertCount(1, $this->wpdb->insertedRows, 'Soft 404 responses returned as Requests objects should be stored.');
+
+        $row = $this->wpdb->insertedRows[0]['data'];
+        $this->assertSame(200, $row['http_status']);
+        $this->assertSame('https://example.com/request-soft-404', $row['url']);
+        $this->assertSame(501, $row['post_id']);
+    }
+
     public function test_run_batch_ignores_soft_404_when_pattern_matches(): void
     {
         $this->prepareLinkScanEnvironment();
@@ -237,7 +359,7 @@ final class ScanQueueRunBatchTest extends ScannerTestCase
                 (object) [
                     'ID'           => 777,
                     'post_title'   => 'Profile Page',
-                    'post_content' => '<p>Dummy</p>',
+                    'post_content' => '<p><a href="https://example.com/profile">Source</a></p>',
                     'post_status'  => 'publish',
                     'post_type'    => 'post',
                 ],
@@ -250,11 +372,6 @@ final class ScanQueueRunBatchTest extends ScannerTestCase
         $this->options['blc_soft_404_title_indicators'] = "Profil introuvable";
         $this->options['blc_soft_404_body_indicators'] = "Profil introuvable";
         $this->options['blc_soft_404_ignore_patterns'] = "Profil introuvable";
-
-        Functions\when('blc_process_link_nodes_from_html')->alias(function ($html, $charset, $callback) {
-            $callback('https://example.com/profile', 'Profil', '<a href="https://example.com/profile">Profil</a>', 'Profil');
-            return true;
-        });
 
         Functions\when('wp_safe_remote_head')->alias(fn() => new \WP_Error('http_error', 'HEAD blocked'));
 
@@ -282,7 +399,8 @@ final class ScanQueueRunBatchTest extends ScannerTestCase
         Functions\when('do_shortcode')->alias(fn($content) => $content);
         Functions\when('get_comments')->alias(fn() => []);
         Functions\when('JLG\\BrokenLinks\\Scanner\\get_comments')->alias(fn() => []);
-        Functions\when('blc_get_notification_status_filters')->alias(fn() => []);
+        Functions\when('get_post_meta')->alias(fn() => []);
+        Functions\when('JLG\\BrokenLinks\\Scanner\\get_post_meta')->alias(fn() => []);
         Functions\when('blc_acquire_link_scan_lock')->alias(fn() => 'lock-token');
         Functions\when('blc_release_link_scan_lock')->alias(function () {
         });
