@@ -26,6 +26,20 @@ class BLC_Links_List_Table extends WP_List_Table {
     private static $bulk_query_args_registered = false;
 
     /**
+     * Cache local pour les colonnes triables.
+     *
+     * @var array<string, array{0:string,1:bool}|string>|null
+     */
+    private $sortable_columns_cache = null;
+
+    /**
+     * Requête de tri courante (orderby / order) après validation.
+     *
+     * @var array{orderby:string, order:string}|null
+     */
+    private $sort_request_cache = null;
+
+    /**
      * Cache local pour les compteurs agrégés des liens.
      *
      * @var array<string,int>|null
@@ -298,13 +312,92 @@ class BLC_Links_List_Table extends WP_List_Table {
      * @return array<string, array{0:string,1:bool}|string>
      */
     protected function get_sortable_columns() {
-        return [
+        if (is_array($this->sortable_columns_cache)) {
+            return $this->sortable_columns_cache;
+        }
+
+        $sortable_columns = [
             'url'               => ['url', false],
             'anchor_text'       => ['anchor', false],
             'http_status'       => ['http_status', false],
             'redirect_target_url' => ['redirect_target_url', false],
             'last_checked_at'   => ['last_checked_at', false],
             'post_title'        => ['post_title', false],
+        ];
+
+        $this->sortable_columns_cache = $sortable_columns;
+        $this->sort_request_cache = $this->parse_sort_request(array_keys($sortable_columns));
+
+        return $this->sortable_columns_cache;
+    }
+
+    /**
+     * Retourne la requête de tri courante.
+     *
+     * @return array{orderby:string, order:string}
+     */
+    protected function get_current_sort_request() {
+        if ($this->sort_request_cache === null) {
+            $this->get_sortable_columns();
+        }
+
+        if (!is_array($this->sort_request_cache)) {
+            return ['orderby' => '', 'order' => 'desc'];
+        }
+
+        $orderby = isset($this->sort_request_cache['orderby']) ? (string) $this->sort_request_cache['orderby'] : '';
+        $order   = isset($this->sort_request_cache['order']) ? strtolower((string) $this->sort_request_cache['order']) : 'desc';
+
+        if ($order !== 'asc' && $order !== 'desc') {
+            $order = 'desc';
+        }
+
+        return [
+            'orderby' => $orderby,
+            'order'   => $order,
+        ];
+    }
+
+    /**
+     * Analyse et sécurise la requête de tri depuis l'URL.
+     *
+     * @param array<int, string> $allowed_columns
+     *
+     * @return array{orderby:string, order:string}
+     */
+    private function parse_sort_request(array $allowed_columns) {
+        $orderby = '';
+        if (isset($_GET['orderby'])) {
+            $raw_orderby = $_GET['orderby'];
+            if (function_exists('wp_unslash')) {
+                $raw_orderby = wp_unslash($raw_orderby);
+            }
+            $raw_orderby = sanitize_key($raw_orderby);
+
+            if ($raw_orderby !== '' && in_array($raw_orderby, $allowed_columns, true)) {
+                $orderby = $raw_orderby;
+            }
+        }
+
+        $order = 'desc';
+        if (isset($_GET['order'])) {
+            $raw_order = $_GET['order'];
+            if (function_exists('wp_unslash')) {
+                $raw_order = wp_unslash($raw_order);
+            }
+            if (function_exists('sanitize_text_field')) {
+                $raw_order = sanitize_text_field($raw_order);
+            }
+
+            $raw_order = strtolower((string) $raw_order);
+            if ($raw_order === 'asc' || $raw_order === 'desc') {
+                $order = $raw_order;
+            }
+        }
+
+        return [
+            'orderby' => $orderby,
+            'order'   => $order,
         ];
     }
 
@@ -794,20 +887,9 @@ class BLC_Links_List_Table extends WP_List_Table {
             $whitelisted_columns['ignored_at'] = 'ignored_at';
         }
 
-        $requested_orderby = '';
-        if (!empty($_GET['orderby'])) {
-            $requested_orderby = sanitize_key(wp_unslash($_GET['orderby']));
-        }
-
-        $order_direction = 'DESC';
-        if (!empty($_GET['order'])) {
-            $raw_order = strtolower((string) sanitize_text_field(wp_unslash($_GET['order'])));
-            if ($raw_order === 'asc') {
-                $order_direction = 'ASC';
-            } elseif ($raw_order === 'desc') {
-                $order_direction = 'DESC';
-            }
-        }
+        $sort_request = $this->get_current_sort_request();
+        $requested_orderby = $sort_request['orderby'];
+        $order_direction = strtoupper($sort_request['order']) === 'ASC' ? 'ASC' : 'DESC';
 
         if ($requested_orderby !== '' && isset($whitelisted_columns[$requested_orderby])) {
             $primary_order_column = $whitelisted_columns[$requested_orderby];
