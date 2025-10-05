@@ -267,7 +267,7 @@ describe('blc-admin-scripts modal interactions', () => {
     expect(modal.find('.blc-modal__error').text()).toBe(defaultMessages.genericError);
   });
 
-  test('applies a detected redirect after confirming the modal', () => {
+  test('applies a detected redirect after confirming the modal', async () => {
     const ajax = mockAjaxHandlers();
     const button = $('#the-list .blc-apply-redirect');
 
@@ -280,6 +280,7 @@ describe('blc-admin-scripts modal interactions', () => {
     expect(modal.find('.blc-modal__message').text()).toBe('Appliquer la redirection détectée vers https://detected.example ?');
 
     modal.find('.blc-modal__confirm').trigger('click');
+    await Promise.resolve();
     expect(modal.hasClass('is-submitting')).toBe(true);
 
     ajax.triggerSuccess({ success: true });
@@ -310,6 +311,24 @@ describe('blc-admin-scripts modal interactions', () => {
     expect(cancelButton.prop('hidden')).toBe(true);
 
     modal.find('.blc-modal__confirm').trigger('click');
+    jest.advanceTimersByTime(20);
+    await Promise.resolve();
+
+    expect(modal.hasClass('is-open')).toBe(false);
+    expect($.post).not.toHaveBeenCalled();
+  });
+
+  test('does not apply the redirect when the modal is cancelled', async () => {
+    const button = $('#the-list .blc-apply-redirect');
+
+    button.trigger('click');
+    jest.advanceTimersByTime(20);
+
+    const modal = $('#blc-modal');
+    expect(modal.hasClass('is-open')).toBe(true);
+
+    $.post.mockClear();
+    modal.find('.blc-modal__cancel').trigger('click');
     jest.advanceTimersByTime(20);
     await Promise.resolve();
 

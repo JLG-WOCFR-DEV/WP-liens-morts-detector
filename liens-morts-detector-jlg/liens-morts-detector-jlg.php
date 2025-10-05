@@ -172,6 +172,8 @@ function blc_enqueue_admin_assets($hook) {
             'cancelButton'       => __('Annuler', 'liens-morts-detector-jlg'),
             'closeButton'        => __('Fermer', 'liens-morts-detector-jlg'),
             'closeLabel'         => __('Fermer la fenêtre modale', 'liens-morts-detector-jlg'),
+            'simpleConfirmModalConfirm' => __('Confirmer', 'liens-morts-detector-jlg'),
+            'simpleConfirmModalCancel'  => __('Annuler', 'liens-morts-detector-jlg'),
             'emptyUrlMessage'    => __('Veuillez saisir une URL.', 'liens-morts-detector-jlg'),
             'invalidUrlMessage'  => __('Veuillez saisir une URL valide.', 'liens-morts-detector-jlg'),
             'sameUrlMessage'     => __('La nouvelle URL doit être différente de l\'URL actuelle.', 'liens-morts-detector-jlg'),
