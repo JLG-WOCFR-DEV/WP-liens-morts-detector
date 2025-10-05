@@ -31,6 +31,24 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 - La taille des lots analysés peut être ajustée pour s’adapter aux capacités de l’hébergement (de manière optionnelle via l’interface ou un filtre).
 - L’analyse des images distantes (CDN, sous-domaines médias) peut être activée dans les réglages. Cette vérification reste basée sur les fichiers présents dans `wp-content/uploads` et peut rallonger la durée du scan ou consommer davantage de quotas côté CDN.
 
+## Détection des soft 404
+
+### Principe des heuristiques
+- Chaque réponse HTTP 200 est analysée afin de déterminer si la page correspond à un gabarit d’erreur (soft 404) : longueur minimale du contenu, présence de mots-clés suspects dans le titre ou dans le corps, et correspondance avec des motifs d’exclusion configurables.【F:liens-morts-detector-jlg/includes/Scanner/ScanQueue.php†L1896-L1933】【F:liens-morts-detector-jlg/includes/Scanner/ScanQueue.php†L1941-L1961】
+- Lorsque l’une des heuristiques déclenche (et qu’aucun motif d’exclusion ne correspond), le lien est enregistré comme cassé avec le code HTTP reçu, ce qui permet de signaler des faux positifs 200 directement dans la liste des liens.【F:liens-morts-detector-jlg/includes/Scanner/ScanQueue.php†L1916-L1933】【F:liens-morts-detector-jlg/includes/Scanner/ScanQueue.php†L1941-L1961】
+
+### Réglages disponibles
+- Quatre champs dédiés sont exposés dans les réglages : seuil de longueur minimale, liste des titres suspects, gabarits de corps et motifs à ignorer. Chaque champ accepte une valeur par ligne et la syntaxe `/motif/i` permet d’utiliser des expressions régulières insensibles à la casse.【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L498-L555】
+- Les valeurs par défaut reprennent des gabarits courants (pages 404, profils introuvables, etc.) et peuvent être adaptées à votre contexte éditorial via l’interface ou en important vos propres listes dans ces zones de texte.【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L514-L555】
+
+### Personnalisation avancée et filtres
+- Les heuristiques peuvent être modulées par code : ajuster le seuil (`blc_soft_404_min_length`), enrichir les listes de motifs (`blc_soft_404_title_indicators`, `blc_soft_404_body_indicators`, `blc_soft_404_ignore_patterns`) ou surcharger le verdict final via `blc_soft_404_detection` pour greffer votre propre logique métier.【F:liens-morts-detector-jlg/includes/blc-utils.php†L1911-L1955】
+- Les mêmes fonctions utilitaires exposent les valeurs normalisées, ce qui facilite la construction d’outils annexes ou d’exports alignés sur les réglages actifs.【F:liens-morts-detector-jlg/includes/blc-utils.php†L1911-L1948】
+
+### Interface d’administration et assistance front
+- Le module JavaScript `window.blcAdmin.soft404` reprend ces heuristiques côté interface : il normalise la configuration, applique les mêmes règles de nettoyage (suppression des balises, décodage HTML, expressions régulières) et peut être utilisé pour prévisualiser les raisons d’un signalement depuis le navigateur.【F:liens-morts-detector-jlg/assets/js/blc-admin-scripts.js†L152-L333】
+- Les zones de texte des réglages acceptent directement la saisie de motifs ignorés ou d’expressions régulières ; l’interface les convertit en listes prêtes à l’emploi et évite les doublons pour garantir une détection cohérente entre l’admin et le scanner serveur.【F:liens-morts-detector-jlg/assets/js/blc-admin-scripts.js†L208-L333】
+
 ## Commandes WP-CLI
 - `wp broken-links scan links` lance immédiatement un lot de vérification des liens. Ajouter `--full` force une réindexation complète, et `--bypass-rest-window` ignore la plage de repos configurée.
 - `wp broken-links scan images` exécute le scanner d’images de façon synchrone. Le flag `--full` est accepté pour homogénéité (le mode complet est déjà l’option par défaut).

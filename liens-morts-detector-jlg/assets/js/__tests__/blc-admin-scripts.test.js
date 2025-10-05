@@ -224,6 +224,68 @@ describe('blc-admin-scripts modal interactions', () => {
     expect(config.ignorePatterns).toEqual(expect.arrayContaining(['/profil/i']));
   });
 
+  test('normalizes soft 404 ignore patterns entered as textarea strings', () => {
+    jest.resetModules();
+    document.body.innerHTML = '';
+    delete global.jQuery;
+    delete global.$;
+    delete window.jQuery;
+    delete window.$;
+    delete window.blcAdmin;
+    delete window.blcAdminMessages;
+    delete window.blcAdminSoft404Config;
+
+    setupDom();
+    $ = require('jquery');
+    $.fn.ready = function (fn) {
+      fn.call(document, $);
+      return this;
+    };
+    $.expr.pseudos.visible = () => true;
+    $.expr.pseudos.hidden = () => false;
+    $.fn.fadeOut = function (_duration, callback) {
+      if (typeof callback === 'function') {
+        this.each(function () {
+          callback.call(this);
+        });
+      }
+      return this;
+    };
+    $.post = jest.fn();
+    global.jQuery = $;
+    global.$ = $;
+    window.jQuery = $;
+    window.$ = $;
+    global.ajaxurl = 'admin-ajax.php';
+
+    window.blcAdminSoft404Config = {
+      minLength: '30',
+      titleIndicators: '  erreur  ',
+      bodyIndicators: '',
+      ignorePatterns: '   chemin introuvable  \n\n   /profil/i  ',
+      labels: {
+        length: 'Contenu trop court',
+        title: 'Titre suspect',
+        body: "Message d’erreur détecté"
+      }
+    };
+
+    require(path.resolve(__dirname, '../blc-admin-scripts.js'));
+
+    const config = window.blcAdmin.soft404.getConfig();
+    expect(config.minLength).toBe(30);
+    expect(config.titleIndicators).toEqual(['erreur']);
+    expect(config.ignorePatterns).toEqual(['chemin introuvable', '/profil/i']);
+
+    const detection = window.blcAdmin.soft404.detect({
+      body: '<html><body><p>Chemin introuvable</p></body></html>'
+    });
+
+    expect(detection.ignored).toBe(true);
+    expect(detection.isSoft404).toBe(false);
+    expect(detection.reasons).toEqual([]);
+  });
+
   test('keeps focus trapped inside the modal when tabbing', () => {
     const modal = openEditModal();
     const closeButton = modal.find('.blc-modal__close');

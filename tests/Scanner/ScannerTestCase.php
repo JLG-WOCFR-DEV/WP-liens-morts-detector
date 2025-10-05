@@ -336,6 +336,24 @@ abstract class ScannerTestCase extends TestCase
             return '';
         });
 
+        Functions\when('wp_kses_decode_entities')->alias(function ($value) {
+            if (!is_string($value)) {
+                $value = (string) $value;
+            }
+
+            return html_entity_decode($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        });
+
+        Functions\when('wp_strip_all_tags')->alias(function ($text) {
+            if (!is_string($text)) {
+                $text = (string) $text;
+            }
+
+            $stripped = strip_tags($text);
+
+            return trim(preg_replace('/[\r\n\t ]+/', ' ', $stripped));
+        });
+
         if (!function_exists('sanitize_email')) {
             Functions\when('sanitize_email')->alias(function ($email) {
                 if (!is_string($email)) {
