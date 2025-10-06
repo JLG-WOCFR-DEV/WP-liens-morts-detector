@@ -26,6 +26,8 @@ class LinkScanStatusTest extends TestCase
      */
     private array $options = [];
 
+    private int $getOptionCalls = 0;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -33,6 +35,7 @@ class LinkScanStatusTest extends TestCase
         Monkey\setUp();
 
         $this->options = [];
+        $this->getOptionCalls = 0;
 
         Functions\when('add_action')->justReturn(true);
         Functions\when('apply_filters')->alias(static fn($hook, $value) => $value);
@@ -41,6 +44,8 @@ class LinkScanStatusTest extends TestCase
 
         $testCase = $this;
         Functions\when('get_option')->alias(function ($name, $default = false) use ($testCase) {
+            $testCase->getOptionCalls++;
+
             return $testCase->getStoredOption((string) $name, $default);
         });
         Functions\when('update_option')->alias(function ($name, $value) use ($testCase) {
@@ -55,6 +60,13 @@ class LinkScanStatusTest extends TestCase
         });
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-scanner.php';
+
+        if (function_exists('\\blc_reset_link_scan_status')) {
+            \blc_reset_link_scan_status();
+        }
+        if (function_exists('\\blc_reset_image_scan_status')) {
+            \blc_reset_image_scan_status();
+        }
     }
 
     protected function tearDown(): void
@@ -86,6 +98,19 @@ class LinkScanStatusTest extends TestCase
     private function deleteStoredOption(string $name): void
     {
         unset($this->options[$name]);
+    }
+
+    public function test_get_link_scan_status_uses_request_cache(): void
+    {
+        $this->options['blc_link_scan_status'] = [
+            'state' => 'running',
+        ];
+
+        $first = \blc_get_link_scan_status();
+        $second = \blc_get_link_scan_status();
+
+        $this->assertSame($first, $second);
+        $this->assertSame(1, $this->getOptionCalls);
     }
 
     public function test_get_link_scan_status_enforces_defaults(): void
@@ -121,6 +146,28 @@ class LinkScanStatusTest extends TestCase
         $this->assertSame(44, $status['updated_at']);
         $this->assertSame(0, $status['total_items']);
         $this->assertSame(8, $status['processed_items']);
+    }
+
+    public function test_get_link_scan_status_cache_is_flushed_on_reset(): void
+    {
+        $this->options['blc_link_scan_status'] = [
+            'state' => 'running',
+        ];
+
+        \blc_get_link_scan_status();
+        $this->assertSame(1, $this->getOptionCalls);
+
+        \blc_reset_link_scan_status();
+
+        $this->options['blc_link_scan_status'] = [
+            'state' => 'completed',
+        ];
+
+        $this->getOptionCalls = 0;
+        $status = \blc_get_link_scan_status();
+
+        $this->assertSame('completed', $status['state']);
+        $this->assertSame(1, $this->getOptionCalls);
     }
 
     public function test_get_link_scan_status_backfills_completed_end_time(): void
@@ -176,6 +223,36 @@ class LinkScanStatusTest extends TestCase
         $this->assertSame(0, $status['started_at']);
         $this->assertSame(0, $status['ended_at']);
         $this->assertSame(75, $status['updated_at']);
+    }
+
+    public function test_get_link_scan_status_payload_includes_metrics(): void
+    {
+        $now = 200;
+        Functions\when('time')->alias(static function () use (&$now) {
+            return $now;
+        });
+        Functions\when('blc_get_link_scan_lock_state')->justReturn(['locked_at' => 0]);
+        Functions\when('blc_is_link_scan_lock_active')->alias(static fn() => false);
+        Functions\when('blc_get_next_link_batch_timestamp')->alias(static fn() => 0);
+
+        $this->options['blc_link_scan_status'] = [
+            'state' => 'running',
+            'started_at' => 100,
+            'updated_at' => 190,
+            'processed_items' => 10,
+            'total_items' => 40,
+        ];
+
+        $payload = \blc_get_link_scan_status_payload();
+
+        $this->assertSame(25.0, $payload['progress_percentage']);
+        $this->assertSame(30, $payload['remaining_items']);
+        $this->assertSame(100, $payload['duration_seconds']);
+        $this->assertSame(6.0, $payload['items_per_minute']);
+        $this->assertSame(300, $payload['estimated_remaining_seconds']);
+        $this->assertSame(500, $payload['estimated_completion_timestamp']);
+        $this->assertSame(10, $payload['last_activity_delta']);
+        $this->assertArrayHasKey('lock_active', $payload);
     }
 
     public function test_reset_link_scan_status_deletes_option(): void
