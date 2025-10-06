@@ -1643,8 +1643,94 @@ if (!class_exists('ImageScanController')) {
     }
 }
 
-function blc_make_remote_request_client() {
-    return new \JLG\BrokenLinks\Scanner\RemoteRequestClient();
+/**
+ * Instantiate (or reuse) the remote request client used by the scanners.
+ *
+ * @param bool $force_refresh Whether to force the creation of a fresh client instance.
+ *
+ * @return \JLG\BrokenLinks\Scanner\RemoteRequestClient
+ */
+function blc_make_remote_request_client($force_refresh = false) {
+    static $cache = [
+        'instance'    => null,
+        'config_hash' => null,
+    ];
+
+    if ($force_refresh) {
+        $cache['instance']    = null;
+        $cache['config_hash'] = null;
+    }
+
+    $config = [
+        'default_args' => [],
+        'retry_plan'   => [],
+        'user_agents'  => [],
+    ];
+
+    if (function_exists('apply_filters')) {
+        $filtered_config = apply_filters('blc_remote_request_client_config', $config);
+        if (is_array($filtered_config)) {
+            $config = $filtered_config;
+        }
+    }
+
+    $default_args = isset($config['default_args']) && is_array($config['default_args'])
+        ? $config['default_args']
+        : [];
+    $retry_plan = isset($config['retry_plan']) && is_array($config['retry_plan'])
+        ? $config['retry_plan']
+        : [];
+    $user_agents = [];
+    if (isset($config['user_agents']) && is_array($config['user_agents'])) {
+        foreach ($config['user_agents'] as $agent) {
+            if (is_string($agent)) {
+                $trimmed = trim($agent);
+                if ($trimmed !== '') {
+                    $user_agents[] = $trimmed;
+                }
+            }
+        }
+    }
+
+    $normalized = [
+        'default_args' => $default_args,
+        'retry_plan'   => $retry_plan,
+        'user_agents'  => $user_agents,
+    ];
+
+    $config_payload = function_exists('wp_json_encode')
+        ? wp_json_encode($normalized)
+        : json_encode($normalized);
+    if (!is_string($config_payload) || $config_payload === '') {
+        $config_payload = serialize($normalized); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_serialize
+    }
+
+    $config_hash = md5($config_payload);
+
+    if (!$force_refresh
+        && $cache['instance'] instanceof \JLG\BrokenLinks\Scanner\RemoteRequestClient
+        && $cache['config_hash'] === $config_hash
+    ) {
+        return $cache['instance'];
+    }
+
+    $client = new \JLG\BrokenLinks\Scanner\RemoteRequestClient($default_args, $retry_plan, $user_agents);
+
+    if (function_exists('apply_filters')) {
+        $maybe_client = apply_filters('blc_remote_request_client_instance', $client, $default_args, $retry_plan, $user_agents);
+        if ($maybe_client instanceof \JLG\BrokenLinks\Scanner\RemoteRequestClient) {
+            $client = $maybe_client;
+        }
+    }
+
+    if (function_exists('do_action')) {
+        do_action('blc_remote_request_client_created', $client, $default_args, $retry_plan, $user_agents);
+    }
+
+    $cache['instance']    = $client;
+    $cache['config_hash'] = $config_hash;
+
+    return $client;
 }
 
 function blc_make_scan_queue(\JLG\BrokenLinks\Scanner\RemoteRequestClient $client) {
