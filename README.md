@@ -8,14 +8,29 @@
 Liens Morts Detector est une extension WordPress qui détecte les liens et images morts, les signale dans l’administration et propose des outils de réparation rapide. L’analyse des liens peut s’exécuter automatiquement via WP‑Cron, tandis que la vérification des images se lance manuellement depuis le tableau de bord avant de se poursuivre en tâche de fond.
 
 ## Fonctionnalités
-- Vérification automatique des liens `<a>` grâce à WP‑Cron, et déclenchement manuel des images `<img>` (traitées ensuite en arrière-plan)
-- Analyse des liens issus des commentaires, des métadonnées personnalisées et des widgets texte WordPress
-- Planification flexible : toutes les heures, toutes les 6 ou 12 heures, quotidienne, hebdomadaire, mensuelle ou intervalle personnalisé
-- Tableau de bord listant les liens et images cassés avec statistiques
-- Actions rapides pour modifier une URL ou retirer un lien directement depuis la liste
-- Options avancées : exclusion de domaines, plages horaires de repos, mode debug
-- Option dédiée pour analyser les images servies depuis un CDN ou un domaine externe sécurisé
-- Heuristiques configurables pour identifier les « soft 404 » (longueur minimale, titres et contenus suspects, motifs à ignorer)
+
+### Couverture des contenus
+- Exploration des liens dans les widgets texte/HTML, les menus de navigation, les commentaires et les métadonnées personnalisées afin de couvrir les sources hors articles classiques.【F:liens-morts-detector-jlg/includes/Scanner/ScanQueue.php†L600-L704】【F:liens-morts-detector-jlg/includes/Scanner/ScanQueue.php†L707-L781】【F:liens-morts-detector-jlg/includes/Scanner/ScanQueue.php†L2253-L2305】
+
+### Planification et modes de scan
+- Vérification automatique des liens `<a>` via WP‑Cron, avec replanification manuelle possible depuis l’interface (scan complet ou incrémental selon les besoins).【F:liens-morts-detector-jlg/includes/blc-admin-pages.php†L147-L220】【F:liens-morts-detector-jlg/includes/blc-scanner.php†L3214-L3245】
+- Réglages fins : fréquences prédéfinies ou personnalisées, plages horaires de repos, délais entre liens ou lots, taille des batchs et timeouts HTTP pour adapter la charge serveur.【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L35-L498】
+- Le scanner d’images dispose de sa propre file d’attente avec verrouillage, cadence paramétrable et possibilité d’inclure les médias distants servis depuis un CDN ou un domaine externe.【F:liens-morts-detector-jlg/includes/blc-scanner.php†L380-L515】【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L247-L305】
+
+### Tableaux de bord et actions rapides
+- Deux tables d’administration listent liens et images cassés avec recherche, filtres (type de contenu, interne/externe, statut HTTP) et statistiques agrégées.【F:liens-morts-detector-jlg/includes/class-blc-links-list-table.php†L90-L200】【F:liens-morts-detector-jlg/includes/class-blc-images-list-table.php†L59-L188】
+- Actions en ligne et groupées : modifier une URL, proposer/appliquer une redirection détectée, re-vérifier, ignorer/restaurer ou dissocier un lien en conservant l’ancre.【F:liens-morts-detector-jlg/includes/class-blc-links-list-table.php†L530-L881】
+
+### Notifications et suivi
+- Notifications par e-mail ou webhook personnalisable, avec choix du canal, du gabarit de message et des catégories de statuts HTTP qui déclenchent un envoi.【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L295-L366】【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L659-L1669】
+- Résumés post-scan envoyés automatiquement depuis le cœur du scanner dès que des destinataires ou un webhook sont configurés.【F:liens-morts-detector-jlg/includes/blc-scanner.php†L1231-L1250】
+
+### Automatisation et intégrations
+- Endpoint REST (`blc/v1/scan-status`) pour suivre en direct la progression des scans côté JavaScript ou via outils externes.【F:liens-morts-detector-jlg/includes/blc-scanner.php†L412-L473】
+- Commandes WP-CLI pour lancer des scans synchrones (liens ou images), forcer un mode complet ou ignorer la plage de repos lors d’un run supervisé.【F:liens-morts-detector-jlg/includes/blc-cli.php†L11-L143】
+
+### Détection avancée
+- Heuristiques configurables pour identifier les « soft 404 » (longueur minimale, indicateurs de titre/corps, motifs à ignorer) et alignement entre PHP et JavaScript pour expliquer les faux positifs 200.【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L500-L691】【F:liens-morts-detector-jlg/includes/Scanner/ScanQueue.php†L131-L228】【F:liens-morts-detector-jlg/assets/js/blc-admin-scripts.js†L152-L333】
 
 ## Installation
 1. Copier le dossier `liens-morts-detector-jlg` dans `wp-content/plugins/`.
