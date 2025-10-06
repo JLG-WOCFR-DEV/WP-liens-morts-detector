@@ -128,7 +128,12 @@ add_action('admin_enqueue_scripts', 'blc_enqueue_admin_assets');
  */
 function blc_enqueue_admin_assets($hook) {
     // On s'assure de ne charger les scripts que sur nos pages pour ne pas alourdir le reste de l'admin.
-    if (strpos($hook, 'blc-dashboard') === false && strpos($hook, 'blc-images-dashboard') === false && strpos($hook, 'blc-settings') === false) {
+    if (
+        strpos($hook, 'blc-dashboard') === false
+        && strpos($hook, 'blc-images-dashboard') === false
+        && strpos($hook, 'blc-history') === false
+        && strpos($hook, 'blc-settings') === false
+    ) {
         return;
     }
     
