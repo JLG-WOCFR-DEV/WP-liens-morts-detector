@@ -160,6 +160,14 @@ add_action('blc_link_mass_update_performed', function (array $context) {
 });
 ```
 
+## Pistes d'amélioration
+
+- **Intégration de rapports automatisés** : proposer un export planifié (PDF/CSV ou envoi vers Google Sheets) afin de partager les résultats des scans avec des équipes éditoriales sans accès à l’administration.
+- **Notifications multicanales** : ajouter des connecteurs prêts à l’emploi pour Slack, Microsoft Teams ou Mattermost en complément du webhook générique, avec des modèles de messages adaptés aux différents statuts.
+- **Optimisations d’interface** : introduire un tableau de bord synthétique (widgets ou bloc Gutenberg) affichant les métriques clés (taux d’erreurs, liens corrigés, tendances) et améliorer l’accessibilité (navigation clavier, ARIA) pour faciliter le suivi quotidien.
+- **Renforcement de la qualité logicielle** : étendre la couverture de tests automatisés (PHPUnit/WP-CLI, tests end-to-end Playwright) et configurer l’intégration continue pour détecter rapidement les régressions sur les scénarios critiques.
+- **Surveillance proactive** : permettre la configuration d’alertes basées sur des seuils (ex. >5 % de liens cassés sur un site) avec escalade graduelle (mail, webhook, notification push) pour aider à prioriser les corrections.
+
 ## Structure du projet
 - `liens-morts-detector-jlg.php` : point d’entrée du plugin, chargement des fichiers, hooks et actions AJAX.
 - `includes/` : planification WP‑Cron, fonctions d’activation/désactivation, scanners et pages d’administration.
