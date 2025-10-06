@@ -28,6 +28,8 @@ if (!function_exists('blc_get_default_link_scan_status')) {
             'updated_at'         => 0,
             'total_items'        => 0,
             'processed_items'    => 0,
+            'job_id'             => '',
+            'attempt'            => 0,
         ];
     }
 }
@@ -54,19 +56,158 @@ if (!function_exists('blc_get_link_scan_status')) {
         }
         $status['state'] = $state;
 
-        foreach (['current_batch', 'processed_batches', 'total_batches', 'remaining_batches', 'started_at', 'ended_at', 'updated_at', 'total_items', 'processed_items'] as $numeric_key) {
+        foreach (['current_batch', 'processed_batches', 'total_batches', 'remaining_batches', 'started_at', 'ended_at', 'updated_at', 'total_items', 'processed_items', 'attempt'] as $numeric_key) {
             $status[$numeric_key] = isset($status[$numeric_key]) ? max(0, (int) $status[$numeric_key]) : 0;
         }
 
         $status['is_full_scan'] = !empty($status['is_full_scan']);
         $status['message'] = isset($status['message']) && is_string($status['message']) ? $status['message'] : '';
         $status['last_error'] = isset($status['last_error']) && is_string($status['last_error']) ? $status['last_error'] : '';
+        $status['job_id'] = isset($status['job_id']) && is_string($status['job_id']) ? trim($status['job_id']) : '';
 
         if ($status['state'] === 'completed' && $status['ended_at'] === 0 && $status['updated_at'] > 0) {
             $status['ended_at'] = $status['updated_at'];
         }
 
         return $status;
+    }
+}
+
+if (!function_exists('blc_generate_link_scan_job_id')) {
+    /**
+     * Generate a unique identifier for a scan job.
+     *
+     * @return string
+     */
+    function blc_generate_link_scan_job_id() {
+        if (function_exists('wp_generate_uuid4')) {
+            return wp_generate_uuid4();
+        }
+
+        try {
+            return bin2hex(random_bytes(16));
+        } catch (\Exception $e) { // phpcs:ignore Generic.CodeAnalysis.EmptyStatement.DetectedCatch
+            // Fallback handled below.
+        }
+
+        return uniqid('blc_', true);
+    }
+}
+
+if (!function_exists('blc_get_link_scan_history')) {
+    /**
+     * Retrieve the persisted history of manual link scan jobs.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    function blc_get_link_scan_history() {
+        $history = get_option('blc_link_scan_history', []);
+
+        return is_array($history) ? $history : [];
+    }
+}
+
+if (!function_exists('blc_save_link_scan_history')) {
+    /**
+     * Persist the provided job history payload.
+     *
+     * @param array<int, array<string, mixed>> $history
+     *
+     * @return void
+     */
+    function blc_save_link_scan_history(array $history) {
+        update_option('blc_link_scan_history', array_values($history), false);
+    }
+}
+
+if (!function_exists('blc_append_link_scan_history_entry')) {
+    /**
+     * Add a new scan job entry to the persisted history.
+     *
+     * @param array<string, mixed> $entry
+     *
+     * @return void
+     */
+    function blc_append_link_scan_history_entry(array $entry) {
+        $history = blc_get_link_scan_history();
+        array_unshift($history, $entry);
+
+        if (count($history) > 25) {
+            $history = array_slice($history, 0, 25);
+        }
+
+        blc_save_link_scan_history($history);
+    }
+}
+
+if (!function_exists('blc_update_link_scan_history_entry')) {
+    /**
+     * Merge additional data into a stored history entry.
+     *
+     * @param string               $job_id
+     * @param array<string, mixed> $changes
+     *
+     * @return void
+     */
+    function blc_update_link_scan_history_entry($job_id, array $changes) {
+        $job_id = is_string($job_id) ? trim($job_id) : '';
+        if ($job_id === '') {
+            return;
+        }
+
+        $history = blc_get_link_scan_history();
+        $updated = false;
+
+        foreach ($history as &$entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            $entry_id = isset($entry['job_id']) ? (string) $entry['job_id'] : '';
+            if ($entry_id !== $job_id) {
+                continue;
+            }
+
+            $entry = array_merge($entry, $changes);
+            $updated = true;
+            break;
+        }
+        unset($entry);
+
+        if ($updated) {
+            blc_save_link_scan_history($history);
+            return;
+        }
+
+        $changes['job_id'] = $job_id;
+        blc_append_link_scan_history_entry($changes);
+    }
+}
+
+if (!function_exists('blc_record_link_scan_metrics')) {
+    /**
+     * Store last scan metrics for observability dashboards.
+     *
+     * @param array<string, mixed> $metrics
+     *
+     * @return void
+     */
+    function blc_record_link_scan_metrics(array $metrics) {
+        $history = get_option('blc_link_scan_metrics_history', []);
+        if (!is_array($history)) {
+            $history = [];
+        }
+
+        array_unshift($history, $metrics);
+        if (count($history) > 50) {
+            $history = array_slice($history, 0, 50);
+        }
+
+        update_option('blc_link_scan_metrics_history', $history, false);
+
+        if (isset($metrics['job_id'])) {
+            blc_update_link_scan_history_entry($metrics['job_id'], ['metrics' => $metrics]);
+        }
     }
 }
 
@@ -109,7 +250,11 @@ if (!function_exists('blc_update_link_scan_status')) {
                 case 'updated_at':
                 case 'total_items':
                 case 'processed_items':
+                case 'attempt':
                     $status[$key] = max(0, (int) $value);
+                    break;
+                case 'job_id':
+                    $status['job_id'] = is_string($value) ? trim($value) : '';
                     break;
                 default:
                     $status[$key] = $value;
@@ -134,6 +279,21 @@ if (!function_exists('blc_update_link_scan_status')) {
         $status['updated_at'] = $now;
 
         update_option('blc_link_scan_status', $status, false);
+
+        blc_update_link_scan_history_entry($status['job_id'], [
+            'state'             => $status['state'],
+            'message'           => $status['message'],
+            'last_error'        => $status['last_error'],
+            'started_at'        => $status['started_at'],
+            'ended_at'          => $status['ended_at'],
+            'updated_at'        => $status['updated_at'],
+            'processed_batches' => $status['processed_batches'],
+            'total_batches'     => $status['total_batches'],
+            'processed_items'   => $status['processed_items'],
+            'total_items'       => $status['total_items'],
+            'attempt'           => $status['attempt'],
+            'is_full_scan'      => $status['is_full_scan'],
+        ]);
 
         return $status;
     }
@@ -3212,6 +3372,7 @@ function blc_restore_dataset_refresh($table_name, $types, $scan_run_id, ?array $
  */
 
 function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_window = false) {
+    $execution_started_at = microtime(true);
     $remote_client = blc_make_remote_request_client();
     $queue = blc_make_scan_queue($remote_client);
     $controller = blc_make_link_scan_controller($queue);
@@ -3225,6 +3386,30 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
             'last_error'  => $message,
             'message'     => $message,
         ]);
+    }
+
+    $status = blc_get_link_scan_status();
+    $duration_ms = (int) round((microtime(true) - $execution_started_at) * 1000);
+    $job_id = isset($status['job_id']) ? (string) $status['job_id'] : '';
+    $metrics = [
+        'job_id'             => $job_id,
+        'batch'              => (int) $batch,
+        'duration_ms'        => $duration_ms,
+        'timestamp'          => time(),
+        'state'              => isset($status['state']) ? (string) $status['state'] : 'unknown',
+        'success'            => !(function_exists('is_wp_error') && is_wp_error($result)) && (!isset($status['state']) || $status['state'] !== 'failed'),
+        'processed_batches'  => isset($status['processed_batches']) ? (int) $status['processed_batches'] : 0,
+        'total_batches'      => isset($status['total_batches']) ? (int) $status['total_batches'] : 0,
+        'processed_items'    => isset($status['processed_items']) ? (int) $status['processed_items'] : 0,
+        'total_items'        => isset($status['total_items']) ? (int) $status['total_items'] : 0,
+        'attempt'            => isset($status['attempt']) ? (int) $status['attempt'] : 0,
+        'is_full_scan'       => isset($status['is_full_scan']) ? (bool) $status['is_full_scan'] : (bool) $is_full_scan,
+    ];
+
+    blc_record_link_scan_metrics($metrics);
+
+    if (function_exists('do_action')) {
+        do_action('blc_link_scan_metrics', $metrics, $result);
     }
 
     return $result;
