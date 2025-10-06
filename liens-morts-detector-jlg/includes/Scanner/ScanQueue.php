@@ -13,52 +13,216 @@ class ScanQueue {
         /** @var RemoteRequestClient */
         private $remoteRequestClient;
 
-        public function __construct(RemoteRequestClient $remoteRequestClient) {
-            $this->remoteRequestClient = $remoteRequestClient;
+    public function __construct(RemoteRequestClient $remoteRequestClient) {
+        $this->remoteRequestClient = $remoteRequestClient;
+    }
+
+    /**
+     * Collect and normalise the preflight configuration before running a batch.
+     *
+     * @return array<string, mixed>
+     */
+    private function gatherPreflightConfiguration($batch, $is_full_scan, $bypass_rest_window)
+    {
+        $debug_mode = get_option('blc_debug_mode', false);
+        $current_hook = function_exists('current_filter') ? current_filter() : '';
+
+        if (!$is_full_scan && $current_hook === 'blc_check_links') {
+            $is_full_scan = true;
         }
 
-        public function runBatch($batch = 0, $is_full_scan = false, $bypass_rest_window = false) {
-            $remote_request_client = $this->remoteRequestClient;
-            global $wpdb;
+        if ($current_hook === 'blc_check_links') {
+            $bypass_rest_window = false;
+        }
 
-            $total_batches = 0;
-            $processed_batches = 0;
-            $remaining_batches = 0;
-            $total_items = 0;
-            $processed_items = 0;
+        $rest_start_hour_option = get_option('blc_rest_start_hour', '08');
+        $rest_end_hour_option   = get_option('blc_rest_end_hour', '20');
+        $rest_start_hour = (int) blc_normalize_hour_option($rest_start_hour_option, '08');
+        $rest_end_hour   = (int) blc_normalize_hour_option($rest_end_hour_option, '20');
+        $link_delay_ms   = max(0, (int) get_option('blc_link_delay', 200));
+        $batch_delay_s   = max(0, (int) get_option('blc_batch_delay', 60));
+        $default_lock_timeout = defined('MINUTE_IN_SECONDS') ? 15 * MINUTE_IN_SECONDS : 900;
+        $lock_timeout = apply_filters('blc_link_scan_lock_timeout', $default_lock_timeout);
+        if (!is_int($lock_timeout)) {
+            $lock_timeout = (int) $lock_timeout;
+        }
+        if ($lock_timeout < 0) {
+            $lock_timeout = 0;
+        }
 
-            // --- 1. Récupération des réglages ---
-            $debug_mode = get_option('blc_debug_mode', false);
-            if ($debug_mode) { error_log("--- Début du scan LIENS (Lot #$batch) ---"); }
+        return [
+            'batch'               => (int) $batch,
+            'is_full_scan'        => (bool) $is_full_scan,
+            'bypass_rest_window'  => (bool) $bypass_rest_window,
+            'debug_mode'          => (bool) $debug_mode,
+            'current_hook'        => $current_hook,
+            'rest_start_hour'     => $rest_start_hour,
+            'rest_end_hour'       => $rest_end_hour,
+            'link_delay_ms'       => $link_delay_ms,
+            'batch_delay_s'       => $batch_delay_s,
+            'lock_timeout'        => $lock_timeout,
+        ];
+    }
 
-            $current_hook = function_exists('current_filter') ? current_filter() : '';
-            if (!$is_full_scan && $current_hook === 'blc_check_links') {
-                $is_full_scan = true;
+    /**
+     * Ensure there is a job identifier stored in the shared status payload.
+     *
+     * @return string
+     */
+    private function ensureActiveJobId()
+    {
+        if (!function_exists('\\blc_get_link_scan_status')) {
+            return '';
+        }
+
+        $status = \blc_get_link_scan_status();
+        $job_id = isset($status['job_id']) ? (string) $status['job_id'] : '';
+
+        if ($job_id !== '') {
+            return $job_id;
+        }
+
+        $job_id = function_exists('\\blc_generate_link_scan_job_id')
+            ? \blc_generate_link_scan_job_id()
+            : uniqid('blc_', true);
+
+        $attempt = isset($status['attempt']) ? max(1, (int) $status['attempt']) : 1;
+
+        \blc_update_link_scan_status([
+            'job_id'  => $job_id,
+            'attempt' => $attempt,
+        ]);
+
+        return $job_id;
+    }
+
+    /**
+     * Build helper callbacks dedicated to the soft 404 heuristics.
+     *
+     * @param array<string, mixed> $soft_404_config
+     *
+     * @return array<string, callable>
+     */
+    private function buildSoft404Toolkit(array $soft_404_config)
+    {
+        $extract_title = static function ($html) {
+            if (!is_string($html) || $html === '') {
+                return '';
             }
 
+            if (preg_match('/<title\b[^>]*>(.*?)<\/title>/is', $html, $matches) !== 1) {
+                return '';
+            }
+
+            $title = isset($matches[1]) ? (string) $matches[1] : '';
+            if ($title === '') {
+                return '';
+            }
+
+            if (function_exists('wp_specialchars_decode')) {
+                $title = wp_specialchars_decode($title, ENT_QUOTES);
+            } else {
+                $title = html_entity_decode($title, ENT_QUOTES, 'UTF-8');
+            }
+
+            return trim(preg_replace('/\s+/', ' ', $title));
+        };
+
+        $strip_text = static function ($html) {
+            if (!is_string($html) || $html === '') {
+                return '';
+            }
+
+            if (function_exists('wp_strip_all_tags')) {
+                $text = wp_strip_all_tags($html, true);
+            } else {
+                $text = strip_tags($html);
+            }
+
+            return trim(preg_replace('/\s+/', ' ', (string) $text));
+        };
+
+        $matches_any = static function (array $patterns, array $candidates): bool {
+            if ($patterns === []) {
+                return false;
+            }
+
+            foreach ($patterns as $pattern) {
+                if (!is_string($pattern) || $pattern === '') {
+                    continue;
+                }
+
+                $pattern_value = (string) $pattern;
+                $is_regex = false;
+                $regex_body = '';
+                $regex_flags = 'i';
+
+                if (strlen($pattern_value) >= 2 && $pattern_value[0] === '/') {
+                    $last_delimiter = strrpos($pattern_value, '/');
+                    if ($last_delimiter !== false) {
+                        $regex_body = substr($pattern_value, 1, $last_delimiter - 1);
+                        $regex_flags = substr($pattern_value, $last_delimiter + 1);
+                        $is_regex = ($regex_body !== '');
+                    }
+                }
+
+                foreach ($candidates as $candidate) {
+                    if (!is_string($candidate) || $candidate === '') {
+                        continue;
+                    }
+
+                    if ($is_regex) {
+                        $regex = '/' . $regex_body . '/' . $regex_flags;
+                        if (@preg_match($regex, $candidate) === 1) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+                            return true;
+                        }
+                    } elseif (stripos($candidate, $pattern_value) !== false) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        };
+
+        return [
+            'extract_title' => $extract_title,
+            'strip_text'    => $strip_text,
+            'matches_any'   => $matches_any,
+            'config'        => $soft_404_config,
+        ];
+    }
+
+    public function runBatch($batch = 0, $is_full_scan = false, $bypass_rest_window = false) {
+        $remote_request_client = $this->remoteRequestClient;
+        global $wpdb;
+
+        $preflight = $this->gatherPreflightConfiguration($batch, $is_full_scan, $bypass_rest_window);
+        $batch = $preflight['batch'];
+        $is_full_scan = $preflight['is_full_scan'];
+        $bypass_rest_window = $preflight['bypass_rest_window'];
+        $debug_mode = $preflight['debug_mode'];
+        $current_hook = $preflight['current_hook'];
+        $rest_start_hour = $preflight['rest_start_hour'];
+        $rest_end_hour = $preflight['rest_end_hour'];
+        $link_delay_ms = $preflight['link_delay_ms'];
+        $batch_delay_s = $preflight['batch_delay_s'];
+        $lock_timeout = $preflight['lock_timeout'];
+
+        $total_batches = 0;
+        $processed_batches = 0;
+        $remaining_batches = 0;
+        $total_items = 0;
+        $processed_items = 0;
+
+        if ($debug_mode) { error_log("--- Début du scan LIENS (Lot #$batch) ---"); }
+
+        $job_id = $this->ensureActiveJobId();
+
+        $lock_token = blc_acquire_link_scan_lock($lock_timeout);
+        if ($lock_token === '') {
             if ($current_hook === 'blc_check_links') {
-                $bypass_rest_window = false;
-            }
-
-            $rest_start_hour_option = get_option('blc_rest_start_hour', '08');
-            $rest_end_hour_option   = get_option('blc_rest_end_hour', '20');
-            $rest_start_hour = (int) blc_normalize_hour_option($rest_start_hour_option, '08');
-            $rest_end_hour   = (int) blc_normalize_hour_option($rest_end_hour_option, '20');
-            $link_delay_ms   = max(0, (int) get_option('blc_link_delay', 200));
-            $batch_delay_s   = max(0, (int) get_option('blc_batch_delay', 60));
-            $default_lock_timeout = defined('MINUTE_IN_SECONDS') ? 15 * MINUTE_IN_SECONDS : 900;
-            $lock_timeout = apply_filters('blc_link_scan_lock_timeout', $default_lock_timeout);
-            if (!is_int($lock_timeout)) {
-                $lock_timeout = (int) $lock_timeout;
-            }
-            if ($lock_timeout < 0) {
-                $lock_timeout = 0;
-            }
-
-            $lock_token = blc_acquire_link_scan_lock($lock_timeout);
-            if ($lock_token === '') {
-                if ($current_hook === 'blc_check_links') {
-                    if ($debug_mode) { error_log('Analyse de liens déjà en cours, reprogrammation du lot.'); }
+                if ($debug_mode) { error_log('Analyse de liens déjà en cours, reprogrammation du lot.'); }
                     $retry_delay = max(60, $batch_delay_s);
                     $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
                     if (false === $scheduled) {
@@ -140,96 +304,10 @@ class ScanQueue {
                 ? $soft_404_config['ignore_patterns']
                 : [];
 
-            $soft_404_extract_title = static function ($html) {
-                if (!is_string($html) || $html === '') {
-                    return '';
-                }
-
-                if (preg_match('/<title\b[^>]*>(.*?)<\/title>/is', $html, $matches) !== 1) {
-                    return '';
-                }
-
-                $title = isset($matches[1]) ? (string) $matches[1] : '';
-                if ($title === '') {
-                    return '';
-                }
-
-                if (function_exists('wp_specialchars_decode')) {
-                    $title = wp_specialchars_decode($title, ENT_QUOTES);
-                } else {
-                    $title = html_entity_decode($title, ENT_QUOTES, 'UTF-8');
-                }
-
-                $title = trim(preg_replace('/\s+/', ' ', $title));
-
-                return $title;
-            };
-
-            $soft_404_strip_text = static function ($html) {
-                if (!is_string($html) || $html === '') {
-                    return '';
-                }
-
-                if (function_exists('wp_strip_all_tags')) {
-                    $text = wp_strip_all_tags($html, true);
-                } else {
-                    $text = strip_tags($html);
-                }
-
-                $text = trim(preg_replace('/\s+/', ' ', (string) $text));
-
-                return $text;
-            };
-
-            $soft_404_matches_any = static function (array $patterns, array $candidates): bool {
-                if ($patterns === []) {
-                    return false;
-                }
-
-                foreach ($patterns as $pattern) {
-                    if (!is_string($pattern) || $pattern === '') {
-                        continue;
-                    }
-
-                    $pattern_value = (string) $pattern;
-                    $is_regex = false;
-                    $regex_body = '';
-                    $regex_flags = 'i';
-
-                    if (strlen($pattern_value) >= 2 && $pattern_value[0] === '/') {
-                        $last_delimiter = strrpos($pattern_value, '/');
-                        if ($last_delimiter !== false) {
-                            $regex_body = substr($pattern_value, 1, $last_delimiter - 1);
-                            $regex_flags = substr($pattern_value, $last_delimiter + 1);
-                            if ($regex_body !== '') {
-                                $is_regex = true;
-                            }
-                        }
-                    }
-
-                    foreach ($candidates as $candidate) {
-                        if (!is_string($candidate) || $candidate === '') {
-                            continue;
-                        }
-
-                        if ($is_regex) {
-                            $flags = $regex_flags === '' ? 'i' : $regex_flags;
-                            $expression = '/' . $regex_body . '/' . $flags;
-                            $match = @preg_match($expression, $candidate);
-                            if ($match === 1) {
-                                return true;
-                            }
-                            continue;
-                        }
-
-                        if (stripos($candidate, $pattern_value) !== false) {
-                            return true;
-                        }
-                    }
-                }
-
-                return false;
-            };
+            $soft_404_toolkit = $this->buildSoft404Toolkit($soft_404_config);
+            $soft_404_extract_title = $soft_404_toolkit['extract_title'];
+            $soft_404_strip_text = $soft_404_toolkit['strip_text'];
+            $soft_404_matches_any = $soft_404_toolkit['matches_any'];
 
             $parallel_requests_dispatcher = apply_filters('blc_parallel_requests_dispatcher', null);
             if (!is_callable($parallel_requests_dispatcher)) {

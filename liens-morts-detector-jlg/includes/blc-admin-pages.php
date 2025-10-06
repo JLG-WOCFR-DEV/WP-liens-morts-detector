@@ -147,12 +147,26 @@ function blc_render_action_modal() {
 function blc_schedule_manual_link_scan($is_full_scan = false) {
     $is_full_scan = (bool) $is_full_scan;
     $bypass_rest_window = $is_full_scan;
+    $job_id = function_exists('blc_generate_link_scan_job_id') ? blc_generate_link_scan_job_id() : uniqid('blc_', true);
+    $attempt = 1;
+    $scheduled_at = time();
 
     if (function_exists('wp_clear_scheduled_hook')) {
         wp_clear_scheduled_hook('blc_manual_check_batch');
     }
 
-    $scheduled = wp_schedule_single_event(time(), 'blc_manual_check_batch', array(0, $is_full_scan, $bypass_rest_window));
+    $schedule_args = array(0, $is_full_scan, $bypass_rest_window);
+    $scheduled = wp_schedule_single_event($scheduled_at, 'blc_manual_check_batch', $schedule_args);
+
+    if (false === $scheduled) {
+        $retry_delay = function_exists('apply_filters') ? (int) apply_filters('blc_manual_scan_retry_delay', 60) : 60;
+        if ($retry_delay < 5) {
+            $retry_delay = 5;
+        }
+
+        $attempt++;
+        $scheduled = wp_schedule_single_event($scheduled_at + $retry_delay, 'blc_manual_check_batch', $schedule_args);
+    }
 
     if (false === $scheduled) {
         error_log(
@@ -177,6 +191,18 @@ function blc_schedule_manual_link_scan($is_full_scan = false) {
             'total_items'       => 0,
             'processed_items'   => 0,
             'is_full_scan'      => $is_full_scan,
+            'job_id'            => $job_id,
+            'attempt'           => $attempt,
+        ]);
+
+        blc_append_link_scan_history_entry([
+            'job_id'      => $job_id,
+            'state'       => 'failed',
+            'message'     => $failure_message,
+            'attempt'     => $attempt,
+            'is_full_scan'=> $is_full_scan,
+            'scheduled_at'=> $scheduled_at,
+            'bypass_rest_window' => $bypass_rest_window,
         ]);
 
         return [
@@ -187,6 +213,7 @@ function blc_schedule_manual_link_scan($is_full_scan = false) {
     }
 
     $manual_trigger_failed = false;
+    $manual_trigger_error = '';
 
     if (!defined('DISABLE_WP_CRON') || !DISABLE_WP_CRON) {
         $manual_trigger_result = null;
@@ -202,6 +229,7 @@ function blc_schedule_manual_link_scan($is_full_scan = false) {
 
             if (function_exists('is_wp_error') && is_wp_error($manual_trigger_result)) {
                 $is_error = true;
+                $manual_trigger_error = $manual_trigger_result->get_error_message();
             }
 
             if ($is_error) {
@@ -217,6 +245,18 @@ function blc_schedule_manual_link_scan($is_full_scan = false) {
         $status_message .= ' ' . __("Le déclenchement immédiat du cron a échoué. Le système WordPress essaiera de l'exécuter automatiquement.", 'liens-morts-detector-jlg');
     }
 
+    blc_append_link_scan_history_entry([
+        'job_id'              => $job_id,
+        'state'               => 'queued',
+        'message'             => $status_message,
+        'attempt'             => $attempt,
+        'is_full_scan'        => $is_full_scan,
+        'scheduled_at'        => $scheduled_at,
+        'bypass_rest_window'  => $bypass_rest_window,
+        'manual_trigger_failed' => $manual_trigger_failed,
+        'manual_trigger_error'  => $manual_trigger_error,
+    ]);
+
     blc_update_link_scan_status([
         'state'             => 'queued',
         'current_batch'     => 0,
@@ -230,11 +270,17 @@ function blc_schedule_manual_link_scan($is_full_scan = false) {
         'last_error'        => '',
         'started_at'        => time(),
         'ended_at'          => 0,
+        'job_id'            => $job_id,
+        'attempt'           => $attempt,
     ]);
 
     return [
         'success'               => true,
-        'message'               => __("La vérification des liens a été programmée et s'exécute en arrière-plan.", 'liens-morts-detector-jlg'),
+        'message'               => sprintf(
+            /* translators: %s: unique job identifier. */
+            __("La vérification des liens a été programmée et s'exécute en arrière-plan. (Job : %s)", 'liens-morts-detector-jlg'),
+            esc_html($job_id)
+        ),
         'manual_trigger_failed' => $manual_trigger_failed,
     ];
 }
