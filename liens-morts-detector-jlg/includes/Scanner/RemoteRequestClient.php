@@ -125,15 +125,42 @@ class RemoteRequestClient
         $prepared = array_merge($this->defaultArgs, $args);
 
         $userAgent = $this->pickUserAgent($attempt);
-        if (!isset($prepared['headers']) || !is_array($prepared['headers'])) {
-            $prepared['headers'] = [];
+
+        $headers = [];
+        if (isset($prepared['headers']) && is_array($prepared['headers'])) {
+            $headers = $prepared['headers'];
         }
 
-        if (!isset($prepared['headers']['User-Agent'])) {
-            $prepared['headers']['User-Agent'] = $userAgent;
+        $existingHeaderKey = null;
+        foreach ($headers as $name => $value) {
+            if (!is_string($name)) {
+                continue;
+            }
+
+            if (strcasecmp($name, 'User-Agent') !== 0) {
+                continue;
+            }
+
+            $existingHeaderKey = $name;
+
+            if (is_scalar($value)) {
+                $candidate = trim((string) $value);
+                if ($candidate !== '') {
+                    $userAgent = $candidate;
+                }
+            }
+
+            break;
         }
 
-        $prepared['user-agent'] = $prepared['headers']['User-Agent'];
+        if ($existingHeaderKey === null) {
+            $existingHeaderKey = 'User-Agent';
+        }
+
+        $headers[$existingHeaderKey] = $userAgent;
+
+        $prepared['headers'] = $headers;
+        $prepared['user-agent'] = $userAgent;
 
         return $prepared;
     }

@@ -3,6 +3,7 @@
 namespace Tests\Scanner;
 
 use Brain\Monkey\Functions;
+use JLG\BrokenLinks\Scanner\RemoteRequestClient;
 
 final class RemoteRequestClientTest extends ScannerTestCase
 {
@@ -58,5 +59,47 @@ final class RemoteRequestClientTest extends ScannerTestCase
         $this->assertSame('example.com', blc_normalize_remote_host(' Example.COM '));
         $this->assertSame('2001:db8::1', blc_normalize_remote_host('2001:DB8::1'));
         $this->assertSame('203.0.113.5', blc_normalize_remote_host('203.0.113.5'));
+    }
+
+    public function test_request_uses_custom_user_agent_header_case_insensitively(): void
+    {
+        $client = new RemoteRequestClient([], [], ['Custom Default']);
+
+        $capturedArgs = null;
+        Functions\when('wp_safe_remote_get')->alias(static function ($url, $args) use (&$capturedArgs) {
+            $capturedArgs = $args;
+
+            return ['response' => ['code' => 200]];
+        });
+
+        $client->get('https://example.com', [
+            'headers' => ['user-agent' => 'My-Agent/1.0'],
+        ]);
+
+        $this->assertIsArray($capturedArgs);
+        $this->assertArrayHasKey('headers', $capturedArgs);
+        $this->assertSame('My-Agent/1.0', $capturedArgs['headers']['user-agent']);
+        $this->assertSame('My-Agent/1.0', $capturedArgs['user-agent']);
+    }
+
+    public function test_request_replaces_empty_user_agent_with_pool_value(): void
+    {
+        $client = new RemoteRequestClient([], [], ['Pool-Agent/2.0']);
+
+        $capturedArgs = null;
+        Functions\when('wp_safe_remote_get')->alias(static function ($url, $args) use (&$capturedArgs) {
+            $capturedArgs = $args;
+
+            return ['response' => ['code' => 200]];
+        });
+
+        $client->get('https://example.com', [
+            'headers' => ['USER-AGENT' => '   '],
+        ]);
+
+        $this->assertIsArray($capturedArgs);
+        $this->assertArrayHasKey('headers', $capturedArgs);
+        $this->assertSame('Pool-Agent/2.0', $capturedArgs['headers']['USER-AGENT']);
+        $this->assertSame('Pool-Agent/2.0', $capturedArgs['user-agent']);
     }
 }
