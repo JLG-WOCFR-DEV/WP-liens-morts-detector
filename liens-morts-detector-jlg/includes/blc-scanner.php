@@ -312,6 +312,157 @@ if (!function_exists('blc_record_link_scan_metrics')) {
     }
 }
 
+if (!function_exists('blc_get_link_scan_metrics_history')) {
+    /**
+     * Retrieve the persisted metrics history for link scans.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    function blc_get_link_scan_metrics_history() {
+        $history = get_option('blc_link_scan_metrics_history', []);
+
+        return is_array($history) ? $history : [];
+    }
+}
+
+if (!function_exists('blc_calculate_link_scan_history_insights')) {
+    /**
+     * Compute aggregate insights from the link scan history payload.
+     *
+     * @param array<int, array<string, mixed>> $history Raw history entries as stored in options.
+     *
+     * @return array<string, mixed>
+     */
+    function blc_calculate_link_scan_history_insights(array $history) {
+        $total_runs      = 0;
+        $completed_runs  = 0;
+        $failed_runs     = 0;
+        $durations       = [];
+        $throughputs     = [];
+        $last_job_summary = null;
+
+        foreach ($history as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            $total_runs++;
+
+            $state_raw = isset($entry['state']) ? (string) $entry['state'] : '';
+            if (function_exists('sanitize_key')) {
+                $state = sanitize_key($state_raw);
+            } else {
+                $state = strtolower(preg_replace('/[^a-z0-9_\-]/', '', $state_raw));
+            }
+
+            if ($state === 'completed') {
+                $completed_runs++;
+            } elseif ($state === 'failed') {
+                $failed_runs++;
+            }
+
+            $metrics = [];
+            if (isset($entry['metrics']) && is_array($entry['metrics'])) {
+                $metrics = $entry['metrics'];
+            }
+
+            $scheduled_at = isset($entry['scheduled_at']) ? (int) $entry['scheduled_at'] : 0;
+            $started_at   = isset($entry['started_at']) ? (int) $entry['started_at'] : 0;
+            $ended_at     = isset($entry['ended_at']) ? (int) $entry['ended_at'] : 0;
+            $attempt      = isset($entry['attempt']) ? max(0, (int) $entry['attempt']) : 0;
+            $is_full_scan = isset($entry['is_full_scan']) ? (bool) $entry['is_full_scan'] : false;
+
+            $duration_ms = null;
+            if (isset($metrics['duration_ms'])) {
+                $duration_ms = max(0, (int) $metrics['duration_ms']);
+            } elseif ($started_at > 0 && $ended_at >= $started_at) {
+                $duration_ms = max(0, (int) round(($ended_at - $started_at) * 1000));
+            }
+
+            $processed_items = 0;
+            if (isset($metrics['processed_items'])) {
+                $processed_items = max(0, (int) $metrics['processed_items']);
+            } elseif (isset($entry['processed_items'])) {
+                $processed_items = max(0, (int) $entry['processed_items']);
+            }
+
+            $total_items = 0;
+            if (isset($metrics['total_items'])) {
+                $total_items = max(0, (int) $metrics['total_items']);
+            } elseif (isset($entry['total_items'])) {
+                $total_items = max(0, (int) $entry['total_items']);
+            }
+
+            if (null !== $duration_ms) {
+                $durations[] = $duration_ms;
+
+                if ($duration_ms > 0 && $processed_items > 0) {
+                    $minutes = $duration_ms / 60000;
+                    if ($minutes > 0) {
+                        $throughputs[] = $processed_items / $minutes;
+                    }
+                }
+            }
+
+            if (null === $last_job_summary) {
+                $job_id = isset($entry['job_id']) ? (string) $entry['job_id'] : '';
+                $last_job_summary = [
+                    'job_id'          => $job_id,
+                    'state'           => $state,
+                    'scheduled_at'    => $scheduled_at,
+                    'started_at'      => $started_at,
+                    'ended_at'        => $ended_at,
+                    'duration_ms'     => $duration_ms ?? 0,
+                    'processed_items' => $processed_items,
+                    'total_items'     => $total_items,
+                    'attempt'         => $attempt,
+                    'is_full_scan'    => $is_full_scan,
+                ];
+            }
+        }
+
+        $average_duration_ms = 0.0;
+        if ($durations !== []) {
+            $average_duration_ms = array_sum($durations) / count($durations);
+        }
+
+        $average_throughput = 0.0;
+        if ($throughputs !== []) {
+            $average_throughput = array_sum($throughputs) / count($throughputs);
+        }
+
+        if (null === $last_job_summary) {
+            $last_job_summary = [
+                'job_id'          => '',
+                'state'           => '',
+                'scheduled_at'    => 0,
+                'started_at'      => 0,
+                'ended_at'        => 0,
+                'duration_ms'     => 0,
+                'processed_items' => 0,
+                'total_items'     => 0,
+                'attempt'         => 0,
+                'is_full_scan'    => false,
+            ];
+        }
+
+        $success_rate = 0.0;
+        if ($total_runs > 0) {
+            $success_rate = $completed_runs / $total_runs;
+        }
+
+        return [
+            'total_runs'             => $total_runs,
+            'completed_runs'         => $completed_runs,
+            'failed_runs'            => $failed_runs,
+            'success_rate'           => $success_rate,
+            'average_duration_ms'    => $average_duration_ms,
+            'average_throughput'     => $average_throughput,
+            'last_job_summary'       => $last_job_summary,
+        ];
+    }
+}
+
 if (!function_exists('blc_update_link_scan_status')) {
     /**
      * Persist link scan status updates.

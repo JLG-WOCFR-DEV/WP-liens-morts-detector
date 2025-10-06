@@ -43,6 +43,14 @@ function blc_add_admin_menu() {
     );
     add_submenu_page(
         'blc-dashboard',
+        __('Historique', 'liens-morts-detector-jlg'),
+        __('Historique', 'liens-morts-detector-jlg'),
+        'manage_options',
+        'blc-history',
+        'blc_scan_history_page'
+    );
+    add_submenu_page(
+        'blc-dashboard',
         __('Réglages', 'liens-morts-detector-jlg'),
         __('Réglages', 'liens-morts-detector-jlg'),
         'manage_options',
@@ -65,6 +73,10 @@ function blc_render_dashboard_tabs($active_tab) {
         'images'   => array(
             'label' => __('Images', 'liens-morts-detector-jlg'),
             'page'  => 'blc-images-dashboard',
+        ),
+        'history'  => array(
+            'label' => __('Historique', 'liens-morts-detector-jlg'),
+            'page'  => 'blc-history',
         ),
         'settings' => array(
             'label' => __('Réglages', 'liens-morts-detector-jlg'),
@@ -395,6 +407,598 @@ function blc_get_scan_state_label($state) {
     }
 
     return $labels[$key];
+}
+
+/**
+ * Format a timestamp for display in the history dashboard.
+ *
+ * @param int $timestamp Unix timestamp.
+ *
+ * @return string
+ */
+function blc_format_scan_history_datetime($timestamp) {
+    $timestamp = (int) $timestamp;
+    if ($timestamp <= 0) {
+        return __('—', 'liens-morts-detector-jlg');
+    }
+
+    $format = __('d/m/Y H:i', 'liens-morts-detector-jlg');
+
+    if (function_exists('wp_date')) {
+        return wp_date($format, $timestamp);
+    }
+
+    if (function_exists('date_i18n')) {
+        return date_i18n($format, $timestamp); // phpcs:ignore WordPress.DateTime.RestrictedFunctions.date_date
+    }
+
+    return gmdate($format, $timestamp);
+}
+
+/**
+ * Format a duration in milliseconds to a human readable string.
+ *
+ * @param float|int $duration_ms
+ *
+ * @return string
+ */
+function blc_format_scan_duration($duration_ms) {
+    $duration_ms = (float) $duration_ms;
+    if ($duration_ms <= 0) {
+        return __('—', 'liens-morts-detector-jlg');
+    }
+
+    $milliseconds = (int) round($duration_ms);
+    if ($milliseconds < 1000) {
+        return sprintf(
+            /* translators: %s: duration in milliseconds. */
+            __('%s ms', 'liens-morts-detector-jlg'),
+            number_format_i18n($milliseconds)
+        );
+    }
+
+    $total_seconds = (int) floor($milliseconds / 1000);
+    $hours         = (int) floor($total_seconds / 3600);
+    $minutes       = (int) floor(($total_seconds % 3600) / 60);
+    $seconds       = (int) ($total_seconds % 60);
+
+    $parts = [];
+
+    if ($hours > 0) {
+        if ($hours === 1) {
+            $parts[] = __('1 heure', 'liens-morts-detector-jlg');
+        } else {
+            $parts[] = sprintf(
+                /* translators: %s: number of hours. */
+                __('%s heures', 'liens-morts-detector-jlg'),
+                number_format_i18n($hours)
+            );
+        }
+    }
+
+    if ($minutes > 0) {
+        if ($minutes === 1) {
+            $parts[] = __('1 minute', 'liens-morts-detector-jlg');
+        } else {
+            $parts[] = sprintf(
+                /* translators: %s: number of minutes. */
+                __('%s minutes', 'liens-morts-detector-jlg'),
+                number_format_i18n($minutes)
+            );
+        }
+    }
+
+    if ($seconds > 0 || $parts === []) {
+        if ($seconds === 1) {
+            $parts[] = __('1 seconde', 'liens-morts-detector-jlg');
+        } else {
+            $parts[] = sprintf(
+                /* translators: %s: number of seconds. */
+                __('%s secondes', 'liens-morts-detector-jlg'),
+                number_format_i18n($seconds)
+            );
+        }
+    }
+
+    return implode(' ', $parts);
+}
+
+/**
+ * Format a processed/total pair for display.
+ *
+ * @param int $processed Number of processed elements.
+ * @param int $total     Total number of elements.
+ *
+ * @return string
+ */
+function blc_format_scan_progress_value($processed, $total) {
+    $processed = max(0, (int) $processed);
+    $total     = max(0, (int) $total);
+
+    if ($processed === 0 && $total === 0) {
+        return __('—', 'liens-morts-detector-jlg');
+    }
+
+    if ($total > 0) {
+        return sprintf(
+            /* translators: 1: processed count, 2: total count. */
+            __('%1$s / %2$s', 'liens-morts-detector-jlg'),
+            number_format_i18n($processed),
+            number_format_i18n($total)
+        );
+    }
+
+    return number_format_i18n($processed);
+}
+
+/**
+ * Format an items-per-minute throughput value.
+ *
+ * @param float $throughput Items per minute.
+ *
+ * @return string
+ */
+function blc_format_scan_throughput($throughput) {
+    $throughput = (float) $throughput;
+    if ($throughput <= 0) {
+        return __('—', 'liens-morts-detector-jlg');
+    }
+
+    return sprintf(
+        /* translators: %s: items per minute. */
+        __('%s éléments/min', 'liens-morts-detector-jlg'),
+        number_format_i18n($throughput, 1)
+    );
+}
+
+/**
+ * Retrieve the CSS modifier used to render a state badge in the history dashboard.
+ *
+ * @param string $state State slug.
+ *
+ * @return string
+ */
+function blc_get_history_state_class($state) {
+    $state = sanitize_key($state);
+
+    switch ($state) {
+        case 'completed':
+            return 'is-success';
+        case 'failed':
+            return 'is-error';
+        case 'running':
+            return 'is-running';
+        case 'queued':
+            return 'is-queued';
+        case 'cancelled':
+            return 'is-cancelled';
+        default:
+            return 'is-idle';
+    }
+}
+
+/**
+ * Render the scan history dashboard and metrics explorer.
+ */
+function blc_scan_history_page() {
+    $history_entries  = blc_get_link_scan_history();
+    $metrics_history  = blc_get_link_scan_metrics_history();
+    $insights         = blc_calculate_link_scan_history_insights($history_entries);
+
+    $total_runs        = isset($insights['total_runs']) ? (int) $insights['total_runs'] : 0;
+    $completed_runs    = isset($insights['completed_runs']) ? (int) $insights['completed_runs'] : 0;
+    $failed_runs       = isset($insights['failed_runs']) ? (int) $insights['failed_runs'] : 0;
+    $success_rate      = isset($insights['success_rate']) ? (float) $insights['success_rate'] : 0.0;
+    $average_duration  = isset($insights['average_duration_ms']) ? (float) $insights['average_duration_ms'] : 0.0;
+    $average_throughput = isset($insights['average_throughput']) ? (float) $insights['average_throughput'] : 0.0;
+    $last_job_summary  = isset($insights['last_job_summary']) && is_array($insights['last_job_summary'])
+        ? $insights['last_job_summary']
+        : [
+            'job_id'          => '',
+            'state'           => '',
+            'scheduled_at'    => 0,
+            'started_at'      => 0,
+            'ended_at'        => 0,
+            'duration_ms'     => 0,
+            'processed_items' => 0,
+            'total_items'     => 0,
+            'attempt'         => 0,
+            'is_full_scan'    => false,
+        ];
+
+    $success_rate = max(0.0, min(1.0, $success_rate));
+    $success_rate_percentage = $success_rate * 100.0;
+    $success_rate_display = ($total_runs > 0)
+        ? sprintf(
+            /* translators: %s: success percentage. */
+            __('%s %%', 'liens-morts-detector-jlg'),
+            number_format_i18n($success_rate_percentage, 1)
+        )
+        : __('—', 'liens-morts-detector-jlg');
+
+    $last_duration_display = blc_format_scan_duration($last_job_summary['duration_ms']);
+    $last_progress_display = blc_format_scan_progress_value($last_job_summary['processed_items'], $last_job_summary['total_items']);
+
+    $last_job_throughput = 0.0;
+    if ($last_job_summary['duration_ms'] > 0 && $last_job_summary['processed_items'] > 0) {
+        $minutes = $last_job_summary['duration_ms'] / 60000;
+        if ($minutes > 0) {
+            $last_job_throughput = $last_job_summary['processed_items'] / $minutes;
+        }
+    }
+
+    $summary_cards = [
+        [
+            'label' => __('Analyses totales', 'liens-morts-detector-jlg'),
+            'value' => number_format_i18n($total_runs),
+            'note'  => ($total_runs > 0)
+                ? sprintf(
+                    /* translators: 1: completed scans count, 2: failed scans count. */
+                    __('%1$s réussies · %2$s en échec', 'liens-morts-detector-jlg'),
+                    number_format_i18n($completed_runs),
+                    number_format_i18n($failed_runs)
+                )
+                : __('Aucune analyse enregistrée pour le moment.', 'liens-morts-detector-jlg'),
+        ],
+        [
+            'label' => __('Taux de réussite', 'liens-morts-detector-jlg'),
+            'value' => $success_rate_display,
+            'note'  => ($total_runs > 0 && $last_job_summary['state'] !== '')
+                ? sprintf(
+                    /* translators: %s: status label. */
+                    __('Dernière analyse : %s', 'liens-morts-detector-jlg'),
+                    blc_get_scan_state_label($last_job_summary['state'])
+                )
+                : '',
+        ],
+        [
+            'label' => __('Durée moyenne', 'liens-morts-detector-jlg'),
+            'value' => blc_format_scan_duration($average_duration),
+            'note'  => ($last_job_summary['duration_ms'] > 0)
+                ? sprintf(
+                    /* translators: %s: duration string. */
+                    __('Dernière : %s', 'liens-morts-detector-jlg'),
+                    $last_duration_display
+                )
+                : '',
+        ],
+        [
+            'label' => __('Débit moyen', 'liens-morts-detector-jlg'),
+            'value' => blc_format_scan_throughput($average_throughput),
+            'note'  => ($last_job_throughput > 0)
+                ? sprintf(
+                    /* translators: %s: items per minute. */
+                    __('Dernière : %s', 'liens-morts-detector-jlg'),
+                    blc_format_scan_throughput($last_job_throughput)
+                )
+                : '',
+        ],
+    ];
+
+    $job_rows = [];
+    foreach (array_slice($history_entries, 0, 10) as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+
+        $job_id = isset($entry['job_id']) ? (string) $entry['job_id'] : '';
+        $state_raw = isset($entry['state']) ? (string) $entry['state'] : '';
+        $state = sanitize_key($state_raw);
+        $state_label = blc_get_scan_state_label($state);
+        $state_class = blc_get_history_state_class($state);
+        $is_full_scan = !empty($entry['is_full_scan']);
+        $mode_label = $is_full_scan
+            ? __('Complet', 'liens-morts-detector-jlg')
+            : __('Incrémental', 'liens-morts-detector-jlg');
+        $attempt = isset($entry['attempt']) ? max(1, (int) $entry['attempt']) : 1;
+
+        $metrics = isset($entry['metrics']) && is_array($entry['metrics']) ? $entry['metrics'] : [];
+
+        $duration_ms = 0;
+        if (isset($metrics['duration_ms'])) {
+            $duration_ms = max(0, (int) $metrics['duration_ms']);
+        } elseif (isset($entry['started_at'], $entry['ended_at'])) {
+            $start = (int) $entry['started_at'];
+            $end   = (int) $entry['ended_at'];
+            if ($start > 0 && $end >= $start) {
+                $duration_ms = ($end - $start) * 1000;
+            }
+        }
+
+        $processed_items = 0;
+        if (isset($metrics['processed_items'])) {
+            $processed_items = max(0, (int) $metrics['processed_items']);
+        } elseif (isset($entry['processed_items'])) {
+            $processed_items = max(0, (int) $entry['processed_items']);
+        }
+
+        $total_items = 0;
+        if (isset($metrics['total_items'])) {
+            $total_items = max(0, (int) $metrics['total_items']);
+        } elseif (isset($entry['total_items'])) {
+            $total_items = max(0, (int) $entry['total_items']);
+        }
+
+        $processed_batches = 0;
+        if (isset($metrics['processed_batches'])) {
+            $processed_batches = max(0, (int) $metrics['processed_batches']);
+        } elseif (isset($entry['processed_batches'])) {
+            $processed_batches = max(0, (int) $entry['processed_batches']);
+        }
+
+        $total_batches = 0;
+        if (isset($metrics['total_batches'])) {
+            $total_batches = max(0, (int) $metrics['total_batches']);
+        } elseif (isset($entry['total_batches'])) {
+            $total_batches = max(0, (int) $entry['total_batches']);
+        }
+
+        $notes = [];
+        if (!empty($entry['manual_trigger_failed'])) {
+            $notes[] = __('Déclenchement manuel WP-Cron en échec.', 'liens-morts-detector-jlg');
+        }
+        if (!empty($entry['manual_trigger_error'])) {
+            $notes[] = sprintf(
+                /* translators: %s: error message. */
+                __('Erreur : %s', 'liens-morts-detector-jlg'),
+                (string) $entry['manual_trigger_error']
+            );
+        }
+        if (!empty($entry['bypass_rest_window'])) {
+            $notes[] = __('Fenêtre de repos contournée pour ce job.', 'liens-morts-detector-jlg');
+        }
+
+        $job_rows[] = [
+            'job_id'            => $job_id,
+            'state_label'      => $state_label,
+            'state_class'      => $state_class,
+            'mode_label'       => $mode_label,
+            'attempt'          => $attempt,
+            'scheduled_at'     => blc_format_scan_history_datetime($entry['scheduled_at'] ?? 0),
+            'started_at'       => blc_format_scan_history_datetime($entry['started_at'] ?? 0),
+            'ended_at'         => blc_format_scan_history_datetime($entry['ended_at'] ?? 0),
+            'duration'         => blc_format_scan_duration($duration_ms),
+            'items'            => blc_format_scan_progress_value($processed_items, $total_items),
+            'batches'          => blc_format_scan_progress_value($processed_batches, $total_batches),
+            'message'          => isset($entry['message']) ? (string) $entry['message'] : '',
+            'last_error'       => isset($entry['last_error']) ? (string) $entry['last_error'] : '',
+            'notes'            => $notes,
+        ];
+    }
+
+    $metric_rows = [];
+    foreach (array_slice($metrics_history, 0, 15) as $metric) {
+        if (!is_array($metric)) {
+            continue;
+        }
+
+        $job_id = isset($metric['job_id']) ? (string) $metric['job_id'] : '';
+        $batch   = isset($metric['batch']) ? (int) $metric['batch'] : null;
+        $attempt = isset($metric['attempt']) ? max(0, (int) $metric['attempt']) : 0;
+        $duration_ms = isset($metric['duration_ms']) ? max(0, (int) $metric['duration_ms']) : 0;
+        $processed_items = isset($metric['processed_items']) ? max(0, (int) $metric['processed_items']) : 0;
+        $total_items     = isset($metric['total_items']) ? max(0, (int) $metric['total_items']) : 0;
+        $processed_batches = isset($metric['processed_batches']) ? max(0, (int) $metric['processed_batches']) : 0;
+        $total_batches     = isset($metric['total_batches']) ? max(0, (int) $metric['total_batches']) : 0;
+        $state = isset($metric['state']) ? sanitize_key((string) $metric['state']) : '';
+        $is_success = !empty($metric['success']);
+        $is_full_scan = !empty($metric['is_full_scan']);
+
+        $result_parts = [];
+        $result_parts[] = $is_success
+            ? __('Succès', 'liens-morts-detector-jlg')
+            : __('Erreur', 'liens-morts-detector-jlg');
+        if ($state !== '') {
+            $result_parts[] = sprintf(
+                /* translators: %s: state label. */
+                __('État : %s', 'liens-morts-detector-jlg'),
+                blc_get_scan_state_label($state)
+            );
+        }
+
+        $metric_rows[] = [
+            'timestamp'      => blc_format_scan_history_datetime($metric['timestamp'] ?? 0),
+            'job_id'         => $job_id,
+            'batch'          => $batch,
+            'attempt'        => $attempt,
+            'mode_label'     => $is_full_scan
+                ? __('Complet', 'liens-morts-detector-jlg')
+                : __('Incrémental', 'liens-morts-detector-jlg'),
+            'duration'       => blc_format_scan_duration($duration_ms),
+            'items'          => blc_format_scan_progress_value($processed_items, $total_items),
+            'batches'        => blc_format_scan_progress_value($processed_batches, $total_batches),
+            'result'         => implode(' · ', $result_parts),
+            'result_class'   => $is_success ? 'is-success' : 'is-error',
+        ];
+    }
+
+    $last_job_state_class = blc_get_history_state_class($last_job_summary['state']);
+    $last_job_mode_label = $last_job_summary['is_full_scan']
+        ? __('Complet', 'liens-morts-detector-jlg')
+        : __('Incrémental', 'liens-morts-detector-jlg');
+    $last_job_attempt = max(1, (int) $last_job_summary['attempt']);
+
+    ?>
+    <div class="wrap blc-history-page">
+        <?php blc_render_dashboard_tabs('history'); ?>
+        <h1><?php esc_html_e('Historique des Analyses', 'liens-morts-detector-jlg'); ?></h1>
+
+        <div class="blc-stats-box">
+            <?php foreach ($summary_cards as $card) :
+                $note = isset($card['note']) ? (string) $card['note'] : '';
+                ?>
+                <div class="blc-stat blc-stat--static">
+                    <span class="blc-stat-value"><?php echo esc_html($card['value']); ?></span>
+                    <span class="blc-stat-label"><?php echo esc_html($card['label']); ?></span>
+                    <?php if ($note !== '') : ?>
+                        <span class="blc-stat-note"><?php echo esc_html($note); ?></span>
+                    <?php endif; ?>
+                </div>
+            <?php endforeach; ?>
+        </div>
+
+        <section class="blc-history-last-run">
+            <h2><?php esc_html_e('Dernière analyse', 'liens-morts-detector-jlg'); ?></h2>
+            <?php if ($total_runs === 0 || $last_job_summary['job_id'] === '') : ?>
+                <p class="blc-history-empty-message"><?php esc_html_e('Aucune analyse n’a été enregistrée pour le moment.', 'liens-morts-detector-jlg'); ?></p>
+            <?php else : ?>
+                <div class="blc-history-last-run__header">
+                    <span class="blc-history-state <?php echo esc_attr($last_job_state_class); ?>"><?php echo esc_html(blc_get_scan_state_label($last_job_summary['state'])); ?></span>
+                    <span class="blc-history-last-run__job"><?php printf(
+                        /* translators: %s: job identifier. */
+                        esc_html__('Job : %s', 'liens-morts-detector-jlg'),
+                        esc_html($last_job_summary['job_id'])
+                    ); ?></span>
+                    <span class="blc-history-last-run__mode"><?php printf(
+                        /* translators: %1$s: scan mode label, %2$s: attempt number. */
+                        esc_html__('%1$s · tentative %2$s', 'liens-morts-detector-jlg'),
+                        esc_html($last_job_mode_label),
+                        esc_html(number_format_i18n($last_job_attempt))
+                    ); ?></span>
+                </div>
+                <ul class="blc-history-last-run__details">
+                    <li><strong><?php esc_html_e('Planifié', 'liens-morts-detector-jlg'); ?> :</strong> <?php echo esc_html(blc_format_scan_history_datetime($last_job_summary['scheduled_at'])); ?></li>
+                    <li><strong><?php esc_html_e('Démarré', 'liens-morts-detector-jlg'); ?> :</strong> <?php echo esc_html(blc_format_scan_history_datetime($last_job_summary['started_at'])); ?></li>
+                    <li><strong><?php esc_html_e('Terminé', 'liens-morts-detector-jlg'); ?> :</strong> <?php echo esc_html(blc_format_scan_history_datetime($last_job_summary['ended_at'])); ?></li>
+                    <li><strong><?php esc_html_e('Durée', 'liens-morts-detector-jlg'); ?> :</strong> <?php echo esc_html($last_duration_display); ?></li>
+                    <li><strong><?php esc_html_e('Liens traités', 'liens-morts-detector-jlg'); ?> :</strong> <?php echo esc_html($last_progress_display); ?></li>
+                </ul>
+            <?php endif; ?>
+        </section>
+
+        <section class="blc-history-table-section">
+            <h2><?php esc_html_e('Historique des exécutions', 'liens-morts-detector-jlg'); ?></h2>
+            <table class="widefat fixed striped blc-history-table">
+                <thead>
+                <tr>
+                    <th scope="col"><?php esc_html_e('Job', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Statut', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Horodatages', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Performance', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Messages', 'liens-morts-detector-jlg'); ?></th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php if ($job_rows === []) : ?>
+                    <tr>
+                        <td colspan="5" class="blc-history-empty-message"><?php esc_html_e('Aucune exécution récente à afficher.', 'liens-morts-detector-jlg'); ?></td>
+                    </tr>
+                <?php else : ?>
+                    <?php foreach ($job_rows as $row) :
+                        $job_id_display = $row['job_id'] !== '' ? $row['job_id'] : __('(inconnu)', 'liens-morts-detector-jlg');
+                        ?>
+                        <tr>
+                            <td>
+                                <strong><?php echo esc_html($job_id_display); ?></strong>
+                                <div class="blc-history-meta"><?php printf(
+                                    /* translators: 1: scan mode, 2: attempt number. */
+                                    esc_html__('%1$s · tentative %2$s', 'liens-morts-detector-jlg'),
+                                    esc_html($row['mode_label']),
+                                    esc_html(number_format_i18n($row['attempt']))
+                                ); ?></div>
+                            </td>
+                            <td>
+                                <span class="blc-history-state <?php echo esc_attr($row['state_class']); ?>"><?php echo esc_html($row['state_label']); ?></span>
+                            </td>
+                            <td>
+                                <ul class="blc-history-list">
+                                    <li><strong><?php esc_html_e('Planifié', 'liens-morts-detector-jlg'); ?> :</strong> <?php echo esc_html($row['scheduled_at']); ?></li>
+                                    <li><strong><?php esc_html_e('Démarré', 'liens-morts-detector-jlg'); ?> :</strong> <?php echo esc_html($row['started_at']); ?></li>
+                                    <li><strong><?php esc_html_e('Terminé', 'liens-morts-detector-jlg'); ?> :</strong> <?php echo esc_html($row['ended_at']); ?></li>
+                                </ul>
+                            </td>
+                            <td>
+                                <ul class="blc-history-list">
+                                    <li><strong><?php esc_html_e('Durée', 'liens-morts-detector-jlg'); ?> :</strong> <?php echo esc_html($row['duration']); ?></li>
+                                    <li><strong><?php esc_html_e('Liens', 'liens-morts-detector-jlg'); ?> :</strong> <?php echo esc_html($row['items']); ?></li>
+                                    <li><strong><?php esc_html_e('Lots', 'liens-morts-detector-jlg'); ?> :</strong> <?php echo esc_html($row['batches']); ?></li>
+                                </ul>
+                            </td>
+                            <td>
+                                <?php if ($row['message'] !== '') : ?>
+                                    <p class="blc-history-message"><?php echo esc_html($row['message']); ?></p>
+                                <?php endif; ?>
+                                <?php if ($row['last_error'] !== '') : ?>
+                                    <p class="blc-history-error"><?php echo esc_html($row['last_error']); ?></p>
+                                <?php endif; ?>
+                                <?php if ($row['notes'] !== []) : ?>
+                                    <ul class="blc-history-notes">
+                                        <?php foreach ($row['notes'] as $note) : ?>
+                                            <li><?php echo esc_html($note); ?></li>
+                                        <?php endforeach; ?>
+                                    </ul>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+                </tbody>
+            </table>
+        </section>
+
+        <section class="blc-history-table-section">
+            <h2><?php esc_html_e('Métriques par lot', 'liens-morts-detector-jlg'); ?></h2>
+            <table class="widefat fixed striped blc-history-table">
+                <thead>
+                <tr>
+                    <th scope="col"><?php esc_html_e('Horodatage', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Job & lot', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Durée', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Progression', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Résultat', 'liens-morts-detector-jlg'); ?></th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php if ($metric_rows === []) : ?>
+                    <tr>
+                        <td colspan="5" class="blc-history-empty-message"><?php esc_html_e('Aucune métrique enregistrée pour le moment.', 'liens-morts-detector-jlg'); ?></td>
+                    </tr>
+                <?php else : ?>
+                    <?php foreach ($metric_rows as $metric_row) :
+                        $batch = $metric_row['batch'];
+                        $batch_display = '—';
+                        if ($batch !== null) {
+                            $batch_number = $batch + 1;
+                            if ($batch_number < 1) {
+                                $batch_number = $batch + 1;
+                            }
+                            $batch_display = sprintf(
+                                /* translators: %s: batch number. */
+                                __('Lot #%s', 'liens-morts-detector-jlg'),
+                                number_format_i18n(max(1, $batch_number))
+                            );
+                        }
+                        ?>
+                        <tr>
+                            <td><?php echo esc_html($metric_row['timestamp']); ?></td>
+                            <td>
+                                <strong><?php echo esc_html($metric_row['job_id'] !== '' ? $metric_row['job_id'] : __('(inconnu)', 'liens-morts-detector-jlg')); ?></strong>
+                                <div class="blc-history-meta"><?php echo esc_html($batch_display); ?></div>
+                                <div class="blc-history-meta"><?php printf(
+                                    /* translators: 1: scan mode, 2: attempt number. */
+                                    esc_html__('%1$s · tentative %2$s', 'liens-morts-detector-jlg'),
+                                    esc_html($metric_row['mode_label']),
+                                    esc_html(number_format_i18n(max(1, $metric_row['attempt'])))
+                                ); ?></div>
+                            </td>
+                            <td><?php echo esc_html($metric_row['duration']); ?></td>
+                            <td>
+                                <ul class="blc-history-list">
+                                    <li><strong><?php esc_html_e('Liens', 'liens-morts-detector-jlg'); ?> :</strong> <?php echo esc_html($metric_row['items']); ?></li>
+                                    <li><strong><?php esc_html_e('Lots', 'liens-morts-detector-jlg'); ?> :</strong> <?php echo esc_html($metric_row['batches']); ?></li>
+                                </ul>
+                            </td>
+                            <td>
+                                <span class="blc-history-state <?php echo esc_attr($metric_row['result_class']); ?>"><?php echo esc_html($metric_row['result']); ?></span>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+                </tbody>
+            </table>
+        </section>
+    </div>
+    <?php
 }
 
 /**

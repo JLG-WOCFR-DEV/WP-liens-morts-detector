@@ -105,6 +105,19 @@
     cursor: pointer;
 }
 
+.blc-stat--static {
+    cursor: default;
+}
+
+.blc-stat--static:hover,
+.blc-stat--static:focus,
+.blc-stat--static:focus-visible {
+    background-color: #f6f7f7;
+    border-color: #dcdcde;
+    color: #1d2327;
+    box-shadow: none;
+}
+
 .blc-stat.is-active {
     background-color: #f0f6fc;
     border-color: #2271b1;
@@ -200,6 +213,129 @@
 @media (prefers-reduced-motion: reduce) {
     .blc-stat {
         transition: none;
+    }
+}
+
+.blc-history-page h2 {
+    margin-top: 32px;
+}
+
+.blc-history-page .blc-history-last-run {
+    background-color: #ffffff;
+    border: 1px solid #c3c4c7;
+    border-left: 4px solid #72aee6;
+    padding: 20px;
+    margin-bottom: 24px;
+}
+
+.blc-history-last-run__header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.blc-history-last-run__job,
+.blc-history-last-run__mode {
+    font-weight: 500;
+}
+
+.blc-history-last-run__details,
+.blc-history-list,
+.blc-history-notes {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.blc-history-last-run__details li,
+.blc-history-list li {
+    margin-bottom: 6px;
+}
+
+.blc-history-notes li {
+    margin-bottom: 4px;
+    font-style: italic;
+    color: #50575e;
+}
+
+.blc-history-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    background-color: #f1f1f1;
+    color: #1d2327;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.blc-history-state.is-success {
+    background-color: #e6f4ea;
+    color: #0a5c2a;
+}
+
+.blc-history-state.is-error {
+    background-color: #fde8e8;
+    color: #9d0208;
+}
+
+.blc-history-state.is-running {
+    background-color: #e8f0fe;
+    color: #1d4ed8;
+}
+
+.blc-history-state.is-queued {
+    background-color: #fff4e5;
+    color: #b45309;
+}
+
+.blc-history-state.is-cancelled,
+.blc-history-state.is-idle {
+    background-color: #f6f7f7;
+    color: #50575e;
+}
+
+.blc-history-message {
+    margin: 0 0 6px;
+}
+
+.blc-history-error {
+    margin: 0 0 6px;
+    color: #9d0208;
+    font-weight: 600;
+}
+
+.blc-history-empty-message {
+    text-align: center;
+    color: #50575e;
+    font-style: italic;
+}
+
+.blc-history-meta {
+    font-size: 13px;
+    color: #50575e;
+    margin-top: 4px;
+}
+
+.blc-history-table {
+    margin-top: 12px;
+}
+
+.blc-history-table-section {
+    margin-bottom: 32px;
+}
+
+@media (max-width: 782px) {
+    .blc-history-last-run__header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .blc-history-state {
+        margin-bottom: 8px;
     }
 }
 
