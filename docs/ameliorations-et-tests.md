@@ -6,11 +6,15 @@
 - **`blc_perform_check`** – Le scan s'appuie sur un contrôleur mais ne publie pas d'informations de performance (temps par lot, taux d'erreur) ni de granularité sur la récupération en arrière-plan. Les produits professionnels exposent généralement des métriques temps réel, supportent la parallélisation et permettent de prioriser les éléments critiques ; ici, la fonction n'offre ni instrumentation ni adaptation dynamique à la charge serveur. 【F:liens-morts-detector-jlg/includes/blc-scanner.php†L3208-L3235】
 - **`blc_update_image_scan_status`** – Le statut `is_full_scan` est forcé à `true` avant l'enregistrement, ce qui empêche de différencier un balayage partiel d'un complet. Les suites pro conservent la granularité de configuration pour personnaliser les scans (par lot, par média critique, etc.), alors que cette implémentation annule l'intention de l'appelant. 【F:liens-morts-detector-jlg/includes/blc-scanner.php†L248-L308】
 - **`JLG\BrokenLinks\Scanner\RemoteRequestClient`** – Le client n'encapsule que des appels directs à `wp_safe_remote_*`. Les offres professionnelles proposent des stratégies de retry, la rotation d'agents utilisateurs, la mise en cache des réponses et un plafonnement dynamique du débit pour éviter les blocages réseau, fonctionnalités absentes ici. 【F:liens-morts-detector-jlg/includes/Scanner/RemoteRequestClient.php†L5-L20】
-- **`blc_get_link_scan_status_payload`** – Le retour se limite au statut brut et au verrouillage. Les applications avancées calculent des indicateurs (temps estimé restant, débit de traitement, derniers succès/échecs) pour aider au pilotage. L'absence de telles données réduit la transparence opérationnelle. 【F:liens-morts-detector-jlg/includes/blc-scanner.php†L126-L206】
-
 ## Tests de débogage ajoutés
 
 - **`Tests\BlcManualScanSchedulingTest`** : une nouvelle suite PHPUnit/Brain Monkey qui vérifie le comportement de `blc_schedule_manual_link_scan` lorsque la planification échoue, lorsqu'elle réussit et lorsque le déclenchement manuel via `spawn_cron()` échoue. Ces tests facilitent l'identification rapide des régressions liées à la fiabilité de la planification. 【F:tests/BlcManualScanSchedulingTest.php†L1-L224】
+- **`Tests\LinkScanStatusTest`** : enrichi pour couvrir le cache mémoire par requête, la purge via `blc_reset_link_scan_status()` et les métriques exposées dans le payload (pourcentage d'avancement, débit par minute, temps restant estimé). Ces assertions détectent les régressions de performance et garantissent la cohérence des données présentées à l'interface. 【F:tests/LinkScanStatusTest.php†L12-L187】
+
+## Améliorations réalisées
+
+- **`blc_get_link_scan_status_payload`** calcule désormais des métriques opérationnelles (pourcentage d'avancement, éléments restants, durée, débit par minute, estimation d'achèvement) et les expose à l'interface et à l'API REST pour un suivi plus transparent. 【F:liens-morts-detector-jlg/includes/blc-scanner.php†L10-L102】【F:liens-morts-detector-jlg/includes/blc-scanner.php†L366-L408】
+- **`blc_get_link_scan_status`** et **`blc_get_image_scan_status`** utilisent un cache mémoire par requête pour limiter les lectures répétitives de la base de données lors d'appels successifs, améliorant la charge serveur pendant les écrans de suivi. 【F:liens-morts-detector-jlg/includes/blc-scanner.php†L10-L102】【F:liens-morts-detector-jlg/includes/blc-scanner.php†L446-L544】
 
 ## Tests manuels recommandés
 

@@ -7,6 +7,100 @@ require_once __DIR__ . '/Scanner/RemoteRequestClient.php';
 require_once __DIR__ . '/Scanner/ImageUrlNormalizer.php';
 require_once __DIR__ . '/Scanner/ImageNormalizationContext.php';
 
+if (!function_exists('blc_link_scan_status_cache')) {
+    /**
+     * In-memory cache for the link scan status during a single request.
+     *
+     * @param array<string, mixed>|null $value  Optional value to store in cache.
+     * @param bool                      $reset  Whether to reset the cached value.
+     *
+     * @return array<string, mixed>|null
+     */
+    function blc_link_scan_status_cache($value = null, $reset = false) {
+        static $cached = null;
+
+        if ($reset) {
+            $cached = null;
+
+            return null;
+        }
+
+        if (is_array($value)) {
+            $cached = $value;
+
+            return $cached;
+        }
+
+        return $cached;
+    }
+}
+
+if (!function_exists('blc_enrich_scan_status_metrics')) {
+    /**
+     * Augment a scan status payload with progress and timing metrics.
+     *
+     * @param array<string, mixed> $status
+     *
+     * @return array<string, mixed>
+     */
+    function blc_enrich_scan_status_metrics(array $status) {
+        $processed = isset($status['processed_items']) ? max(0, (int) $status['processed_items']) : 0;
+        $total     = isset($status['total_items']) ? max(0, (int) $status['total_items']) : 0;
+        $remaining = max(0, $total - $processed);
+
+        $now     = time();
+        $state   = isset($status['state']) ? (string) $status['state'] : 'idle';
+        $started = isset($status['started_at']) ? (int) $status['started_at'] : 0;
+        $ended   = isset($status['ended_at']) ? (int) $status['ended_at'] : 0;
+        $updated = isset($status['updated_at']) ? (int) $status['updated_at'] : 0;
+
+        $progress = 0.0;
+        if ($total > 0) {
+            $progress = ($processed / $total) * 100;
+        } elseif ($processed > 0 && $total === 0) {
+            $progress = 100.0;
+        }
+
+        $progress = max(0.0, min(100.0, $progress));
+
+        $duration = 0;
+        if ($started > 0) {
+            if ($state === 'running') {
+                $duration = max(0, $now - $started);
+            } elseif ($ended > 0) {
+                $duration = max(0, $ended - $started);
+            } elseif ($updated > 0) {
+                $duration = max(0, $updated - $started);
+            }
+        }
+
+        $items_per_second = ($duration > 0 && $processed > 0)
+            ? $processed / $duration
+            : 0.0;
+
+        $eta_seconds = 0;
+        if ($state === 'running' && $items_per_second > 0 && $remaining > 0) {
+            $eta_seconds = (int) ceil($remaining / $items_per_second);
+        }
+
+        if ($state === 'completed' && $ended > 0) {
+            $eta_seconds = 0;
+        }
+
+        $status['progress_percentage'] = (float) round($progress, 2);
+        $status['remaining_items']      = $remaining;
+        $status['duration_seconds']     = $duration;
+        $status['items_per_minute']     = (float) round($items_per_second * 60, 2);
+        $status['estimated_remaining_seconds']   = $eta_seconds;
+        $status['estimated_completion_timestamp'] = ($eta_seconds > 0)
+            ? $now + $eta_seconds
+            : ($state === 'completed' && $ended > 0 ? $ended : 0);
+        $status['last_activity_delta'] = $updated > 0 ? max(0, $now - $updated) : 0;
+
+        return $status;
+    }
+}
+
 if (!function_exists('blc_get_default_link_scan_status')) {
     /**
      * Retrieve the default link scan status structure.
@@ -41,6 +135,11 @@ if (!function_exists('blc_get_link_scan_status')) {
      * @return array<string, mixed>
      */
     function blc_get_link_scan_status() {
+        $cached = blc_link_scan_status_cache();
+        if (is_array($cached)) {
+            return $cached;
+        }
+
         $status = get_option('blc_link_scan_status', []);
         if (!is_array($status)) {
             $status = [];
@@ -68,6 +167,8 @@ if (!function_exists('blc_get_link_scan_status')) {
         if ($status['state'] === 'completed' && $status['ended_at'] === 0 && $status['updated_at'] > 0) {
             $status['ended_at'] = $status['updated_at'];
         }
+
+        blc_link_scan_status_cache($status);
 
         return $status;
     }
@@ -280,6 +381,8 @@ if (!function_exists('blc_update_link_scan_status')) {
 
         update_option('blc_link_scan_status', $status, false);
 
+        blc_link_scan_status_cache($status);
+
         blc_update_link_scan_history_entry($status['job_id'], [
             'state'             => $status['state'],
             'message'           => $status['message'],
@@ -307,6 +410,7 @@ if (!function_exists('blc_reset_link_scan_status')) {
      */
     function blc_reset_link_scan_status() {
         delete_option('blc_link_scan_status');
+        blc_link_scan_status_cache(null, true);
     }
 }
 
@@ -349,6 +453,8 @@ if (!function_exists('blc_get_link_scan_status_payload')) {
      */
     function blc_get_link_scan_status_payload() {
         $status = blc_get_link_scan_status();
+
+        $status = blc_enrich_scan_status_metrics($status);
 
         $default_lock_timeout = defined('MINUTE_IN_SECONDS') ? 15 * MINUTE_IN_SECONDS : 900;
         $lock_timeout = apply_filters('blc_link_scan_lock_timeout', $default_lock_timeout);
@@ -398,6 +504,34 @@ if (!function_exists('blc_get_default_image_scan_status')) {
     }
 }
 
+if (!function_exists('blc_image_scan_status_cache')) {
+    /**
+     * In-memory cache for the image scan status during a single request.
+     *
+     * @param array<string, mixed>|null $value  Optional value to store in cache.
+     * @param bool                      $reset  Whether to reset the cached value.
+     *
+     * @return array<string, mixed>|null
+     */
+    function blc_image_scan_status_cache($value = null, $reset = false) {
+        static $cached = null;
+
+        if ($reset) {
+            $cached = null;
+
+            return null;
+        }
+
+        if (is_array($value)) {
+            $cached = $value;
+
+            return $cached;
+        }
+
+        return $cached;
+    }
+}
+
 if (!function_exists('blc_get_image_scan_status')) {
     /**
      * Return the current image scan status from the database.
@@ -405,6 +539,11 @@ if (!function_exists('blc_get_image_scan_status')) {
      * @return array<string, mixed>
      */
     function blc_get_image_scan_status() {
+        $cached = blc_image_scan_status_cache();
+        if (is_array($cached)) {
+            return $cached;
+        }
+
         $status = get_option('blc_image_scan_status', []);
         if (!is_array($status)) {
             $status = [];
@@ -431,6 +570,8 @@ if (!function_exists('blc_get_image_scan_status')) {
         if ($status['state'] === 'completed' && $status['ended_at'] === 0 && $status['updated_at'] > 0) {
             $status['ended_at'] = $status['updated_at'];
         }
+
+        blc_image_scan_status_cache($status);
 
         return $status;
     }
@@ -502,6 +643,8 @@ if (!function_exists('blc_update_image_scan_status')) {
 
         update_option('blc_image_scan_status', $status, false);
 
+        blc_image_scan_status_cache($status);
+
         return $status;
     }
 }
@@ -514,6 +657,7 @@ if (!function_exists('blc_reset_image_scan_status')) {
      */
     function blc_reset_image_scan_status() {
         delete_option('blc_image_scan_status');
+        blc_image_scan_status_cache(null, true);
     }
 }
 
@@ -545,6 +689,8 @@ if (!function_exists('blc_get_image_scan_status_payload')) {
      */
     function blc_get_image_scan_status_payload() {
         $status = blc_get_image_scan_status();
+
+        $status = blc_enrich_scan_status_metrics($status);
 
         $default_lock_timeout = defined('MINUTE_IN_SECONDS') ? 15 * MINUTE_IN_SECONDS : 900;
         $lock_timeout = apply_filters('blc_image_scan_lock_timeout', $default_lock_timeout);
