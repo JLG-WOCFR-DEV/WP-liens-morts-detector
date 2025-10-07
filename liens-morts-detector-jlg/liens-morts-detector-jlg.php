@@ -160,6 +160,14 @@ function blc_enqueue_admin_assets($hook) {
         true // Charger dans le pied de page pour de meilleures performances
     );
 
+    if (function_exists('wp_set_script_translations')) {
+        wp_set_script_translations(
+            'blc-admin-js',
+            'liens-morts-detector-jlg',
+            plugin_dir_path(__FILE__) . 'languages'
+        );
+    }
+
     wp_localize_script(
         'blc-admin-js',
         'blcAdminMessages',
