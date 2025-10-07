@@ -56,6 +56,7 @@ require_once BLC_PLUGIN_PATH . 'includes/blc-scanner.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-utils.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-settings-fields.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-admin-pages.php';
+require_once BLC_PLUGIN_PATH . 'includes/blc-reports.php';
 require_once BLC_PLUGIN_PATH . 'includes/class-blc-links-list-table.php';
 require_once BLC_PLUGIN_PATH . 'includes/class-blc-images-list-table.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-cli.php';
@@ -117,6 +118,7 @@ add_action('blc_check_links', 'blc_perform_check');
 add_action('blc_check_batch', 'blc_perform_check', 10, 3);
 add_action('blc_manual_check_batch', 'blc_perform_check', 10, 3);
 add_action('blc_check_image_batch', 'blc_perform_image_check', 10, 2);
+add_action('blc_generate_report_exports', 'blc_run_automated_report_exports');
 
 // Ajoute nos fichiers CSS et JS dans l'administration
 add_action('admin_enqueue_scripts', 'blc_enqueue_admin_assets');

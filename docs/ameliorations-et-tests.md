@@ -10,11 +10,13 @@
 
 - **`Tests\BlcManualScanSchedulingTest`** : une nouvelle suite PHPUnit/Brain Monkey qui vérifie le comportement de `blc_schedule_manual_link_scan` lorsque la planification échoue, lorsqu'elle réussit et lorsque le déclenchement manuel via `spawn_cron()` échoue. Ces tests facilitent l'identification rapide des régressions liées à la fiabilité de la planification. 【F:tests/BlcManualScanSchedulingTest.php†L1-L224】
 - **`Tests\LinkScanStatusTest`** : enrichi pour couvrir le cache mémoire par requête, la purge via `blc_reset_link_scan_status()` et les métriques exposées dans le payload (pourcentage d'avancement, débit par minute, temps restant estimé). Ces assertions détectent les régressions de performance et garantissent la cohérence des données présentées à l'interface. 【F:tests/LinkScanStatusTest.php†L12-L187】
+- **`Tests\BlcReportExportsTest`** : vérifie la synchronisation de la nouvelle planification d'exports, la génération de CSV lorsqu'un scan est terminé et l'enregistrement des tentatives ignorées pour éviter les doublons. Ces tests sécurisent l'itération sur les rapports automatisés. 【F:tests/BlcReportExportsTest.php†L1-L357】
 
 ## Améliorations réalisées
 
 - **`blc_get_link_scan_status_payload`** calcule désormais des métriques opérationnelles (pourcentage d'avancement, éléments restants, durée, débit par minute, estimation d'achèvement) et les expose à l'interface et à l'API REST pour un suivi plus transparent. 【F:liens-morts-detector-jlg/includes/blc-scanner.php†L10-L102】【F:liens-morts-detector-jlg/includes/blc-scanner.php†L366-L408】
 - **`blc_get_link_scan_status`** et **`blc_get_image_scan_status`** utilisent un cache mémoire par requête pour limiter les lectures répétitives de la base de données lors d'appels successifs, améliorant la charge serveur pendant les écrans de suivi. 【F:liens-morts-detector-jlg/includes/blc-scanner.php†L10-L102】【F:liens-morts-detector-jlg/includes/blc-scanner.php†L446-L544】
+- **Exports automatisés** : une nouvelle planification `blc_generate_report_exports` sérialise les résultats du dernier scan en CSV dans `wp-content/uploads/blc-report-exports`, mémorise les tentatives et évite les re-générations inutiles. 【F:liens-morts-detector-jlg/includes/blc-reports.php†L1-L330】【F:liens-morts-detector-jlg/includes/blc-cron.php†L626-L742】【F:liens-morts-detector-jlg/includes/blc-activation.php†L81-L118】
 
 ## Tests manuels recommandés
 
