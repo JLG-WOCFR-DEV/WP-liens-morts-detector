@@ -1252,6 +1252,86 @@ jQuery(document).ready(function($) {
         return columnCount;
     }
 
+    function normalizeElement(element) {
+        if (!element) {
+            return null;
+        }
+
+        if (element.jquery) {
+            return element.length ? element[0] : null;
+        }
+
+        return element;
+    }
+
+    function shouldRestoreFocus(target) {
+        var element = normalizeElement(target);
+
+        if (!element || typeof element.focus !== 'function') {
+            return false;
+        }
+
+        var activeElement = document.activeElement;
+
+        if (!activeElement || activeElement === document.body) {
+            return true;
+        }
+
+        if (activeElement === element) {
+            return false;
+        }
+
+        if (!document.body.contains(activeElement)) {
+            return true;
+        }
+
+        var $active = $(activeElement);
+
+        if (!$active.length) {
+            return true;
+        }
+
+        if ($active.is(':hidden') || $active.is(':disabled')) {
+            return true;
+        }
+
+        return false;
+    }
+
+    function restoreFocusAfterUpdate(target) {
+        var element = normalizeElement(target);
+
+        if (!shouldRestoreFocus(element)) {
+            return;
+        }
+
+        var applyFocus = function() {
+            if (!element) {
+                return;
+            }
+
+            if (!document.body.contains(element)) {
+                return;
+            }
+
+            if (!shouldRestoreFocus(element)) {
+                return;
+            }
+
+            try {
+                element.focus({ preventScroll: true });
+            } catch (error) {
+                element.focus();
+            }
+        };
+
+        if (typeof window.requestAnimationFrame === 'function') {
+            window.requestAnimationFrame(applyFocus);
+        } else {
+            window.setTimeout(applyFocus, 0);
+        }
+    }
+
     function handleSuccessfulResponse(response, row, helpers) {
         var $row = row && row.jquery ? row : $(row);
         var prefersReducedMotion = false;
@@ -1325,11 +1405,14 @@ jQuery(document).ready(function($) {
                     replacedRow: $replacementRow
                 });
 
+                restoreFocusAfterUpdate(nextFocusTarget);
+
                 return;
             }
 
             if (!rowRemoved) {
                 $normalizedRow.css('opacity', 1);
+                restoreFocusAfterUpdate(nextFocusTarget);
                 return;
             }
 
@@ -1370,6 +1453,8 @@ jQuery(document).ready(function($) {
                 table: $tbody.closest('table'),
                 messageRow: messageRow
             });
+
+            restoreFocusAfterUpdate(nextFocusTarget);
         }
 
         if ($row && $row.length) {
