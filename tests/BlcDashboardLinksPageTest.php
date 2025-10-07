@@ -97,6 +97,9 @@ class BlcDashboardLinksPageTest extends TestCase
             /** @var array<int, array<string, mixed>> */
             public $mock_results = [];
 
+            /** @var array<int, array<int, array<string, mixed>>> */
+            public $mock_results_queue = [];
+
             /** @var string|null */
             public $last_get_var_query = null;
 
@@ -153,6 +156,10 @@ class BlcDashboardLinksPageTest extends TestCase
             public function get_results($query, $output = ARRAY_A)
             {
                 $this->last_get_results_query = $query;
+
+                if (!empty($this->mock_results_queue)) {
+                    return array_shift($this->mock_results_queue);
+                }
 
                 return $this->mock_results;
             }
@@ -230,6 +237,20 @@ class BlcDashboardLinksPageTest extends TestCase
         Functions\when('number_format_i18n')->alias(static function ($number, $decimals = 0) {
             return number_format((float) $number, (int) $decimals);
         });
+        Functions\when('blc_get_link_scan_status_payload')->alias(static function () {
+            return [
+                'state'             => 'idle',
+                'message'           => '',
+                'processed_batches' => 0,
+                'total_batches'     => 0,
+                'remaining_batches' => 0,
+                'is_full_scan'      => false,
+            ];
+        });
+        Functions\when('blc_update_link_scan_status')->justReturn([]);
+        Functions\when('blc_append_link_scan_history_entry')->justReturn(true);
+        Functions\when('blc_generate_link_scan_job_id')->justReturn('job_123');
+        Functions\when('blc_get_timezone_label')->alias(static fn() => 'UTC');
         Functions\when('get_post_types')->alias(static function ($args = [], $output = 'names') {
             return ['post', 'page'];
         });
@@ -414,6 +435,7 @@ class BlcDashboardLinksPageTest extends TestCase
         $GLOBALS['wpdb']->mock_total = 5;
         $GLOBALS['wpdb']->mock_counts_row = [
             'total'               => 5,
+            'active_count'        => 5,
             'internal_count'      => 2,
             'not_found_count'     => 1,
             'server_error_count'  => 1,
@@ -580,6 +602,43 @@ class BlcDashboardLinksPageTest extends TestCase
         foreach ($matching_calls as $call) {
             $this->assertContains($expected_threshold, $call['params']);
         }
+    }
+
+    public function test_dashboard_displays_top_domains_section(): void
+    {
+        $GLOBALS['wpdb']->mock_results_queue = [
+            [],
+            [
+                [
+                    'url_host'             => 'cdn.example.com',
+                    'total_count'          => 12,
+                    'client_error_count'   => 7,
+                    'server_error_count'   => 3,
+                    'redirect_count'       => 1,
+                    'other_count'          => 1,
+                ],
+                [
+                    'url_host'             => 'static.example.net',
+                    'total_count'          => 5,
+                    'client_error_count'   => 2,
+                    'server_error_count'   => 0,
+                    'redirect_count'       => 2,
+                    'other_count'          => 1,
+                ],
+            ],
+            [],
+        ];
+
+        ob_start();
+        blc_dashboard_links_page();
+        $output = (string) ob_get_clean();
+
+        $this->assertStringContainsString('Domaines les plus concernés', $output);
+        $this->assertStringContainsString('cdn.example.com', $output);
+        $this->assertStringContainsString('12', $output);
+        $this->assertStringContainsString('4xx : 7', $output);
+        $this->assertStringContainsString('5xx : 3', $output);
+        $this->assertStringContainsString('Autres : 1', $output);
     }
 
     /**
