@@ -2585,7 +2585,7 @@ class ScanQueue {
                     update_option('blc_last_check_time', current_time('timestamp', true));
                     blc_clear_scan_cache($scan_cache_context);
                     blc_maybe_send_scan_summary('link');
-                    \blc_update_link_scan_status([
+                    $final_status = \blc_update_link_scan_status([
                         'state'             => 'completed',
                         'current_batch'     => (int) $batch,
                         'processed_batches' => $processed_batches,
@@ -2597,6 +2597,16 @@ class ScanQueue {
                             ? \__('Analyse terminée. Tous les lots ont été traités.', 'liens-morts-detector-jlg')
                             : \__('Analyse terminée. Aucun contenu à analyser.', 'liens-morts-detector-jlg'),
                     ]);
+                    if (function_exists('\\blc_schedule_automated_report_generation')) {
+                        $report_context = [
+                            'job_id'       => isset($final_status['job_id']) ? (string) $final_status['job_id'] : '',
+                            'started_at'   => isset($final_status['started_at']) ? (int) $final_status['started_at'] : 0,
+                            'ended_at'     => isset($final_status['ended_at']) ? (int) $final_status['ended_at'] : 0,
+                            'completed_at' => isset($final_status['updated_at']) ? (int) $final_status['updated_at'] : time(),
+                            'source'       => 'link_scan',
+                        ];
+                        \blc_schedule_automated_report_generation('link', $report_context);
+                    }
                 }
 
                 if ($debug_mode) { error_log("--- Fin du scan LIENS (Lot #$batch) ---"); }
