@@ -208,6 +208,88 @@ if (!function_exists('blc_get_link_scan_history')) {
     }
 }
 
+if (!function_exists('blc_get_link_scan_transition_rules')) {
+    /**
+     * Describe the allowed state transitions for link scans.
+     *
+     * @return array<string, array<int, string>>
+     */
+    function blc_get_link_scan_transition_rules() {
+        return [
+            'idle'      => ['idle', 'queued', 'running'],
+            'queued'    => ['queued', 'running', 'cancelled', 'failed', 'idle'],
+            'running'   => ['running', 'completed', 'failed', 'cancelled', 'idle'],
+            'completed' => ['completed', 'idle', 'queued'],
+            'failed'    => ['failed', 'idle', 'queued'],
+            'cancelled' => ['cancelled', 'idle', 'queued'],
+        ];
+    }
+}
+
+if (!function_exists('blc_is_valid_link_scan_transition')) {
+    /**
+     * Determine whether a state transition is allowed.
+     *
+     * @param string $from
+     * @param string $to
+     *
+     * @return bool
+     */
+    function blc_is_valid_link_scan_transition($from, $to) {
+        $from = sanitize_key((string) $from);
+        $to   = sanitize_key((string) $to);
+
+        $rules = blc_get_link_scan_transition_rules();
+
+        if (!isset($rules[$from])) {
+            return false;
+        }
+
+        return in_array($to, $rules[$from], true);
+    }
+}
+
+if (!function_exists('blc_get_link_scan_transition_log')) {
+    /**
+     * Retrieve the transition audit log.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    function blc_get_link_scan_transition_log() {
+        $log = get_option('blc_link_scan_transition_log', []);
+
+        return is_array($log) ? $log : [];
+    }
+}
+
+if (!function_exists('blc_record_link_scan_transition')) {
+    /**
+     * Persist a transition audit entry.
+     *
+     * @param string              $job_id
+     * @param array<string,mixed> $entry
+     *
+     * @return void
+     */
+    function blc_record_link_scan_transition($job_id, array $entry) {
+        $job_id = is_string($job_id) ? trim($job_id) : '';
+        $entry['job_id'] = $job_id;
+
+        if (!isset($entry['timestamp'])) {
+            $entry['timestamp'] = time();
+        }
+
+        $log = blc_get_link_scan_transition_log();
+        array_unshift($log, $entry);
+
+        if (count($log) > 50) {
+            $log = array_slice($log, 0, 50);
+        }
+
+        update_option('blc_link_scan_transition_log', $log, false);
+    }
+}
+
 if (!function_exists('blc_save_link_scan_history')) {
     /**
      * Persist the provided job history payload.
@@ -474,16 +556,52 @@ if (!function_exists('blc_update_link_scan_status')) {
     function blc_update_link_scan_status(array $changes) {
         $status = blc_get_link_scan_status();
         $previous_state = $status['state'];
+        $transition_log = null;
+        $requested_state = null;
+
+        if (array_key_exists('state', $changes)) {
+            $requested_state = sanitize_key((string) $changes['state']);
+            if ($requested_state === '' || !in_array($requested_state, ['idle', 'queued', 'running', 'completed', 'failed', 'cancelled'], true)) {
+                $requested_state = 'idle';
+            }
+
+            if (!blc_is_valid_link_scan_transition($previous_state, $requested_state)) {
+                $error_message = sprintf(
+                    /* translators: 1: previous state, 2: requested state. */
+                    __('Transition d\'état invalide de « %s » vers « %s ». Réinitialisez le statut avant de relancer une analyse.', 'liens-morts-detector-jlg'),
+                    $previous_state,
+                    $requested_state
+                );
+
+                $transition_log = [
+                    'from'   => $previous_state,
+                    'to'     => $requested_state,
+                    'valid'  => false,
+                    'reason' => $error_message,
+                ];
+
+                if (!isset($changes['last_error']) || !is_string($changes['last_error']) || $changes['last_error'] === '') {
+                    $changes['last_error'] = $error_message;
+                }
+                if (!isset($changes['message']) || !is_string($changes['message']) || $changes['message'] === '') {
+                    $changes['message'] = $error_message;
+                }
+
+                unset($changes['state']);
+            } else {
+                $status['state'] = $requested_state;
+                $transition_log = [
+                    'from'  => $previous_state,
+                    'to'    => $requested_state,
+                    'valid' => true,
+                ];
+
+                unset($changes['state']);
+            }
+        }
 
         foreach ($changes as $key => $value) {
             switch ($key) {
-                case 'state':
-                    $new_state = sanitize_key((string) $value);
-                    if ($new_state === '' || !in_array($new_state, ['idle', 'queued', 'running', 'completed', 'failed', 'cancelled'], true)) {
-                        $new_state = 'idle';
-                    }
-                    $status['state'] = $new_state;
-                    break;
                 case 'message':
                     $status['message'] = is_string($value) ? $value : '';
                     break;
@@ -533,6 +651,13 @@ if (!function_exists('blc_update_link_scan_status')) {
         update_option('blc_link_scan_status', $status, false);
 
         blc_link_scan_status_cache($status);
+
+        if (is_array($transition_log)) {
+            $transition_log['timestamp'] = $now;
+            $transition_log['job_id']    = isset($status['job_id']) ? (string) $status['job_id'] : '';
+
+            blc_record_link_scan_transition($transition_log['job_id'], $transition_log);
+        }
 
         blc_update_link_scan_history_entry($status['job_id'], [
             'state'             => $status['state'],
