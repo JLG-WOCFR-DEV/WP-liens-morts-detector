@@ -40,16 +40,16 @@
 @media (prefers-color-scheme: dark) {
     .wp-admin {
         --blc-admin-surface: #151718;
-        --blc-admin-surface-subtle: #1c1f21;
-        --blc-admin-surface-muted: #202427;
-        --blc-admin-border: #2d3236;
-        --blc-admin-border-subtle: #25292c;
+        --blc-admin-surface-subtle: #1d2125;
+        --blc-admin-surface-muted: #23282d;
+        --blc-admin-border: #353c43;
+        --blc-admin-border-subtle: #2a2f34;
         --blc-admin-text: #ecedee;
-        --blc-admin-text-subtle: #9ba1a6;
+        --blc-admin-text-subtle: #b5bcc3;
         --blc-admin-accent: #9d7ff9;
         --blc-admin-accent-strong: #d7c9ff;
-        --blc-admin-accent-soft: rgba(157, 127, 249, 0.18);
-        --blc-admin-accent-muted: rgba(157, 127, 249, 0.32);
+        --blc-admin-accent-soft: rgba(157, 127, 249, 0.26);
+        --blc-admin-accent-muted: rgba(157, 127, 249, 0.42);
         --blc-admin-success-bg: rgba(52, 199, 89, 0.16);
         --blc-admin-success-text: #4cc38a;
         --blc-admin-danger-bg: rgba(255, 105, 97, 0.18);
