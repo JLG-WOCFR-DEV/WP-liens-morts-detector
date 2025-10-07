@@ -3,24 +3,105 @@
 ## 1. Onboarding guidé et presets métiers
 - **Constat** : la page des réglages affiche une longue liste de champs techniques (fréquence, pauses, délais, timeouts, heuristiques soft 404) sans regroupement thématique ni aide contextuelle, ce qui suppose une expertise WordPress avancée pour configurer le plugin.【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L27-L210】【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L211-L498】
 - **Inspiration pro** : les plateformes d’audit SaaS proposent un assistant en plusieurs étapes, des presets selon le secteur (agence, e-commerce, institutionnel) et des conseils in-app.
-- **Amélioration proposée** : concevoir un wizard en trois étapes (profil d’usage → performance réseau → notifications) avec des textes d’aide, des valeurs recommandées et un mode « configuration rapide » qui charge un preset. Chaque section pourrait être animée via un composant React ou Alpine injecté dans la page Settings pour réduire la charge cognitive à l’instar d’outils comme Screaming Frog ou ContentKing.
+- **Améliorations détaillées** :
+  1. **Wizard en 3 étapes** (Profil → Paramètres réseau → Alertes) :
+     - Chaque écran comporte un texte introductif, une illustration et des champs limités (3–5 maximum) pour éviter la surcharge cognitive.
+     - Navigation progressive (boutons « Suivant » et « Retour », indicateur d’étape) et sauvegarde automatique après chaque étape via `wp.ajax.post`.
+     - Intégration possible dans la page `options-general.php?page=broken-link-checker` via une section React montée conditionnellement tant que l’utilisateur n’a pas terminé l’onboarding.
+  2. **Presets métiers** accessibles dès la première étape :
+     - Sélection d’un profil (ex. « Site éditorial », « Boutique WooCommerce », « Collectivité »).
+     - Chaque preset remplit des options cachées (délai d’expiration, tolérance Soft 404, nombre de requêtes concurrentes) avec la possibilité de les personnaliser ensuite.
+     - Stockage du preset choisi dans une option spécifique (`blc_selected_preset`) pour permettre des recommandations ultérieures.
+  3. **Aide contextuelle** :
+     - Info-bulles ou panneau latéral affichant des exemples concrets et des liens vers la documentation.
+     - Messages de confirmation clairs (« Votre audit est configuré pour 500 URLs toutes les 24 h »).
+     - Checklist de fin d’onboarding résumant les points essentiels avec CTA « Lancer un premier scan ».
+  4. **Mode configuration rapide** :
+     - Bouton « Paramétrer automatiquement » qui sélectionne un preset recommandé selon la taille du site (détection via `wp_count_posts` et `blc_link_query`).
+     - Feedback visuel (spinner et message de succès) pour rassurer l’utilisateur.
 
 ## 2. Tableau de bord exécutif actionnable
 - **Constat** : l’interface principale se limite à des onglets WordPress standard (Liens, Images, Historique, Réglages) et à des cartes statistiques basiques sans tendances, états critiques ou raccourcis décisionnels.【F:liens-morts-detector-jlg/includes/blc-admin-pages.php†L19-L109】【F:liens-morts-detector-jlg/assets/css/blc-admin-styles.css†L3-L158】 Les métriques détaillées existent en base (`blc_link_scan_metrics_history`) mais ne sont pas visualisées.【F:liens-morts-detector-jlg/includes/blc-scanner.php†L297-L325】
-- **Inspiration pro** : les consoles professionnelles exposent un overview avec KPIs temporels, cartes de santé, tendances, alertes et boutons d’actions rapides (re-scan, export, assignation). 
-- **Amélioration proposée** : créer une page d’accueil « Centre de supervision » combinant : (1) graphiques sparkline sur les volumes d’erreurs, (2) badges de sévérité avec codes couleur (critique, à surveiller), (3) timeline des derniers scans et incidents, (4) boutons rapides (« Relancer le scan », « Partager le rapport ») et (5) un encart « Actions suggérées » alimenté par les statuts dominants. Cela alignerait l’expérience sur des solutions comme SiteImprove ou ContentKing.
+- **Inspiration pro** : les consoles professionnelles exposent un overview avec KPIs temporels, cartes de santé, tendances, alertes et boutons d’actions rapides (re-scan, export, assignation).
+- **Améliorations détaillées** :
+  1. **Page « Centre de supervision »** en tant que nouvel onglet par défaut :
+     - Section « Vue d’ensemble » avec quatre KPI (Liens cassés critiques, Liens redirigés, Temps moyen de correction, Couverture de scan) accompagnés de variations J-7.
+     - Composants charts (sparklines ou mini-barres) en SVG/Canvas alimentés par les données de `blc_link_scan_metrics_history`.
+  2. **Cartes d’état** par catégorie de problème :
+     - Design en cartes de couleur (rouge/orange/bleu/vert) indiquant volume, tendance et bouton « Voir les liens concernés » filtrant la liste.
+     - Ajout d’icônes illustratives pour faciliter la hiérarchisation visuelle.
+  3. **Timeline et incidents récents** :
+     - Liste verticale des scans récents avec horodatage, durée, nombre de liens critiques détectés/corrigés.
+     - Tags « Succès », « Attention », « Échec » suivant le résultat du scan.
+  4. **Actions rapides** :
+     - Boutons primaires (« Relancer un scan complet », « Scanner uniquement les brouillons ») et secondaires (« Exporter CSV », « Partager un rapport »).
+     - Les actions déclenchent un toast de confirmation et proposent de planifier un scan récurrent.
+  5. **Encart « Actions suggérées »** :
+     - Recommandations dynamiques (ex. « 5 liens en erreur 500 depuis plus de 7 jours ») générées via une requête sur les liens non résolus.
+     - CTA contextuel (« Assigner à un éditeur », « Créer une redirection ») reliant aux workflows collaboratifs décrits ci-dessous.
+  6. **Personnalisation** :
+     - Possibilité pour l’utilisateur de masquer/afficher des widgets, dont la configuration est stockée via l’API `user_meta`.
 
 ## 3. Workflows collaboratifs et assignations
 - **Constat** : l’accès aux pages est limité à la capacité `manage_options` et le tableau des liens ne prévoit que des actions globales (éditer, dissocier, ignorer) sans notion d’assignation, de commentaire ou de statut personnalisé.【F:liens-morts-detector-jlg/includes/blc-admin-pages.php†L19-L58】【F:liens-morts-detector-jlg/includes/class-blc-links-list-table.php†L60-L205】
 - **Inspiration pro** : les outils d’agences incluent des colonnes « Assigné à », des workflows d’approbation, des tags personnalisés et des intégrations Jira/Asana.
-- **Amélioration proposée** : introduire un panneau latéral « Collaboration » permettant de (1) assigner un lien à un rôle éditorial dédié, (2) ajouter des commentaires internes et (3) suivre un statut de résolution (Nouveau, En cours, Corrigé, Vérifié). On pourrait stocker ces informations dans une table personnalisée et exposer des webhooks pour synchroniser l’état vers des outils externes.
+- **Améliorations détaillées** :
+  1. **Rôles et permissions affinés** :
+     - Créer un rôle `blc_manager` héritant de `edit_posts` avec accès aux écrans du plugin.
+     - Introduire des capabilities spécifiques (`blc_assign_links`, `blc_manage_workflow`) pour autoriser les assignations sans donner accès aux réglages globaux.
+  2. **Panneau latéral « Collaboration »** dans la liste des liens :
+     - Slide-over activé via un bouton « Collaborer » sur chaque ligne.
+     - Champs : assignation (liste des utilisateurs), statut (Nouveau, Analyse, Résolution, Vérifié), échéance, fil de commentaires.
+     - Historique des actions affiché sous forme de timeline avec avatar et horodatage.
+  3. **Base de données dédiée** :
+     - Table `wp_blc_link_workflow` (link_id, assignee_id, status, due_date, notes, updated_at).
+     - Webhooks optionnels (`blc_workflow_updated`) permettant d’envoyer les changements vers des outils externes.
+  4. **Notifications et intégrations** :
+     - Emails résumant les liens assignés en retard et notifications WordPress (`wp_admin_notice`) ciblées.
+     - Connecteurs simples (Zapier, Make) via un endpoint REST `blc/v1/workflows` pour créer/mettre à jour des tâches.
+  5. **Filtres et vues sauvegardées** :
+     - Possibilité de filtrer par assigné, statut ou priorité et d’enregistrer la vue (« Mes liens critiques », « À valider »).
+     - Export CSV ciblé respectant les colonnes de workflow.
 
 ## 4. Modale d’action enrichie et recommandations automatiques
 - **Constat** : la modale actuelle gère l’accessibilité (focus trap, aria-live) mais reste générique (titre, message, champ URL) sans visuel ni suggestion pour guider la prise de décision.【F:liens-morts-detector-jlg/includes/blc-admin-pages.php†L119-L148】
 - **Inspiration pro** : les interfaces modernes affichent des aperçus, des scores de confiance, des recommandations et des avertissements contextualisés.
-- **Amélioration proposée** : enrichir la modale avec (1) un aperçu miniaturisé de la page cible, (2) une suggestion automatique de redirection (basée sur la taxonomie ou l’historique) avec un bouton « Appliquer », (3) un indicateur de risque (ex. trafic estimé) et (4) des badges rappelant les actions récentes. Cela rapprocherait le flux de résolution de suites professionnelles comme Semrush Site Audit.
+- **Améliorations détaillées** :
+  1. **Layout modulaire** :
+     - Colonne gauche : contexte (page source, statut HTTP, dernière vérification).
+     - Colonne droite : actions (remplacer l’URL, ignorer, créer une redirection, assigner).
+     - Bandeau supérieur coloré selon la sévérité de l’erreur.
+  2. **Aperçu de la page cible** :
+     - Miniature générée via un service de screenshot (ou fallback avec favicon + meta title).
+     - Bouton « Ouvrir dans un nouvel onglet » et badge affichant le temps de réponse moyen.
+  3. **Recommandations automatiques** :
+     - Suggestion de redirection basée sur la structure du site (matching slug ou taxonomie) et l’historique des redirections enregistrées.
+     - Score de confiance (0–100) pour indiquer la pertinence de la suggestion.
+     - Action « Appliquer la recommandation » qui remplit automatiquement le champ URL ou crée une redirection via `wp_redirect`.
+  4. **Guide contextuel** :
+     - Section « Étapes suivantes » listant 2–3 actions (contacter l’auteur, vérifier la ressource, marquer comme corrigée) avec temps estimé.
+     - Zone de notes internes synchronisée avec le workflow collaboratif.
+  5. **Accessibilité renforcée** :
+     - Raccourcis clavier (←/→ pour naviguer entre les liens, `A` pour assigner, `R` pour remplacer).
+     - Annonces ARIA précisant les changements de statut et focus automatique sur la première action disponible.
 
 ## 5. Expérience mobile et terrain
 - **Constat** : les styles responsive basculent les onglets en pile et élargissent les cartes, mais aucun résumé ni action flottante n’est proposé pour un usage sur tablette lors d’audits terrain.【F:liens-morts-detector-jlg/assets/css/blc-admin-styles.css†L55-L138】
 - **Inspiration pro** : les applications d’audit mobiles conservent un bandeau supérieur avec KPI clés, un bouton principal toujours visible et des filtres dissimulés dans un tiroir coulissant.
-- **Amélioration proposée** : ajouter un header sticky sur mobile affichant le nombre de liens critiques, le temps écoulé depuis le dernier scan et une action « Scanner à nouveau ». Coupler ce header à un tiroir latéral « Filtres » permettrait d’ajuster rapidement l’affichage sans quitter l’écran, améliorant la productivité des consultants en déplacement.
+- **Améliorations détaillées** :
+  1. **Header sticky** :
+     - Bandeau compact affichant les KPIs critiques (liens cassés, derniers scans, temps depuis la dernière correction).
+     - Bouton primaire « Scanner à nouveau » ou « Ajouter une note » toujours visible, adapté aux interactions tactiles.
+  2. **Tiroir de filtres** :
+     - Icône filtre dans le header ouvrant un volet latéral en plein écran.
+     - Filtres rapides (statut, assigné, type de ressource) et tri (priorité, date de détection).
+     - Bouton « Sauvegarder cette vue » pour retrouver la configuration sur desktop.
+  3. **Cartes compactes** :
+     - Présentation en cartes verticales (titre, statut, actions principales) avec gestes swipe (marquer comme résolu, ignorer).
+     - Indicateur d’urgence coloré en bordure pour une lecture rapide en mobilité.
+  4. **Mode offline / faibles connexions** :
+     - Gestion optimisée des requêtes via préchargement minimal et indicateurs d’état (ex. « Connexion instable »).
+     - Possibilité de mettre en file les actions (assignations, notes) pour synchronisation dès qu’une connexion est rétablie.
+  5. **Support tablette** :
+     - Layout en split-view : liste des liens à gauche, détail/modale à droite, pour réduire les allers-retours.
+     - Adaptation des tailles de tap targets (>48 px) et espacement suffisant pour l’usage tactile.
