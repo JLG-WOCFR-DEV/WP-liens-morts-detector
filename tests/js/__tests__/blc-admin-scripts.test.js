@@ -6,6 +6,7 @@ describe('blc-admin-scripts accessibility helper', () => {
     let originalFadeOut;
     let originalVisible;
     let originalHidden;
+    let originalRequestAnimationFrame;
 
     beforeEach(() => {
         jest.resetModules();
@@ -44,6 +45,13 @@ describe('blc-admin-scripts accessibility helper', () => {
                 callback.call(this);
             }
             return this;
+        };
+
+        originalRequestAnimationFrame = window.requestAnimationFrame;
+        window.requestAnimationFrame = (callback) => {
+            if (typeof callback === 'function') {
+                callback();
+            }
         };
 
         window.blcAdminMessages = {
@@ -99,10 +107,17 @@ describe('blc-admin-scripts accessibility helper', () => {
 
         jest.resetModules();
 
+        if (originalRequestAnimationFrame) {
+            window.requestAnimationFrame = originalRequestAnimationFrame;
+        } else {
+            delete window.requestAnimationFrame;
+        }
+
         originalReady = undefined;
         originalFadeOut = undefined;
         originalVisible = undefined;
         originalHidden = undefined;
+        originalRequestAnimationFrame = undefined;
     });
 
     it('announces success through wp.a11y.speak for successful responses', () => {
@@ -123,6 +138,47 @@ describe('blc-admin-scripts accessibility helper', () => {
         );
 
         expect(window.wp.a11y.speak).toHaveBeenCalledWith('La ligne a été mise à jour.', 'polite');
+    });
+
+    it('restores focus to the next available action when no helper is provided', () => {
+        const firstButton = $('#row-1 .blc-edit-link')[0];
+        const secondButton = $('#row-2 .blc-edit-link')[0];
+
+        firstButton.focus();
+
+        window.blcAdmin.listActions.handleSuccessfulResponse(
+            {
+                success: true,
+                data: {}
+            },
+            $('#row-1')
+        );
+
+        expect(document.activeElement).toBe(secondButton);
+    });
+
+    it('does not override focus when helpers already moved it', () => {
+        const firstButton = $('#row-1 .blc-edit-link')[0];
+        const secondButton = $('#row-2 .blc-edit-link')[0];
+        const helpers = {
+            close: jest.fn(() => {
+                secondButton.focus();
+            })
+        };
+
+        firstButton.focus();
+
+        window.blcAdmin.listActions.handleSuccessfulResponse(
+            {
+                success: true,
+                data: {}
+            },
+            $('#row-1'),
+            helpers
+        );
+
+        expect(helpers.close).toHaveBeenCalledWith(secondButton);
+        expect(document.activeElement).toBe(secondButton);
     });
 });
 
