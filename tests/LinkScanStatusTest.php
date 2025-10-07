@@ -225,6 +225,31 @@ class LinkScanStatusTest extends TestCase
         $this->assertSame(75, $status['updated_at']);
     }
 
+    public function test_get_image_scan_status_preserves_is_full_scan_flag(): void
+    {
+        $this->options['blc_image_scan_status'] = [
+            'state' => 'running',
+            'is_full_scan' => false,
+        ];
+
+        $status = \blc_get_image_scan_status();
+
+        $this->assertFalse($status['is_full_scan']);
+    }
+
+    public function test_update_image_scan_status_accepts_partial_runs(): void
+    {
+        Functions\when('time')->alias(static fn() => 200);
+
+        $status = \blc_update_image_scan_status([
+            'state' => 'running',
+            'is_full_scan' => false,
+        ]);
+
+        $this->assertFalse($status['is_full_scan']);
+        $this->assertFalse($this->options['blc_image_scan_status']['is_full_scan']);
+    }
+
     public function test_get_link_scan_status_payload_includes_metrics(): void
     {
         $now = 200;

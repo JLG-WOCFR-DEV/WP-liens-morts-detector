@@ -714,7 +714,9 @@ if (!function_exists('blc_get_image_scan_status')) {
             $status[$numeric_key] = isset($status[$numeric_key]) ? max(0, (int) $status[$numeric_key]) : 0;
         }
 
-        $status['is_full_scan'] = true;
+        $status['is_full_scan'] = array_key_exists('is_full_scan', $status)
+            ? (bool) $status['is_full_scan']
+            : true;
         $status['message'] = isset($status['message']) && is_string($status['message']) ? $status['message'] : '';
         $status['last_error'] = isset($status['last_error']) && is_string($status['last_error']) ? $status['last_error'] : '';
 
@@ -790,7 +792,11 @@ if (!function_exists('blc_update_image_scan_status')) {
         }
 
         $status['updated_at'] = $now;
-        $status['is_full_scan'] = true;
+        if (array_key_exists('is_full_scan', $status)) {
+            $status['is_full_scan'] = (bool) $status['is_full_scan'];
+        } else {
+            $status['is_full_scan'] = true;
+        }
 
         update_option('blc_image_scan_status', $status, false);
 
