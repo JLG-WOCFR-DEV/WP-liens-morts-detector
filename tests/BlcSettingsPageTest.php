@@ -106,10 +106,18 @@ class BlcSettingsPageTest extends TestCase
 
             return '';
         });
+        Functions\when('esc_sql')->alias(static function ($value) {
+            return is_scalar($value) ? (string) $value : '';
+        });
         Functions\when('get_option')->alias(static function ($name, $default = false) use ($test_case) {
             return $test_case->getStoredOption((string) $name, $default);
         });
         Functions\when('update_option')->alias(static function ($name, $value) use ($test_case) {
+            $test_case->setStoredOption((string) $name, $value);
+
+            return true;
+        });
+        Functions\when('add_option')->alias(static function ($name, $value, $deprecated = '', $autoload = 'yes') use ($test_case) {
             $test_case->setStoredOption((string) $name, $value);
 
             return true;
@@ -221,6 +229,7 @@ class BlcSettingsPageTest extends TestCase
 
         $GLOBALS['wpdb'] = new class () {
             public string $prefix = 'wp_';
+            public bool $table_exists = false;
 
             public function get_charset_collate(): string
             {
@@ -243,9 +252,29 @@ class BlcSettingsPageTest extends TestCase
 
             public function get_var($query = null)
             {
-                return '';
+                return $this->table_exists ? 'wp_blc_broken_links' : '';
+            }
+
+            public function get_row($query = null)
+            {
+                return null;
+            }
+
+            public function query($query)
+            {
+                return true;
             }
         };
+
+        $wpdb_stub = $GLOBALS['wpdb'];
+        $test_case = $this;
+
+        Functions\when('dbDelta')->alias(function ($sql) use ($wpdb_stub, $test_case) {
+            $test_case->assertStringContainsString('CREATE TABLE wp_blc_broken_links', (string) $sql);
+            $wpdb_stub->table_exists = true;
+
+            return true;
+        });
 
         Functions\expect('blc_reset_link_check_schedule')
             ->once()
@@ -280,6 +309,68 @@ class BlcSettingsPageTest extends TestCase
         $this->assertLessThanOrEqual($upperBound, $event['timestamp']);
         $this->assertSame('daily', $event['recurrence']);
         $this->assertSame('blc_check_links', $event['hook']);
+    }
+
+    public function test_database_upgrade_creates_table_when_missing(): void
+    {
+        $tableExists = false;
+
+        $GLOBALS['wpdb'] = new class ($tableExists) {
+            public string $prefix = 'wp_';
+            private bool $table_exists;
+
+            public function __construct(bool &$table_exists)
+            {
+                $this->table_exists = &$table_exists;
+            }
+
+            public function get_charset_collate(): string
+            {
+                return 'utf8mb4_general_ci';
+            }
+
+            public function esc_like($text)
+            {
+                return $text;
+            }
+
+            public function prepare($query, ...$args)
+            {
+                if (!empty($args)) {
+                    return vsprintf(str_replace('%s', '%s', (string) $query), $args);
+                }
+
+                return (string) $query;
+            }
+
+            public function get_var($query = null)
+            {
+                return $this->table_exists ? 'wp_blc_broken_links' : '';
+            }
+
+            public function get_row($query = null)
+            {
+                return null;
+            }
+
+            public function query($query)
+            {
+                return true;
+            }
+        };
+
+        $test_case = $this;
+
+        Functions\when('dbDelta')->alias(function ($sql) use (&$tableExists, $test_case) {
+            $test_case->assertStringContainsString('CREATE TABLE wp_blc_broken_links', (string) $sql);
+            $tableExists = true;
+
+            return true;
+        });
+
+        blc_maybe_upgrade_database();
+
+        $this->assertTrue($tableExists, 'The broken links table should be created when missing.');
     }
 
     public function test_invalid_frequency_falls_back_to_previous_value(): void
