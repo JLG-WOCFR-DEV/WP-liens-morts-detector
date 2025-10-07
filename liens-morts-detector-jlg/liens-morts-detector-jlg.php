@@ -53,6 +53,7 @@ function blc_load_textdomain() {
 require_once BLC_PLUGIN_PATH . 'includes/blc-activation.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-cron.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-scanner.php';
+require_once BLC_PLUGIN_PATH . 'includes/blc-reporting.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-utils.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-settings-fields.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-admin-pages.php';

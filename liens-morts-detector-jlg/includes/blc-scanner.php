@@ -1233,7 +1233,7 @@ if (!class_exists('ImageScanQueue')) {
                 if ($debug_mode) { error_log("--- Scan IMAGES terminé ---"); }
                 update_option('blc_last_image_check_time', current_time('timestamp', true));
                 blc_maybe_send_scan_summary('image');
-                blc_update_image_scan_status([
+                $image_status = blc_update_image_scan_status([
                     'state'             => 'completed',
                     'current_batch'     => (int) $batch,
                     'processed_batches' => $processed_batches,
@@ -1246,6 +1246,16 @@ if (!class_exists('ImageScanQueue')) {
                         ? __('Analyse terminée. Tous les lots ont été traités.', 'liens-morts-detector-jlg')
                         : __('Analyse terminée. Aucun contenu à analyser.', 'liens-morts-detector-jlg'),
                 ]);
+                if (function_exists('blc_schedule_automated_report_generation')) {
+                    $report_context = [
+                        'job_id'       => '',
+                        'started_at'   => isset($image_status['started_at']) ? (int) $image_status['started_at'] : 0,
+                        'ended_at'     => isset($image_status['ended_at']) ? (int) $image_status['ended_at'] : 0,
+                        'completed_at' => isset($image_status['updated_at']) ? (int) $image_status['updated_at'] : time(),
+                        'source'       => 'image_scan',
+                    ];
+                    blc_schedule_automated_report_generation('image', $report_context);
+                }
                 blc_release_image_scan_lock($lock_token);
             }
         }
