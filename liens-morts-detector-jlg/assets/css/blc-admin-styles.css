@@ -1,72 +1,127 @@
 /* Styles pour le plugin Liens morts detector - JLG */
 
 :root {
-    --blc-admin-surface: #ffffff;
-    --blc-admin-surface-subtle: #f6f7f7;
-    --blc-admin-border: #c3c4c7;
-    --blc-admin-border-subtle: #dcdcde;
-    --blc-admin-text: #1d2327;
-    --blc-admin-text-subtle: #50575e;
-    --blc-admin-accent: #2271b1;
-    --blc-admin-accent-strong: #0a4b78;
-    --blc-admin-accent-soft: #f0f6fc;
-    --blc-admin-success-bg: #e6f4ea;
-    --blc-admin-success-text: #0a5c2a;
-    --blc-admin-danger-bg: #fde8e8;
-    --blc-admin-danger-text: #9d0208;
-    --blc-admin-danger-border: #f0c9c9;
-    --blc-admin-warning-bg: #fff4e5;
-    --blc-admin-warning-text: #b45309;
-    --blc-admin-info-bg: #e8f0fe;
-    --blc-admin-info-text: #1d4ed8;
+    --blc-admin-surface: #fcfcfd;
+    --blc-admin-surface-subtle: #f5f6f8;
+    --blc-admin-surface-muted: #eef0f6;
+    --blc-admin-border: #d7d9df;
+    --blc-admin-border-subtle: #e4e6eb;
+    --blc-admin-text: #11181c;
+    --blc-admin-text-subtle: #687076;
+    --blc-admin-accent: #6e56cf;
+    --blc-admin-accent-strong: #5746af;
+    --blc-admin-accent-soft: #f3f0ff;
+    --blc-admin-accent-muted: #e8e4ff;
+    --blc-admin-success-bg: #e5fbeb;
+    --blc-admin-success-text: #31694a;
+    --blc-admin-danger-bg: #ffe5e0;
+    --blc-admin-danger-text: #b02a1c;
+    --blc-admin-danger-border: #f4c2b9;
+    --blc-admin-warning-bg: #fff1d0;
+    --blc-admin-warning-text: #ad5f00;
+    --blc-admin-info-bg: #e4ecff;
+    --blc-admin-info-text: #3c4ae0;
+    --blc-admin-radius-xs: 6px;
+    --blc-admin-radius-sm: 8px;
+    --blc-admin-radius-md: 12px;
+    --blc-admin-shadow-sm: 0 4px 10px rgba(24, 31, 67, 0.12);
+    --blc-admin-shadow-md: 0 12px 30px -14px rgba(24, 31, 67, 0.25);
+    --blc-admin-transition: 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .wp-admin {
-    --blc-admin-accent: var(--wp-admin-theme-color, #2271b1);
-    --blc-admin-accent-strong: var(--wp-admin-theme-color-darker-20, #0a4b78);
-    --blc-admin-accent-soft: color-mix(in srgb, var(--blc-admin-accent) 18%, #ffffff);
+    font-family: "Inter", "Segoe UI", Roboto, sans-serif;
+    --blc-admin-accent: var(--wp-admin-theme-color, #6e56cf);
+    --blc-admin-accent-strong: var(--wp-admin-theme-color-darker-20, #5746af);
+    --blc-admin-accent-soft: color-mix(in srgb, var(--blc-admin-accent) 15%, #f6f1ff);
+    --blc-admin-accent-muted: color-mix(in srgb, var(--blc-admin-accent) 35%, #f6f1ff);
 }
 
 @media (prefers-color-scheme: dark) {
     .wp-admin {
-        --blc-admin-surface: #1d2327;
-        --blc-admin-surface-subtle: #23282d;
-        --blc-admin-border: #3c434a;
-        --blc-admin-border-subtle: #2d3338;
-        --blc-admin-text: #f0f0f1;
-        --blc-admin-text-subtle: #d0d3d7;
-        --blc-admin-success-bg: #1f3a2b;
-        --blc-admin-success-text: #b7f7d0;
-        --blc-admin-danger-bg: #3a1f1f;
-        --blc-admin-danger-text: #ffb4b4;
-        --blc-admin-danger-border: color-mix(in srgb, var(--blc-admin-danger-text) 35%, #000000);
-        --blc-admin-warning-bg: #3a2c1a;
-        --blc-admin-warning-text: #ffd89a;
-        --blc-admin-info-bg: #1f2c46;
-        --blc-admin-info-text: #a8c6ff;
+        --blc-admin-surface: #151718;
+        --blc-admin-surface-subtle: #1c1f21;
+        --blc-admin-surface-muted: #202427;
+        --blc-admin-border: #2d3236;
+        --blc-admin-border-subtle: #25292c;
+        --blc-admin-text: #ecedee;
+        --blc-admin-text-subtle: #9ba1a6;
+        --blc-admin-accent: #9d7ff9;
+        --blc-admin-accent-strong: #d7c9ff;
+        --blc-admin-accent-soft: rgba(157, 127, 249, 0.18);
+        --blc-admin-accent-muted: rgba(157, 127, 249, 0.32);
+        --blc-admin-success-bg: rgba(52, 199, 89, 0.16);
+        --blc-admin-success-text: #4cc38a;
+        --blc-admin-danger-bg: rgba(255, 105, 97, 0.18);
+        --blc-admin-danger-text: #ffb3a7;
+        --blc-admin-danger-border: rgba(255, 105, 97, 0.38);
+        --blc-admin-warning-bg: rgba(255, 204, 92, 0.2);
+        --blc-admin-warning-text: #ffcc5c;
+        --blc-admin-info-bg: rgba(125, 179, 255, 0.2);
+        --blc-admin-info-text: #89a2ff;
+        --blc-admin-shadow-sm: 0 10px 30px rgba(0, 0, 0, 0.35);
+        --blc-admin-shadow-md: 0 25px 50px -12px rgba(0, 0, 0, 0.45);
     }
 }
 
 .blc-admin-card {
-    background-color: var(--blc-admin-surface);
+    position: relative;
+    background: linear-gradient(145deg, var(--blc-admin-surface) 0%, var(--blc-admin-surface-subtle) 100%);
     border: 1px solid var(--blc-admin-border);
-    border-radius: 6px;
-    padding: 20px;
+    border-radius: var(--blc-admin-radius-md);
+    padding: 22px;
     margin-bottom: 20px;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    box-shadow: var(--blc-admin-shadow-sm);
+    transition:
+        box-shadow var(--blc-admin-transition),
+        transform var(--blc-admin-transition),
+        border-color var(--blc-admin-transition);
 }
 
 .blc-admin-card--subtle {
-    background-color: var(--blc-admin-surface-subtle);
+    background: linear-gradient(160deg, var(--blc-admin-surface-subtle), var(--blc-admin-surface-muted));
     border-color: var(--blc-admin-border-subtle);
 }
 
 .blc-admin-card--accent {
-    border-left: 4px solid var(--blc-admin-accent);
+    border-left: 6px solid var(--blc-admin-accent);
+    border-top-left-radius: var(--blc-admin-radius-md);
+    border-bottom-left-radius: var(--blc-admin-radius-md);
 }
 
 .blc-admin-card:last-child {
     margin-bottom: 0;
+}
+
+.blc-admin-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12) inset;
+    opacity: 0;
+    transition: opacity var(--blc-admin-transition);
+}
+
+.blc-admin-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--blc-admin-border-subtle);
+    box-shadow: var(--blc-admin-shadow-md);
+}
+
+.blc-admin-card:hover::after {
+    opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .blc-admin-card {
+        transition: none;
+    }
+
+    .blc-admin-card:hover {
+        transform: none;
+    }
 }
 
 /* Amélioration de la lisibilité des descriptions dans les formulaires */
@@ -80,6 +135,10 @@
     margin: 0;
     padding: 0;
     list-style: none;
+    background: var(--blc-admin-surface-subtle);
+    border-radius: var(--blc-admin-radius-sm);
+    padding: 6px;
+    border: 1px solid var(--blc-admin-border-subtle);
 }
 
 .blc-admin-tabs__item {
@@ -87,22 +146,30 @@
 }
 
 .blc-admin-tabs__link {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 8px 16px;
-    border-radius: 6px;
+    gap: 6px;
+    padding: 9px 18px;
+    border-radius: calc(var(--blc-admin-radius-sm) - 2px);
     border: 1px solid transparent;
-    background: var(--blc-admin-surface-subtle);
-    color: var(--blc-admin-text);
-    font-weight: 500;
+    background: transparent;
+    color: var(--blc-admin-text-subtle);
+    font-weight: 600;
+    letter-spacing: 0.01em;
     text-decoration: none;
-    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    transition:
+        color var(--blc-admin-transition),
+        border-color var(--blc-admin-transition),
+        background-color var(--blc-admin-transition),
+        box-shadow var(--blc-admin-transition);
 }
 
 .blc-admin-tabs__link:hover {
-    background: var(--blc-admin-accent-soft);
     color: var(--blc-admin-accent-strong);
+    background: var(--blc-admin-accent-soft);
+    border-color: var(--blc-admin-accent-muted);
 }
 
 .blc-admin-tabs__link:focus-visible {
@@ -114,7 +181,7 @@
     background: var(--blc-admin-surface);
     border-color: var(--blc-admin-accent);
     color: var(--blc-admin-accent-strong);
-    box-shadow: inset 0 -2px 0 var(--blc-admin-accent);
+    box-shadow: 0 10px 25px -18px var(--blc-admin-accent);
 }
 
 .blc-admin-tabs__link.is-active:focus-visible {
@@ -159,13 +226,19 @@
     flex: 1 1 180px;
     text-align: center;
     gap: 8px;
-    padding: 18px;
+    padding: 20px;
     border: 1px solid var(--blc-admin-border-subtle);
-    border-radius: 6px;
-    background-color: var(--blc-admin-surface-subtle);
+    border-radius: var(--blc-admin-radius-md);
+    background: linear-gradient(160deg, var(--blc-admin-surface-subtle), var(--blc-admin-surface));
     color: var(--blc-admin-text);
     text-decoration: none;
-    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    box-shadow: var(--blc-admin-shadow-sm);
+    transition:
+        background-color var(--blc-admin-transition),
+        color var(--blc-admin-transition),
+        border-color var(--blc-admin-transition),
+        box-shadow var(--blc-admin-transition),
+        transform var(--blc-admin-transition);
     cursor: pointer;
 }
 
@@ -186,7 +259,7 @@
     background-color: var(--blc-admin-accent-soft);
     border-color: var(--blc-admin-accent);
     color: var(--blc-admin-accent-strong);
-    box-shadow: 0 0 0 1px var(--blc-admin-accent) inset;
+    box-shadow: 0 0 0 1px var(--blc-admin-accent) inset, var(--blc-admin-shadow-sm);
 }
 
 .blc-stat.is-active .blc-stat-label,
@@ -200,7 +273,8 @@
     background-color: var(--blc-admin-accent-soft);
     border-color: var(--blc-admin-accent);
     color: var(--blc-admin-accent-strong);
-    box-shadow: 0 0 0 1px var(--blc-admin-accent) inset;
+    box-shadow: 0 0 0 1px var(--blc-admin-accent) inset, var(--blc-admin-shadow-md);
+    transform: translateY(-2px);
 }
 
 .blc-stat:focus {
@@ -247,6 +321,11 @@
     flex: 1 1 180px;
     text-align: center;
     gap: 6px;
+    background: var(--blc-admin-surface);
+    border-radius: var(--blc-admin-radius-sm);
+    padding: 16px;
+    border: 1px solid var(--blc-admin-border-subtle);
+    box-shadow: var(--blc-admin-shadow-sm);
 }
 
 .blc-meta-value {
@@ -398,37 +477,40 @@
 .blc-status {
     display: inline-flex;
     align-items: center;
-    padding: 0.1rem 0.55rem;
+    justify-content: center;
+    gap: 6px;
+    padding: 0.15rem 0.7rem;
     border-radius: 999px;
     font-size: 12px;
     line-height: 1.4;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    background-color: #374151;
+    font-weight: 650;
+    letter-spacing: 0.03em;
+    background-color: #1c2024;
     color: #f9fafb;
     font-variant-numeric: tabular-nums;
     text-transform: none;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .blc-status--2xx {
-    background-color: #0f5132;
-    color: #f8fafc;
+    background-color: #30a46c;
+    color: #fbfefc;
 }
 
 .blc-status--3xx {
-    background-color: #92400e;
-    color: #fef3c7;
+    background-color: #f5a524;
+    color: #2b1a03;
 }
 
 .blc-status--4xx,
 .blc-status--5xx {
-    background-color: #7f1d1d;
-    color: #fef2f2;
+    background-color: #e54d2e;
+    color: #fff5f2;
 }
 
 .blc-status--unknown {
-    background-color: #4b5563;
-    color: #f9fafb;
+    background-color: #6f6e77;
+    color: #fbfcfd;
 }
 
 /* Styles pour la légende des statuts HTTP */
