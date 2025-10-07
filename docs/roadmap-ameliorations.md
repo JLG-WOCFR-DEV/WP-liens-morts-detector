@@ -13,6 +13,8 @@ Cette feuille de route décline les pistes d'amélioration listées dans le `REA
 2. Ajouter un connecteur Google Sheets via l'API REST avec rotation automatique des tokens OAuth.
 3. Implémenter un upload vers des services S3 compatibles (AWS, Scaleway) avec configuration multi-endpoints.
 
+> ✅ Le scheduler `blc_generate_report_exports` est désormais disponible : il prépare le répertoire `blc-report-exports`, génère un CSV après chaque scan terminé et conserve l'historique des tentatives pour éviter les doublons. 【F:liens-morts-detector-jlg/includes/blc-reports.php†L1-L330】【F:liens-morts-detector-jlg/includes/blc-cron.php†L626-L742】
+
 **Indicateurs de réussite**
 - Temps moyen de génération < 30 secondes pour 10 000 liens.
 - Taux d'erreurs d'export < 1 % par semaine.

@@ -652,3 +652,171 @@ function blc_reset_image_check_schedule(array $args = array()) {
 
     return $result;
 }
+
+if (!function_exists('blc_is_report_export_enabled')) {
+    /**
+     * Determine if automated report exports are enabled.
+     *
+     * @return bool
+     */
+    function blc_is_report_export_enabled() {
+        $enabled = get_option('blc_report_export_enabled', false);
+
+        if (function_exists('apply_filters')) {
+            $enabled = apply_filters('blc_report_export_enabled', $enabled);
+        }
+
+        return (bool) $enabled;
+    }
+}
+
+if (!function_exists('blc_get_report_export_frequency')) {
+    /**
+     * Retrieve the configured schedule frequency for automated exports.
+     *
+     * @return string
+     */
+    function blc_get_report_export_frequency() {
+        $frequency = get_option('blc_report_export_frequency', 'daily');
+        if (!is_string($frequency)) {
+            $frequency = 'daily';
+        }
+
+        $frequency = trim($frequency);
+        if ($frequency === '') {
+            $frequency = 'daily';
+        }
+
+        if (function_exists('apply_filters')) {
+            $frequency = apply_filters('blc_report_export_frequency', $frequency);
+        }
+
+        if (!is_string($frequency) || $frequency === '') {
+            return 'daily';
+        }
+
+        return $frequency;
+    }
+}
+
+if (!function_exists('blc_resolve_report_export_schedule_slug')) {
+    /**
+     * Map a frequency option to a WP-Cron schedule slug.
+     *
+     * @param string $frequency Frequency string stored in options.
+     *
+     * @return string
+     */
+    function blc_resolve_report_export_schedule_slug($frequency) {
+        $frequency = is_string($frequency) ? trim($frequency) : '';
+
+        if ($frequency === '') {
+            return 'daily';
+        }
+
+        if (function_exists('sanitize_key')) {
+            $frequency = sanitize_key($frequency);
+        }
+
+        if ($frequency === '' || $frequency === 'custom') {
+            return 'daily';
+        }
+
+        return $frequency;
+    }
+}
+
+if (!function_exists('blc_calculate_report_export_start_timestamp')) {
+    /**
+     * Compute the first trigger timestamp for automated exports.
+     *
+     * @param string   $schedule_slug       WP-Cron schedule identifier.
+     * @param int|null $reference_timestamp Optional reference timestamp.
+     *
+     * @return int
+     */
+    function blc_calculate_report_export_start_timestamp($schedule_slug, $reference_timestamp = null) {
+        $now = ($reference_timestamp !== null) ? (int) $reference_timestamp : time();
+        $now = max(0, $now);
+
+        $schedules = function_exists('wp_get_schedules') ? wp_get_schedules() : [];
+        if (is_array($schedules) && isset($schedules[$schedule_slug]['interval'])) {
+            $interval = (int) $schedules[$schedule_slug]['interval'];
+            if ($interval > 0) {
+                $minimum_delay = defined('MINUTE_IN_SECONDS') ? MINUTE_IN_SECONDS : 60;
+                $delay = max($minimum_delay, min($interval, 12 * HOUR_IN_SECONDS));
+
+                return $now + $delay;
+            }
+        }
+
+        $fallback_delay = defined('HOUR_IN_SECONDS') ? HOUR_IN_SECONDS : 3600;
+
+        return $now + $fallback_delay;
+    }
+}
+
+if (!function_exists('blc_schedule_report_export_event')) {
+    /**
+     * Schedule the automated report export event.
+     *
+     * @param string|null $frequency           Optional frequency override.
+     * @param int|null    $reference_timestamp Optional reference timestamp.
+     *
+     * @return bool
+     */
+    function blc_schedule_report_export_event($frequency = null, $reference_timestamp = null) {
+        if (!function_exists('wp_schedule_event') || !function_exists('wp_get_schedules')) {
+            return false;
+        }
+
+        $frequency    = ($frequency === null) ? blc_get_report_export_frequency() : $frequency;
+        $schedule_slug = blc_resolve_report_export_schedule_slug($frequency);
+
+        $schedules = wp_get_schedules();
+        if (!isset($schedules[$schedule_slug])) {
+            if (function_exists('error_log')) {
+                error_log(sprintf('BLC: Report export schedule "%s" is not registered.', $schedule_slug));
+            }
+
+            return false;
+        }
+
+        $timestamp = blc_calculate_report_export_start_timestamp($schedule_slug, $reference_timestamp);
+        $scheduled = wp_schedule_event($timestamp, $schedule_slug, 'blc_generate_report_exports');
+
+        if (false === $scheduled && function_exists('error_log')) {
+            error_log(sprintf('BLC: Failed to schedule automated report exports (frequency: %s).', $schedule_slug));
+        }
+
+        return (bool) $scheduled;
+    }
+}
+
+if (!function_exists('blc_sync_report_export_schedule')) {
+    /**
+     * Ensure the report export schedule matches the current configuration.
+     *
+     * @return void
+     */
+    function blc_sync_report_export_schedule() {
+        if (!function_exists('wp_next_scheduled') || !function_exists('wp_clear_scheduled_hook')) {
+            return;
+        }
+
+        $existing = wp_next_scheduled('blc_generate_report_exports');
+        if (blc_is_report_export_enabled()) {
+            if (false === $existing) {
+                blc_schedule_report_export_event();
+            }
+
+            return;
+        }
+
+        if (false !== $existing) {
+            wp_clear_scheduled_hook('blc_generate_report_exports');
+        }
+    }
+}
+
+add_action('init', 'blc_sync_report_export_schedule');

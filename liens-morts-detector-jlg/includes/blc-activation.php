@@ -375,6 +375,18 @@ function blc_activate_site() {
 
     blc_maybe_upgrade_database();
 
+    if (get_option('blc_report_export_enabled', null) === null) {
+        add_option('blc_report_export_enabled', false, '', false);
+    }
+
+    if (get_option('blc_report_export_frequency', null) === null) {
+        add_option('blc_report_export_frequency', 'daily', '', false);
+    }
+
+    if (function_exists('blc_sync_report_export_schedule')) {
+        blc_sync_report_export_schedule();
+    }
+
     // On récupère la fréquence de scan enregistrée, ou 'daily' par défaut
     $frequency_option = get_option('blc_frequency', 'daily');
     $frequency_option = is_string($frequency_option) ? trim($frequency_option) : '';
@@ -522,6 +534,7 @@ function blc_deactivate_site() {
     wp_clear_scheduled_hook('blc_check_batch');
     wp_clear_scheduled_hook('blc_manual_check_batch');
     wp_clear_scheduled_hook('blc_check_image_batch', array(0, true));
+    wp_clear_scheduled_hook('blc_generate_report_exports');
 }
 
 function blc_deactivation($network_wide = false) {
