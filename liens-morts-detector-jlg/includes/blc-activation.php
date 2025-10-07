@@ -14,6 +14,64 @@ if (!defined('BLC_TEXT_FIELD_LENGTH')) {
 }
 
 /**
+ * Returns the SQL statement used to create the broken links table.
+ *
+ * @param string $table_name Nom de la table.
+ *
+ * @return string
+ */
+function blc_get_broken_links_table_schema($table_name) {
+    global $wpdb;
+
+    $charset_collate = $wpdb->get_charset_collate();
+
+    return "CREATE TABLE $table_name (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        url longtext NOT NULL,
+        anchor varchar(" . BLC_TEXT_FIELD_LENGTH . ") NULL,
+        post_id bigint(20) unsigned NOT NULL,
+        post_title varchar(" . BLC_TEXT_FIELD_LENGTH . ") NULL,
+        type varchar(32) NOT NULL,
+        occurrence_index int(10) NULL DEFAULT NULL,
+        url_host varchar(191) NULL,
+        is_internal tinyint(1) NOT NULL DEFAULT 0,
+        http_status smallint(6) NULL,
+        last_checked_at datetime NULL DEFAULT NULL,
+        ignored_at datetime NULL DEFAULT NULL,
+        redirect_target_url longtext NULL,
+        context_html longtext NULL,
+        context_excerpt text NULL,
+        PRIMARY KEY  (id),
+        KEY type (type),
+        KEY post_id (post_id),
+        KEY url_prefix (url(191)),
+        KEY url_host (url_host),
+        KEY is_internal (is_internal),
+        KEY ignored_at (ignored_at)
+    ) $charset_collate;";
+}
+
+/**
+ * Creates the broken links table if it does not already exist.
+ *
+ * @param string|null $table_name Optional custom table name.
+ *
+ * @return void
+ */
+function blc_create_broken_links_table($table_name = null) {
+    global $wpdb;
+
+    if ($table_name === null) {
+        $table_name = $wpdb->prefix . 'blc_broken_links';
+    }
+
+    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+
+    $sql = blc_get_broken_links_table_schema($table_name);
+    dbDelta($sql);
+}
+
+/**
  * Met à jour le schéma de la base de données si nécessaire.
  */
 function blc_maybe_upgrade_database() {
@@ -30,7 +88,13 @@ function blc_maybe_upgrade_database() {
     $table_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table_pattern));
 
     if (empty($table_exists)) {
-        return;
+        blc_create_broken_links_table($table_name);
+
+        $table_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table_pattern));
+
+        if (empty($table_exists)) {
+            return;
+        }
     }
 
     if (!$installed_version || version_compare($installed_version, '1.2.0', '<')) {
@@ -343,35 +407,7 @@ function blc_activate_site() {
     global $wpdb;
 
     // Création de la table dédiée aux liens et images cassés
-    $table_name      = $wpdb->prefix . 'blc_broken_links';
-    $charset_collate = $wpdb->get_charset_collate();
-    $sql             = "CREATE TABLE $table_name (
-        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-        url longtext NOT NULL,
-        anchor varchar(" . BLC_TEXT_FIELD_LENGTH . ") NULL,
-        post_id bigint(20) unsigned NOT NULL,
-        post_title varchar(" . BLC_TEXT_FIELD_LENGTH . ") NULL,
-        type varchar(32) NOT NULL,
-        occurrence_index int(10) NULL DEFAULT NULL,
-        url_host varchar(191) NULL,
-        is_internal tinyint(1) NOT NULL DEFAULT 0,
-        http_status smallint(6) NULL,
-        last_checked_at datetime NULL DEFAULT NULL,
-        ignored_at datetime NULL DEFAULT NULL,
-        redirect_target_url longtext NULL,
-        context_html longtext NULL,
-        context_excerpt text NULL,
-        PRIMARY KEY  (id),
-        KEY type (type),
-        KEY post_id (post_id),
-        KEY url_prefix (url(191)),
-        KEY url_host (url_host),
-        KEY is_internal (is_internal),
-        KEY ignored_at (ignored_at)
-    ) $charset_collate;";
-
-    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-    dbDelta($sql);
+    blc_create_broken_links_table();
 
     blc_maybe_upgrade_database();
 
