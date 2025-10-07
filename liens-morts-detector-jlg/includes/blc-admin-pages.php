@@ -823,7 +823,7 @@ function blc_scan_history_page() {
         <?php blc_render_dashboard_tabs('history'); ?>
         <h1><?php esc_html_e('Historique des Analyses', 'liens-morts-detector-jlg'); ?></h1>
 
-        <div class="blc-stats-box">
+        <div class="blc-stats-box blc-admin-card blc-admin-card--accent">
             <?php foreach ($summary_cards as $card) :
                 $note = isset($card['note']) ? (string) $card['note'] : '';
                 ?>
@@ -837,7 +837,7 @@ function blc_scan_history_page() {
             <?php endforeach; ?>
         </div>
 
-        <section class="blc-history-last-run">
+        <section class="blc-history-last-run blc-admin-card blc-admin-card--accent">
             <h2><?php esc_html_e('Dernière analyse', 'liens-morts-detector-jlg'); ?></h2>
             <?php if ($total_runs === 0 || $last_job_summary['job_id'] === '') : ?>
                 <p class="blc-history-empty-message"><?php esc_html_e('Aucune analyse n’a été enregistrée pour le moment.', 'liens-morts-detector-jlg'); ?></p>
@@ -1149,6 +1149,7 @@ function blc_dashboard_links_page() {
     $scan_panel_classes = array_filter(
         array(
             'blc-scan-status',
+            'blc-admin-card',
             'blc-scan-status--state-' . $scan_state_slug,
             in_array($scan_state_slug, array('running', 'queued'), true) ? 'is-active' : '',
             'completed' === $scan_state_slug ? 'is-completed' : '',
@@ -1310,7 +1311,7 @@ function blc_dashboard_links_page() {
     <div class="wrap blc-dashboard-links-page">
         <?php blc_render_dashboard_tabs('links'); ?>
         <h1><?php esc_html_e('Rapport des Liens Cassés', 'liens-morts-detector-jlg'); ?></h1>
-        <div class="blc-stats-box">
+        <div class="blc-stats-box blc-admin-card blc-admin-card--accent">
             <?php foreach ($stats_cards as $card) :
                 $link_type = $card['link_type'];
                 $card_url  = $build_dashboard_url($link_type);
@@ -1340,7 +1341,7 @@ function blc_dashboard_links_page() {
                 </a>
             <?php endforeach; ?>
         </div>
-        <div class="blc-meta-box">
+        <div class="blc-meta-box blc-admin-card blc-admin-card--subtle">
             <div class="blc-meta">
                 <span class="blc-meta-value"><?php echo esc_html($size_display); ?></span>
                 <span class="blc-meta-label"><?php esc_html_e('Poids des données', 'liens-morts-detector-jlg'); ?></span>
@@ -1389,7 +1390,7 @@ function blc_dashboard_links_page() {
             </div>
             <p class="blc-scan-status__message" aria-live="polite"><?php echo esc_html($scan_status['message']); ?></p>
         </div>
-        <form id="blc-manual-scan-form" method="post" class="blc-manual-scan-form" style="margin-bottom: 20px;">
+        <form id="blc-manual-scan-form" method="post" class="blc-manual-scan-form blc-admin-card blc-admin-card--subtle">
             <?php wp_nonce_field('blc_manual_check_nonce'); ?>
             <input type="hidden" name="blc_manual_check" value="1">
             <p>
@@ -1413,7 +1414,7 @@ function blc_dashboard_links_page() {
             </p>
             <input type="submit" class="button button-primary" value="<?php echo esc_attr__('Lancer la vérification des liens', 'liens-morts-detector-jlg'); ?>">
         </form>
-        <form method="post" class="blc-reschedule-cron-form" style="margin-bottom: 20px;">
+        <form method="post" class="blc-reschedule-cron-form blc-admin-card blc-admin-card--subtle">
             <?php wp_nonce_field('blc_reschedule_cron_nonce'); ?>
             <input type="hidden" name="blc_reschedule_cron" value="1">
             <p>
@@ -1426,7 +1427,7 @@ function blc_dashboard_links_page() {
         <?php if ($broken_links_count === 0): ?>
              <p><?php esc_html_e('✅ Aucun lien mort trouvé. Bravo !', 'liens-morts-detector-jlg'); ?></p>
         <?php else: ?>
-            <div class="blc-status-legend" role="note">
+            <div class="blc-status-legend blc-admin-card blc-admin-card--subtle" role="note">
                 <p class="blc-status-legend__title"><?php esc_html_e('Légende des statuts HTTP', 'liens-morts-detector-jlg'); ?></p>
                 <ul class="blc-status-legend__list">
                     <li class="blc-status-legend__item">
@@ -1696,6 +1697,7 @@ function blc_dashboard_images_page() {
     $image_scan_panel_classes = array_filter(
         array(
             'blc-scan-status',
+            'blc-admin-card',
             'blc-scan-status--state-' . $image_scan_state_slug,
             in_array($image_scan_state_slug, array('running', 'queued'), true) ? 'is-active' : '',
             'completed' === $image_scan_state_slug ? 'is-completed' : '',
@@ -1732,7 +1734,7 @@ function blc_dashboard_images_page() {
     <div class="wrap">
         <?php blc_render_dashboard_tabs('images'); ?>
         <h1><?php esc_html_e('Rapport des Images Cassées', 'liens-morts-detector-jlg'); ?></h1>
-        <div class="blc-stats-box">
+        <div class="blc-stats-box blc-admin-card blc-admin-card--accent">
             <div class="blc-stat">
                 <span class="blc-stat-value"><?php echo esc_html($broken_images_count); ?></span>
                 <span class="blc-stat-label"><?php esc_html_e('Images cassées trouvées', 'liens-morts-detector-jlg'); ?></span>
@@ -1795,7 +1797,7 @@ function blc_dashboard_images_page() {
             </div>
             <p class="blc-scan-status__message" aria-live="polite"><?php echo esc_html($image_status_message); ?></p>
         </div>
-        <form id="blc-image-manual-scan-form" method="post" class="blc-manual-scan-form" style="margin-bottom: 20px;">
+        <form id="blc-image-manual-scan-form" method="post" class="blc-manual-scan-form blc-admin-card blc-admin-card--subtle">
             <?php wp_nonce_field('blc_manual_image_check_nonce'); ?>
             <input type="hidden" name="blc_manual_image_check" value="1">
             <p><?php esc_html_e("L'analyse des images peut être longue et consommer des ressources. Elle s'exécute en arrière-plan sur l'ensemble du site.", 'liens-morts-detector-jlg'); ?></p>

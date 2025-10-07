@@ -1,5 +1,74 @@
 /* Styles pour le plugin Liens morts detector - JLG */
 
+:root {
+    --blc-admin-surface: #ffffff;
+    --blc-admin-surface-subtle: #f6f7f7;
+    --blc-admin-border: #c3c4c7;
+    --blc-admin-border-subtle: #dcdcde;
+    --blc-admin-text: #1d2327;
+    --blc-admin-text-subtle: #50575e;
+    --blc-admin-accent: #2271b1;
+    --blc-admin-accent-strong: #0a4b78;
+    --blc-admin-accent-soft: #f0f6fc;
+    --blc-admin-success-bg: #e6f4ea;
+    --blc-admin-success-text: #0a5c2a;
+    --blc-admin-danger-bg: #fde8e8;
+    --blc-admin-danger-text: #9d0208;
+    --blc-admin-danger-border: #f0c9c9;
+    --blc-admin-warning-bg: #fff4e5;
+    --blc-admin-warning-text: #b45309;
+    --blc-admin-info-bg: #e8f0fe;
+    --blc-admin-info-text: #1d4ed8;
+}
+
+.wp-admin {
+    --blc-admin-accent: var(--wp-admin-theme-color, #2271b1);
+    --blc-admin-accent-strong: var(--wp-admin-theme-color-darker-20, #0a4b78);
+    --blc-admin-accent-soft: color-mix(in srgb, var(--blc-admin-accent) 18%, #ffffff);
+}
+
+@media (prefers-color-scheme: dark) {
+    .wp-admin {
+        --blc-admin-surface: #1d2327;
+        --blc-admin-surface-subtle: #23282d;
+        --blc-admin-border: #3c434a;
+        --blc-admin-border-subtle: #2d3338;
+        --blc-admin-text: #f0f0f1;
+        --blc-admin-text-subtle: #d0d3d7;
+        --blc-admin-success-bg: #1f3a2b;
+        --blc-admin-success-text: #b7f7d0;
+        --blc-admin-danger-bg: #3a1f1f;
+        --blc-admin-danger-text: #ffb4b4;
+        --blc-admin-danger-border: color-mix(in srgb, var(--blc-admin-danger-text) 35%, #000000);
+        --blc-admin-warning-bg: #3a2c1a;
+        --blc-admin-warning-text: #ffd89a;
+        --blc-admin-info-bg: #1f2c46;
+        --blc-admin-info-text: #a8c6ff;
+    }
+}
+
+.blc-admin-card {
+    background-color: var(--blc-admin-surface);
+    border: 1px solid var(--blc-admin-border);
+    border-radius: 6px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.blc-admin-card--subtle {
+    background-color: var(--blc-admin-surface-subtle);
+    border-color: var(--blc-admin-border-subtle);
+}
+
+.blc-admin-card--accent {
+    border-left: 4px solid var(--blc-admin-accent);
+}
+
+.blc-admin-card:last-child {
+    margin-bottom: 0;
+}
+
 /* Amélioration de la lisibilité des descriptions dans les formulaires */
 .blc-admin-tabs {
     margin: 0 0 24px;
@@ -24,28 +93,28 @@
     padding: 8px 16px;
     border-radius: 6px;
     border: 1px solid transparent;
-    background: #f6f7f7;
-    color: #1d2327;
+    background: var(--blc-admin-surface-subtle);
+    color: var(--blc-admin-text);
     font-weight: 500;
     text-decoration: none;
-    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .blc-admin-tabs__link:hover {
-    background: #e0f0ff;
-    color: #0a4b78;
+    background: var(--blc-admin-accent-soft);
+    color: var(--blc-admin-accent-strong);
 }
 
 .blc-admin-tabs__link:focus-visible {
-    outline: 2px solid #2271b1;
+    outline: 2px solid var(--blc-admin-accent);
     outline-offset: 2px;
 }
 
 .blc-admin-tabs__link.is-active {
-    background: #ffffff;
-    border-color: #2271b1;
-    color: #0a4b78;
-    box-shadow: inset 0 -2px 0 #2271b1;
+    background: var(--blc-admin-surface);
+    border-color: var(--blc-admin-accent);
+    color: var(--blc-admin-accent-strong);
+    box-shadow: inset 0 -2px 0 var(--blc-admin-accent);
 }
 
 .blc-admin-tabs__link.is-active:focus-visible {
@@ -69,7 +138,7 @@
 }
 
 .wrap form p small {
-    color: #666;
+    color: var(--blc-admin-text-subtle);
 }
 .form-table th label {
     font-size: 1.1em;
@@ -80,11 +149,6 @@
     display: flex;
     gap: 20px;
     flex-wrap: wrap;
-    background-color: #fff;
-    border: 1px solid #c3c4c7;
-    padding: 20px;
-    margin-bottom: 20px;
-    border-left: 4px solid #72aee6; /* Couleur bleue standard de WordPress */
 }
 
 .blc-stat {
@@ -96,10 +160,10 @@
     text-align: center;
     gap: 8px;
     padding: 18px;
-    border: 1px solid #dcdcde;
+    border: 1px solid var(--blc-admin-border-subtle);
     border-radius: 6px;
-    background-color: #f6f7f7;
-    color: #1d2327;
+    background-color: var(--blc-admin-surface-subtle);
+    color: var(--blc-admin-text);
     text-decoration: none;
     transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
     cursor: pointer;
@@ -112,17 +176,17 @@
 .blc-stat--static:hover,
 .blc-stat--static:focus,
 .blc-stat--static:focus-visible {
-    background-color: #f6f7f7;
-    border-color: #dcdcde;
-    color: #1d2327;
+    background-color: var(--blc-admin-surface-subtle);
+    border-color: var(--blc-admin-border-subtle);
+    color: var(--blc-admin-text);
     box-shadow: none;
 }
 
 .blc-stat.is-active {
-    background-color: #f0f6fc;
-    border-color: #2271b1;
-    color: #0a4b78;
-    box-shadow: 0 0 0 1px #2271b1 inset;
+    background-color: var(--blc-admin-accent-soft);
+    border-color: var(--blc-admin-accent);
+    color: var(--blc-admin-accent-strong);
+    box-shadow: 0 0 0 1px var(--blc-admin-accent) inset;
 }
 
 .blc-stat.is-active .blc-stat-label,
@@ -133,10 +197,10 @@
 .blc-stat:hover,
 .blc-stat:focus,
 .blc-stat:focus-visible {
-    background-color: #f0f6fc;
-    border-color: #2271b1;
-    color: #0a4b78;
-    box-shadow: 0 0 0 1px #2271b1 inset;
+    background-color: var(--blc-admin-accent-soft);
+    border-color: var(--blc-admin-accent);
+    color: var(--blc-admin-accent-strong);
+    box-shadow: 0 0 0 1px var(--blc-admin-accent) inset;
 }
 
 .blc-stat:focus {
@@ -144,7 +208,7 @@
 }
 
 .blc-stat:focus-visible {
-    outline: 2px solid #2271b1;
+    outline: 2px solid var(--blc-admin-accent);
     outline-offset: 2px;
 }
 
@@ -173,11 +237,6 @@
     display: flex;
     gap: 20px;
     flex-wrap: wrap;
-    background-color: #fff;
-    border: 1px solid #c3c4c7;
-    padding: 20px;
-    margin-bottom: 20px;
-    border-left: 4px solid #dcdcde;
 }
 
 .blc-meta {
@@ -194,19 +253,19 @@
     font-size: 1.6em;
     font-weight: 600;
     line-height: 1.3;
-    color: #1d2327;
+    color: var(--blc-admin-text);
 }
 
 .blc-meta-label {
     font-size: 0.95em;
-    color: #50575e;
+    color: var(--blc-admin-text-subtle);
 }
 
 .blc-stat-note {
     margin-top: 6px;
     font-size: 12px;
     line-height: 1.5;
-    color: #646970;
+    color: var(--blc-admin-text-subtle);
     display: block;
 }
 
@@ -221,10 +280,6 @@
 }
 
 .blc-history-page .blc-history-last-run {
-    background-color: #ffffff;
-    border: 1px solid #c3c4c7;
-    border-left: 4px solid #72aee6;
-    padding: 20px;
     margin-bottom: 24px;
 }
 
@@ -257,7 +312,7 @@
 .blc-history-notes li {
     margin-bottom: 4px;
     font-style: italic;
-    color: #50575e;
+    color: var(--blc-admin-text-subtle);
 }
 
 .blc-history-state {
@@ -266,36 +321,36 @@
     gap: 6px;
     padding: 4px 12px;
     border-radius: 999px;
-    background-color: #f1f1f1;
-    color: #1d2327;
+    background-color: var(--blc-admin-surface-subtle);
+    color: var(--blc-admin-text);
     font-weight: 600;
     font-size: 13px;
 }
 
 .blc-history-state.is-success {
-    background-color: #e6f4ea;
-    color: #0a5c2a;
+    background-color: var(--blc-admin-success-bg);
+    color: var(--blc-admin-success-text);
 }
 
 .blc-history-state.is-error {
-    background-color: #fde8e8;
-    color: #9d0208;
+    background-color: var(--blc-admin-danger-bg);
+    color: var(--blc-admin-danger-text);
 }
 
 .blc-history-state.is-running {
-    background-color: #e8f0fe;
-    color: #1d4ed8;
+    background-color: var(--blc-admin-info-bg);
+    color: var(--blc-admin-info-text);
 }
 
 .blc-history-state.is-queued {
-    background-color: #fff4e5;
-    color: #b45309;
+    background-color: var(--blc-admin-warning-bg);
+    color: var(--blc-admin-warning-text);
 }
 
 .blc-history-state.is-cancelled,
 .blc-history-state.is-idle {
-    background-color: #f6f7f7;
-    color: #50575e;
+    background-color: var(--blc-admin-surface-subtle);
+    color: var(--blc-admin-text-subtle);
 }
 
 .blc-history-message {
@@ -304,19 +359,19 @@
 
 .blc-history-error {
     margin: 0 0 6px;
-    color: #9d0208;
+    color: var(--blc-admin-danger-text);
     font-weight: 600;
 }
 
 .blc-history-empty-message {
     text-align: center;
-    color: #50575e;
+    color: var(--blc-admin-text-subtle);
     font-style: italic;
 }
 
 .blc-history-meta {
     font-size: 13px;
-    color: #50575e;
+    color: var(--blc-admin-text-subtle);
     margin-top: 4px;
 }
 
@@ -336,45 +391,6 @@
 
     .blc-history-state {
         margin-bottom: 8px;
-    }
-}
-
-@media (prefers-color-scheme: dark) {
-    .blc-stat {
-        background-color: #1f1f1f;
-        border-color: #3c434a;
-        color: #f0f0f1;
-    }
-
-    .blc-stat.is-active {
-        background-color: #233142;
-        border-color: #72aee6;
-        color: #cbe5ff;
-        box-shadow: 0 0 0 1px #72aee6 inset;
-    }
-
-    .blc-stat:hover,
-    .blc-stat:focus-visible {
-        background-color: #30363d;
-        border-color: #72aee6;
-        color: #cbe5ff;
-    }
-
-    .blc-meta-box {
-        background-color: #1d2327;
-        border-color: #3c434a;
-    }
-
-    .blc-meta-value {
-        color: #f0f0f1;
-    }
-
-    .blc-meta-label {
-        color: #d0d3d7;
-    }
-
-    .blc-stat-note {
-        color: #b7c0cc;
     }
 }
 
@@ -418,16 +434,12 @@
 /* Styles pour la légende des statuts HTTP */
 .blc-status-legend {
     margin: 16px 0;
-    padding: 12px 16px;
-    border: 1px solid #d0d1d4;
-    border-radius: 6px;
-    background-color: #f6f7f7;
 }
 
 .blc-status-legend__title {
     margin: 0 0 8px;
     font-weight: 600;
-    color: #1d2327;
+    color: var(--blc-admin-text);
 }
 
 .blc-status-legend__list {
@@ -443,21 +455,12 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    color: #1d2327;
+    color: var(--blc-admin-text);
     font-size: 13px;
 }
 
 .blc-status-legend__item span:last-child {
     line-height: 1.3;
-}
-
-.blc-scan-status {
-    border: 1px solid #dcdcde;
-    background: #fff;
-    padding: 16px;
-    margin-bottom: 20px;
-    border-radius: 4px;
-    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
 }
 
 .blc-scan-status__header {
@@ -476,14 +479,14 @@
 
 .blc-scan-status__state {
     font-weight: 600;
-    color: #2c3338;
+    color: var(--blc-admin-text);
 }
 
 .blc-scan-status__progress {
     position: relative;
     height: 10px;
     border-radius: 999px;
-    background: #f0f0f1;
+    background: var(--blc-admin-surface-subtle);
     overflow: hidden;
     margin-bottom: 12px;
 }
@@ -492,12 +495,12 @@
     display: block;
     height: 100%;
     width: 0;
-    background: #2271b1;
+    background: var(--blc-admin-accent);
     transition: width 0.4s ease;
 }
 
 .blc-scan-status.is-active .blc-scan-status__state {
-    color: #2271b1;
+    color: var(--blc-admin-accent);
 }
 
 .blc-scan-status.is-completed .blc-scan-status__progress-fill {
@@ -506,12 +509,12 @@
 
 .blc-scan-status.is-failed .blc-scan-status__progress-fill,
 .blc-scan-status.is-cancelled .blc-scan-status__progress-fill {
-    background: #b32d2e;
+    background: var(--blc-admin-danger-text);
 }
 
 .blc-scan-status__details {
     margin: 0 0 12px;
-    color: #50575e;
+    color: var(--blc-admin-text-subtle);
 }
 
 .blc-scan-status__actions {
@@ -528,11 +531,45 @@
 
 .blc-scan-status__message {
     margin: 0;
-    color: #1d2327;
+    color: var(--blc-admin-text);
 }
 
 .blc-scan-status.is-failed .blc-scan-status__message {
-    color: #b32d2e;
+    color: var(--blc-admin-danger-text);
+}
+
+.blc-manual-scan-form,
+.blc-reschedule-cron-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.blc-manual-scan-form > p,
+.blc-reschedule-cron-form > p {
+    margin: 0;
+}
+
+.blc-manual-scan-form input[type="submit"],
+.blc-reschedule-cron-form button {
+    align-self: flex-start;
+}
+
+.blc-manual-scan-form label,
+.blc-reschedule-cron-form label {
+    font-weight: 500;
+    color: var(--blc-admin-text);
+}
+
+.blc-manual-scan-form small,
+.blc-reschedule-cron-form .description {
+    color: var(--blc-admin-text-subtle);
+}
+
+.blc-reschedule-cron-form .description {
+    display: block;
+    margin-top: 6px;
 }
 
 @media (max-width: 782px) {
@@ -578,7 +615,7 @@
     max-height: 96px;
     border-radius: 4px;
     object-fit: cover;
-    background-color: #f6f7f7;
+    background-color: var(--blc-admin-surface-subtle);
 }
 
 .blc-image-details__content {
@@ -607,9 +644,9 @@
         display: block;
         width: 100%;
         margin-bottom: 16px;
-        border: 1px solid #dcdcde;
+        border: 1px solid var(--blc-admin-border-subtle);
         border-radius: 6px;
-        background: #fff;
+        background: var(--blc-admin-surface);
         padding: 12px 16px;
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
     }
@@ -630,7 +667,7 @@
     .wp-list-table td::before {
         content: attr(data-colname);
         font-weight: 600;
-        color: #50575e;
+        color: var(--blc-admin-text-subtle);
         flex: 0 0 clamp(96px, 42%, 180px);
         max-width: 100%;
         white-space: normal;
@@ -692,7 +729,7 @@
 }
 
 .wp-list-table td .row-actions button.button-link:focus-visible {
-    outline: 2px solid #72aee6;
+    outline: 2px solid var(--blc-admin-accent);
     outline-offset: 1px;
 }
 
@@ -718,7 +755,7 @@
  * et s'assurer qu'il est toujours visible, même sans survol.
  */
 .wp-list-table .row-actions .blc-anchor-text {
-    color: #1d2327; /* Couleur noire par défaut de l'admin WP */
+    color: var(--blc-admin-text); /* Couleur de texte par défaut de l'admin WP */
     visibility: visible; /* S'assurer que le texte est toujours visible */
 }
 
@@ -740,7 +777,7 @@
 
 .blc-modal__dialog {
     position: relative;
-    background-color: #fff;
+    background-color: var(--blc-admin-surface);
     border-radius: 8px;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
     padding: 24px;
@@ -757,7 +794,7 @@
 
 .blc-modal__message {
     margin-bottom: 16px;
-    color: #1d2327;
+    color: var(--blc-admin-text);
     white-space: pre-line;
 }
 
@@ -766,9 +803,9 @@
     margin-bottom: 16px;
     padding: 10px 12px;
     border-radius: 4px;
-    background-color: #fef2f2;
-    color: #b32d2e;
-    border: 1px solid #f0c9c9;
+    background-color: var(--blc-admin-danger-bg);
+    color: var(--blc-admin-danger-text);
+    border: 1px solid var(--blc-admin-danger-border);
 }
 
 .blc-modal__error.is-visible {
@@ -797,7 +834,7 @@
 
 .blc-modal__options-help {
     margin: 0 0 12px;
-    color: #50575e;
+    color: var(--blc-admin-text-subtle);
     font-size: 13px;
 }
 
@@ -822,7 +859,7 @@
 .blc-modal__preview-note {
     margin-top: 10px;
     font-size: 13px;
-    color: #d63638;
+    color: var(--blc-admin-danger-text);
 }
 
 .blc-inline-notices {
@@ -850,7 +887,7 @@
 .blc-modal__input {
     width: 100%;
     padding: 10px 12px;
-    border: 1px solid #c3c4c7;
+    border: 1px solid var(--blc-admin-border);
     border-radius: 4px;
     font-size: 14px;
 }
@@ -871,20 +908,20 @@
     right: 10px;
     border: none;
     background: transparent;
-    color: #1d2327;
+    color: var(--blc-admin-text);
     font-size: 24px;
     cursor: pointer;
     transition: color 0.2s ease, opacity 0.2s ease;
 }
 
 .blc-modal__close:focus-visible {
-    outline: 2px solid #2271b1;
+    outline: 2px solid var(--blc-admin-accent);
     outline-offset: 2px;
 }
 
 .blc-modal__close:disabled {
     cursor: not-allowed;
-    color: #6c7781;
+    color: var(--blc-admin-text-subtle);
     opacity: 0.6;
 }
 
@@ -928,15 +965,5 @@ body.blc-modal-open {
     .blc-modal__close {
         top: 14px;
         right: 14px;
-    }
-}
-
-@media (prefers-color-scheme: dark) {
-    .blc-modal__close {
-        color: #f0f6fc;
-    }
-
-    .blc-modal__close:disabled {
-        color: rgba(240, 246, 252, 0.65);
     }
 }
