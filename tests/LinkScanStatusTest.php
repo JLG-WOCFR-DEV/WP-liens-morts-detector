@@ -225,6 +225,72 @@ class LinkScanStatusTest extends TestCase
         $this->assertSame(75, $status['updated_at']);
     }
 
+    public function test_update_link_scan_status_records_transition_log(): void
+    {
+        $now = 10;
+        Functions\when('time')->alias(static function () use (&$now) {
+            return $now;
+        });
+
+        $status = \blc_update_link_scan_status([
+            'state'  => 'running',
+            'job_id' => 'job-123',
+        ]);
+
+        $this->assertSame('running', $status['state']);
+
+        $log = \blc_get_link_scan_transition_log();
+
+        $this->assertNotEmpty($log);
+        $entry = $log[0];
+
+        $this->assertSame('idle', $entry['from']);
+        $this->assertSame('running', $entry['to']);
+        $this->assertTrue($entry['valid']);
+        $this->assertSame('job-123', $entry['job_id']);
+        $this->assertSame(10, $entry['timestamp']);
+    }
+
+    public function test_update_link_scan_status_rejects_invalid_transition(): void
+    {
+        $now = 100;
+        Functions\when('time')->alias(static function () use (&$now) {
+            return $now;
+        });
+
+        \blc_update_link_scan_status([
+            'state'  => 'running',
+            'job_id' => 'job-999',
+        ]);
+
+        $now = 200;
+
+        \blc_update_link_scan_status([
+            'state' => 'failed',
+        ]);
+
+        $now = 300;
+
+        $status = \blc_update_link_scan_status([
+            'state' => 'running',
+        ]);
+
+        $this->assertSame('failed', $status['state']);
+        $this->assertStringContainsString('Transition d\'état invalide', $status['last_error']);
+
+        $log = \blc_get_link_scan_transition_log();
+
+        $this->assertNotEmpty($log);
+        $entry = $log[0];
+
+        $this->assertFalse($entry['valid']);
+        $this->assertSame('failed', $entry['from']);
+        $this->assertSame('running', $entry['to']);
+        $this->assertSame('job-999', $entry['job_id']);
+        $this->assertSame(300, $entry['timestamp']);
+        $this->assertStringContainsString('Transition d\'état invalide', $entry['reason']);
+    }
+
     public function test_get_image_scan_status_preserves_is_full_scan_flag(): void
     {
         $this->options['blc_image_scan_status'] = [
