@@ -131,7 +131,9 @@
 
 .blc-admin-tabs__list {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
+    row-gap: 6px;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -143,6 +145,7 @@
 
 .blc-admin-tabs__item {
     margin: 0;
+    flex: 0 1 auto;
 }
 
 .blc-admin-tabs__link {
@@ -192,6 +195,7 @@
     .blc-admin-tabs__list {
         flex-direction: column;
         align-items: stretch;
+        gap: 6px;
     }
 
     .blc-admin-tabs__link {
