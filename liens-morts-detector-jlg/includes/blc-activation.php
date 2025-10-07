@@ -65,6 +65,15 @@ function blc_create_broken_links_table($table_name = null) {
         $table_name = $wpdb->prefix . 'blc_broken_links';
     }
 
+    $table_pattern = $wpdb->esc_like($table_name);
+    $table_exists  = $wpdb->get_var(
+        $wpdb->prepare('SHOW TABLES LIKE %s', $table_pattern)
+    );
+
+    if (!empty($table_exists)) {
+        return;
+    }
+
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 
     $sql = blc_get_broken_links_table_schema($table_name);
@@ -337,12 +346,12 @@ function blc_mark_occurrence_indexes_as_unknown($table_name) {
 function blc_maybe_add_column($table_name, $column_name, $definition) {
     global $wpdb;
 
-    $table   = esc_sql($table_name);
-    $column  = esc_sql($column_name);
-    $pattern = $wpdb->esc_like($column_name);
-
     $existing = $wpdb->get_var(
-        $wpdb->prepare("SHOW COLUMNS FROM `$table` LIKE %s", $pattern)
+        $wpdb->prepare(
+            'SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s LIMIT 1',
+            $table_name,
+            $column_name
+        )
     );
 
     if ($existing) {
@@ -352,8 +361,8 @@ function blc_maybe_add_column($table_name, $column_name, $definition) {
     $wpdb->query(
         sprintf(
             "ALTER TABLE `%s` ADD COLUMN `%s` %s",
-            $table,
-            $column,
+            esc_sql($table_name),
+            esc_sql($column_name),
             $definition
         )
     );
@@ -370,11 +379,12 @@ function blc_maybe_add_column($table_name, $column_name, $definition) {
 function blc_maybe_add_index($table_name, $index_name, $column_name, $prefix_length = null) {
     global $wpdb;
 
-    $table = esc_sql($table_name);
-    $index = esc_sql($index_name);
-
     $existing_index = $wpdb->get_var(
-        $wpdb->prepare("SHOW INDEX FROM `$table` WHERE Key_name = %s", $index)
+        $wpdb->prepare(
+            'SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND INDEX_NAME = %s LIMIT 1',
+            $table_name,
+            $index_name
+        )
     );
 
     if ($existing_index) {
@@ -392,8 +402,8 @@ function blc_maybe_add_index($table_name, $index_name, $column_name, $prefix_len
     $wpdb->query(
         sprintf(
             "ALTER TABLE `%s` ADD INDEX `%s` (%s)",
-            $table,
-            $index,
+            esc_sql($table_name),
+            esc_sql($index_name),
             $column
         )
     );
