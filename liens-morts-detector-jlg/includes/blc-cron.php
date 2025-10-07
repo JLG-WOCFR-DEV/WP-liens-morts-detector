@@ -806,8 +806,21 @@ if (!function_exists('blc_sync_report_export_schedule')) {
 
         $existing = wp_next_scheduled('blc_generate_report_exports');
         if (blc_is_report_export_enabled()) {
+            $frequency      = blc_get_report_export_frequency();
+            $desired_schedule = blc_resolve_report_export_schedule_slug($frequency);
+            $current_schedule = function_exists('wp_get_schedule') ? wp_get_schedule('blc_generate_report_exports') : false;
+
+            if (
+                false !== $existing
+                && false !== $current_schedule
+                && $current_schedule !== $desired_schedule
+            ) {
+                wp_clear_scheduled_hook('blc_generate_report_exports');
+                $existing = false;
+            }
+
             if (false === $existing) {
-                blc_schedule_report_export_event();
+                blc_schedule_report_export_event($frequency);
             }
 
             return;
