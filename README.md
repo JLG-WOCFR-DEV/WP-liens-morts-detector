@@ -168,6 +168,8 @@ add_action('blc_link_mass_update_performed', function (array $context) {
 - **Renforcement de la qualité logicielle** : étendre la couverture de tests automatisés (PHPUnit/WP-CLI, tests end-to-end Playwright) et configurer l’intégration continue pour détecter rapidement les régressions sur les scénarios critiques.
 - **Surveillance proactive** : permettre la configuration d’alertes basées sur des seuils (ex. >5 % de liens cassés sur un site) avec escalade graduelle (mail, webhook, notification push) pour aider à prioriser les corrections.
 
+Une feuille de route détaillée de ces axes (objectifs, backlog priorisé et indicateurs de succès) est disponible dans [`docs/roadmap-ameliorations.md`](docs/roadmap-ameliorations.md) afin de planifier les itérations et mesurer la progression.
+
 ## Structure du projet
 - `liens-morts-detector-jlg.php` : point d’entrée du plugin, chargement des fichiers, hooks et actions AJAX.
 - `includes/` : planification WP‑Cron, fonctions d’activation/désactivation, scanners et pages d’administration.
