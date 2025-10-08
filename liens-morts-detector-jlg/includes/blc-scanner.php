@@ -2342,25 +2342,74 @@ function blc_get_notification_status_filter_sql_clause(array $filters, $column =
  * @return string[]
  */
 function blc_parse_notification_recipients($raw_recipients) {
-    if (!is_scalar($raw_recipients)) {
+    $queue = [];
+
+    if (is_array($raw_recipients)) {
+        $queue = array_values($raw_recipients);
+    } elseif (is_scalar($raw_recipients)) {
+        $queue = [(string) $raw_recipients];
+    } else {
         return [];
     }
 
-    $candidates = preg_split('/[\r\n,;]+/', (string) $raw_recipients);
-    if (!is_array($candidates)) {
+    $tokens = [];
+    while ($queue !== []) {
+        $current = array_shift($queue);
+
+        if (is_array($current)) {
+            foreach ($current as $value) {
+                $queue[] = $value;
+            }
+
+            continue;
+        }
+
+        if (!is_scalar($current)) {
+            continue;
+        }
+
+        $segments = preg_split('/[\r\n,;]+/', (string) $current);
+        if (!is_array($segments)) {
+            $segments = [(string) $current];
+        }
+
+        foreach ($segments as $segment) {
+            $token = trim((string) $segment);
+            if ($token === '') {
+                continue;
+            }
+
+            $tokens[] = $token;
+        }
+    }
+
+    if ($tokens === []) {
         return [];
     }
 
     $recipients = [];
-    foreach ($candidates as $candidate) {
-        $email = sanitize_email(trim((string) $candidate));
-        if ($email === '') {
+    foreach ($tokens as $token) {
+        if (preg_match('/<([^<>]+)>/', $token, $matches) === 1) {
+            $token = trim($matches[1]);
+        }
+
+        $stripped = preg_replace('/^mailto:/i', '', $token);
+        if (!is_string($stripped)) {
+            $stripped = $token;
+        }
+
+        $clean = trim($stripped, " \"'\t\r\n");
+        if ($clean === '') {
             continue;
         }
 
-        if (is_email($email)) {
-            $recipients[$email] = $email;
+        $email = sanitize_email($clean);
+        if ($email === '' || !is_email($email)) {
+            continue;
         }
+
+        $key = strtolower($email);
+        $recipients[$key] = $email;
     }
 
     return array_values($recipients);
