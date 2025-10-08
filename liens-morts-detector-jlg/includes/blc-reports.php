@@ -250,7 +250,11 @@ if (!function_exists('blc_write_report_export')) {
      */
     function blc_write_report_export($dataset_type, array $rows, array $directory, array $status) {
         $timestamp = time();
-        $filename  = sprintf('blc-report-%s-%s.csv', $dataset_type, gmdate('Ymd-His', $timestamp));
+        $sanitized_dataset_type = preg_replace('/[^A-Za-z0-9_-]/', '_', (string) $dataset_type);
+        if ($sanitized_dataset_type === '') {
+            $sanitized_dataset_type = 'dataset';
+        }
+        $filename  = sprintf('blc-report-%s-%s.csv', $sanitized_dataset_type, gmdate('Ymd-His', $timestamp));
         $file_path = rtrim($directory['path'], '/\\') . '/' . $filename;
 
         $resource = fopen($file_path, 'wb');
@@ -284,25 +288,59 @@ if (!function_exists('blc_write_report_export')) {
         $enclosure = '"';
         $escape    = '\\';
 
-        fputcsv($resource, $headers, $delimiter, $enclosure, $escape);
+        $write_csv_line = static function ($handle, array $fields) use ($delimiter, $enclosure, $escape) {
+            return fputcsv($handle, $fields, $delimiter, $enclosure, $escape);
+        };
+
+        $escape_csv_field = static function ($value) {
+            $value = (string) $value;
+
+            if ($value === '') {
+                return $value;
+            }
+
+            if (preg_match('/^[=+\-@]/', ltrim($value))) {
+                return "'" . $value;
+            }
+
+            return $value;
+        };
+
+        if ($write_csv_line($resource, $headers) === false) {
+            fclose($resource);
+            @unlink($file_path);
+
+            return new \WP_Error(
+                'blc_report_export_write_failed',
+                __('Unable to write the report export file (failed to write headers).', 'liens-morts-detector-jlg')
+            );
+        }
 
         foreach ($rows as $row) {
             $line = [
-                $dataset_type,
-                isset($row['url']) ? (string) $row['url'] : '',
-                isset($row['http_status']) && $row['http_status'] !== null ? (string) $row['http_status'] : '',
-                isset($row['post_id']) ? (string) (int) $row['post_id'] : '0',
-                isset($row['post_title']) ? (string) $row['post_title'] : '',
-                isset($row['row_type']) ? (string) $row['row_type'] : '',
-                isset($row['occurrence_index']) && $row['occurrence_index'] !== null ? (string) (int) $row['occurrence_index'] : '',
-                !empty($row['is_internal']) ? '1' : '0',
-                isset($row['ignored_at']) ? (string) $row['ignored_at'] : '',
-                isset($row['last_checked_at']) ? (string) $row['last_checked_at'] : '',
-                isset($row['redirect_target_url']) ? (string) $row['redirect_target_url'] : '',
-                isset($row['context_excerpt']) ? (string) $row['context_excerpt'] : '',
+                $escape_csv_field($dataset_type),
+                $escape_csv_field(isset($row['url']) ? (string) $row['url'] : ''),
+                $escape_csv_field(isset($row['http_status']) && $row['http_status'] !== null ? (string) $row['http_status'] : ''),
+                $escape_csv_field(isset($row['post_id']) ? (string) (int) $row['post_id'] : '0'),
+                $escape_csv_field(isset($row['post_title']) ? (string) $row['post_title'] : ''),
+                $escape_csv_field(isset($row['row_type']) ? (string) $row['row_type'] : ''),
+                $escape_csv_field(isset($row['occurrence_index']) && $row['occurrence_index'] !== null ? (string) (int) $row['occurrence_index'] : ''),
+                $escape_csv_field(!empty($row['is_internal']) ? '1' : '0'),
+                $escape_csv_field(isset($row['ignored_at']) ? (string) $row['ignored_at'] : ''),
+                $escape_csv_field(isset($row['last_checked_at']) ? (string) $row['last_checked_at'] : ''),
+                $escape_csv_field(isset($row['redirect_target_url']) ? (string) $row['redirect_target_url'] : ''),
+                $escape_csv_field(isset($row['context_excerpt']) ? (string) $row['context_excerpt'] : ''),
             ];
 
-            fputcsv($resource, $line, $delimiter, $enclosure, $escape);
+            if ($write_csv_line($resource, $line) === false) {
+                fclose($resource);
+                @unlink($file_path);
+
+                return new \WP_Error(
+                    'blc_report_export_write_failed',
+                    __('Unable to write the report export file (failed to write a row).', 'liens-morts-detector-jlg')
+                );
+            }
         }
 
         fclose($resource);
