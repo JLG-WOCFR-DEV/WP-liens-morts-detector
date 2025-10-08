@@ -10,8 +10,9 @@ Cette feuille de route décline les pistes d'amélioration listées dans le `REA
 
 **Backlog priorisé**
 1. Créer un scheduler dédié qui agrège les résultats du dernier scan et les sérialise en CSV.
-2. Ajouter un connecteur Google Sheets via l'API REST avec rotation automatique des tokens OAuth.
-3. Implémenter un upload vers des services S3 compatibles (AWS, Scaleway) avec configuration multi-endpoints.
+2. Normaliser la déduplication des tâches planifiées (`wp_next_scheduled`) en figeant les métadonnées volatiles pour éviter les doublons d'exports.
+3. Ajouter un connecteur Google Sheets via l'API REST avec rotation automatique des tokens OAuth.
+4. Implémenter un upload vers des services S3 compatibles (AWS, Scaleway) avec configuration multi-endpoints.
 
 > ✅ Le scheduler `blc_generate_report_exports` est désormais disponible : il prépare le répertoire `blc-report-exports`, génère un CSV après chaque scan terminé et conserve l'historique des tentatives pour éviter les doublons. 【F:liens-morts-detector-jlg/includes/blc-reports.php†L1-L330】【F:liens-morts-detector-jlg/includes/blc-cron.php†L626-L742】
 > ✅ Un second pipeline `blc_schedule_automated_report_generation()` → `blc_generate_automated_report_csv()` orchestre des exports dédiés (liens ou images) via `blc_generate_automated_report`, en normalisant le contexte (job, timestamps, format) et en enregistrant les hooks d'observabilité associés. 【F:liens-morts-detector-jlg/includes/blc-reporting.php†L98-L599】
