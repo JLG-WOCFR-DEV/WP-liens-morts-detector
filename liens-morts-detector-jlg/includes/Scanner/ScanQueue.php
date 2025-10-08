@@ -427,6 +427,25 @@ class ScanQueue {
         $remote_request_client = $this->remoteRequestClient;
         global $wpdb;
 
+        $table_name = '';
+        $link_dataset_row_types = [];
+        $excluded_domains = [];
+        $scan_cache_context = [
+            'type'      => 'link',
+            'option'    => 'blc_active_link_scan_key',
+            'key'       => '',
+            'transient' => '',
+            'data'      => [],
+        ];
+        $scan_cache_data = [];
+        $scan_cache_identifier = '';
+        $scan_cache_dirty = false;
+        /** @var WP_Query|null $wp_query */
+        $wp_query = null;
+        $posts = [];
+        $scan_run_token = '';
+        $global_link_sources = [];
+
         $preflight = $this->gatherPreflightConfiguration($batch, $is_full_scan, $bypass_rest_window);
         $batch = $preflight['batch'];
         $is_full_scan = $preflight['is_full_scan'];
@@ -551,6 +570,9 @@ class ScanQueue {
                                 require_once $requests_class_path;
                             }
                         }
+                        if (!class_exists('Requests')) {
+                            return [];
+                        }
                     }
 
                     return \Requests::request_multiple($requests);
@@ -624,6 +646,103 @@ class ScanQueue {
             $register_internal_host($raw_home_url);
             $register_internal_host($raw_site_url);
 
+            $table_name = $wpdb->prefix . 'blc_broken_links';
+            $link_dataset_row_types = blc_get_dataset_row_types('link');
+            if (!is_array($link_dataset_row_types)) {
+                $link_dataset_row_types = [];
+            }
+            $excluded_domains = $this->normalizeExcludedDomains($excluded_domains_raw);
+
+            $maybe_scan_cache_context = blc_get_scan_cache_context('link', (int) $batch);
+            if (is_array($maybe_scan_cache_context)) {
+                $scan_cache_context = array_merge($scan_cache_context, $maybe_scan_cache_context);
+            }
+            $scan_cache_data = isset($scan_cache_context['data']) && is_array($scan_cache_context['data'])
+                ? $scan_cache_context['data']
+                : [];
+            $scan_cache_identifier = isset($scan_cache_context['key']) ? (string) $scan_cache_context['key'] : '';
+            $scan_cache_dirty = false;
+
+            $batch_size_option = get_option('blc_link_batch_size', blc_get_link_batch_size_constraints()['default']);
+            $batch_size = blc_normalize_link_batch_size($batch_size_option);
+            $batch_size = apply_filters('blc_link_batch_size', $batch_size, $batch, $is_full_scan);
+            $batch_size = blc_normalize_link_batch_size($batch_size);
+
+            $query_args = [
+                'post_type'      => blc_get_scannable_post_types(),
+                'post_status'    => blc_get_scannable_post_statuses(),
+                'posts_per_page' => $batch_size,
+                'paged'          => max(1, (int) $batch + 1),
+            ];
+            $query_args = apply_filters('blc_link_scan_query_args', $query_args, $batch, $batch_size, $is_full_scan);
+            if (!is_array($query_args)) {
+                $query_args = [];
+            }
+            if (!isset($query_args['posts_per_page'])) {
+                $query_args['posts_per_page'] = $batch_size;
+            }
+            if (!isset($query_args['paged'])) {
+                $query_args['paged'] = max(1, (int) $batch + 1);
+            }
+
+            $wp_query = new WP_Query($query_args);
+            $posts = is_array($wp_query->posts) ? $wp_query->posts : [];
+
+            $total_items = isset($wp_query->found_posts) ? max(0, (int) $wp_query->found_posts) : count($posts);
+            $max_pages = isset($wp_query->max_num_pages) ? (int) $wp_query->max_num_pages : 0;
+            if ($max_pages <= 0) {
+                if ($total_items > 0 && $batch_size > 0) {
+                    $max_pages = (int) ceil($total_items / $batch_size);
+                } elseif (!empty($posts) && $batch === 0) {
+                    $max_pages = 1;
+                } else {
+                    $max_pages = max(1, (int) $batch + 1);
+                }
+            }
+
+            $total_batches = max(1, $max_pages);
+            $processed_batches = min($total_batches, (int) $batch + 1);
+            $remaining_batches = max(0, $total_batches - $processed_batches);
+            $posts_in_batch = is_array($posts) ? count($posts) : 0;
+            $processed_items = max(0, ($batch * $batch_size) + $posts_in_batch);
+            if ($total_items > 0) {
+                $processed_items = min($processed_items, $total_items);
+            }
+
+            $status_message = sprintf(
+                /* translators: 1: completed batch number, 2: total batch count. */
+                __('Analyse du lot %1$d sur %2$d en cours…', 'liens-morts-detector-jlg'),
+                $processed_batches,
+                $total_batches
+            );
+
+            \blc_update_link_scan_status([
+                'state'             => 'running',
+                'current_batch'     => (int) $batch,
+                'processed_batches' => $processed_batches,
+                'total_batches'     => $total_batches,
+                'remaining_batches' => $remaining_batches,
+                'total_items'       => $total_items,
+                'processed_items'   => $processed_items,
+                'message'           => $status_message,
+            ]);
+
+            $post_ids_in_batch = [];
+            foreach ($posts as $post_candidate) {
+                if (is_object($post_candidate) && isset($post_candidate->ID)) {
+                    $post_ids_in_batch[] = (int) $post_candidate->ID;
+                } elseif (is_array($post_candidate) && isset($post_candidate['ID'])) {
+                    $post_ids_in_batch[] = (int) $post_candidate['ID'];
+                }
+            }
+            $post_ids_in_batch = array_values(array_unique(array_filter($post_ids_in_batch, static function ($value) {
+                if (!is_scalar($value) || !is_numeric($value)) {
+                    return false;
+                }
+
+                return (int) $value >= 0;
+            })));
+
             // --- 4. Boucle d'analyse des LIENS <a> ---
             $upload_dir_info = wp_upload_dir();
             $missing_upload_pieces = [];
@@ -651,6 +770,32 @@ class ScanQueue {
                 $raw_home_url = home_url();
             }
             $site_url        = trailingslashit($raw_home_url);
+            $global_link_sources = $this->collectGlobalLinkSources($site_url);
+            if (!empty($global_link_sources)) {
+                $post_ids_in_batch[] = 0;
+            }
+
+            if (!empty($post_ids_in_batch)) {
+                $post_ids_in_batch = array_values(array_unique(array_filter($post_ids_in_batch, static function ($value) {
+                    if (!is_scalar($value) || !is_numeric($value)) {
+                        return false;
+                    }
+
+                    return (int) $value >= 0;
+                })));
+
+                if (!empty($post_ids_in_batch)) {
+                    $scan_run_token = blc_generate_scan_run_token();
+                    $stage_result = blc_stage_dataset_refresh($table_name, $link_dataset_row_types, $scan_run_token, $post_ids_in_batch);
+                    if (is_wp_error($stage_result)) {
+                        if ($lock_token !== '') {
+                            blc_release_link_scan_lock($lock_token);
+                        }
+
+                        return $stage_result;
+                    }
+                }
+            }
             $site_scheme     = parse_url($raw_home_url, PHP_URL_SCHEME);
             if (!is_string($site_scheme) || $site_scheme === '') {
                 $site_scheme = 'http';
@@ -1118,6 +1263,7 @@ class ScanQueue {
                         'headers' => $headers,
                         'data'    => $args['body'] ?? null,
                         'options' => $options,
+                        'args'    => $args,
                     ];
                 }
 
@@ -1138,10 +1284,22 @@ class ScanQueue {
 
                     $dispatcher = $this->dispatcher;
                     $responses = $dispatcher($requests);
+                    if (!is_array($responses)) {
+                        $responses = [];
+                    }
 
                     $normalized = [];
-                    foreach ($requests as $key => $_request) {
+                    foreach ($requests as $key => $requestSpec) {
                         $raw = $responses[$key] ?? null;
+                        if ($raw === null) {
+                            $args = isset($requestSpec['args']) && is_array($requestSpec['args']) ? $requestSpec['args'] : [];
+                            $method = strtoupper((string) ($requestSpec['type'] ?? 'GET'));
+                            if ($method === 'HEAD') {
+                                $raw = $this->client->head($requestSpec['url'], $args);
+                            } else {
+                                $raw = $this->client->get($requestSpec['url'], $args);
+                            }
+                        }
                         $normalized[$key] = $this->normalizeResponse($raw);
                         $complete = $this->completeCallback;
                         $complete();
@@ -1563,7 +1721,8 @@ class ScanQueue {
                         &$scan_cache_dirty,
                         $cache_entry_key,
                         $should_use_cache,
-                        $debug_mode
+                        $debug_mode,
+                        $detected_type
                     ) {
                         if ($should_retry_later) {
                             if (!$temporary_retry_scheduled) {
@@ -1762,7 +1921,17 @@ class ScanQueue {
                                         if (is_array($effective_response) && array_key_exists('body', $effective_response)) {
                                             $body_content = (string) $effective_response['body'];
                                         } else {
-                                            $body_content = (string) wp_remote_retrieve_body($effective_response);
+                                            if (function_exists('wp_remote_retrieve_body')) {
+                                                $body_content = (string) wp_remote_retrieve_body($effective_response);
+                                            } else {
+                                                if (is_array($effective_response) && isset($effective_response['body'])) {
+                                                    $body_content = (string) $effective_response['body'];
+                                                } elseif (is_object($effective_response) && isset($effective_response->body)) {
+                                                    $body_content = (string) $effective_response->body;
+                                                } else {
+                                                    $body_content = '';
+                                                }
+                                            }
                                         }
 
                                         $followup_failed = false;
@@ -1791,7 +1960,17 @@ class ScanQueue {
                                                 if (is_array($effective_response) && array_key_exists('body', $effective_response)) {
                                                     $body_content = (string) $effective_response['body'];
                                                 } else {
-                                                    $body_content = (string) wp_remote_retrieve_body($effective_response);
+                                                    if (function_exists('wp_remote_retrieve_body')) {
+                                                        $body_content = (string) wp_remote_retrieve_body($effective_response);
+                                                    } else {
+                                                        if (is_array($effective_response) && isset($effective_response['body'])) {
+                                                            $body_content = (string) $effective_response['body'];
+                                                        } elseif (is_object($effective_response) && isset($effective_response->body)) {
+                                                            $body_content = (string) $effective_response->body;
+                                                        } else {
+                                                            $body_content = '';
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -2372,7 +2551,178 @@ class ScanQueue {
     {
         return $this->runBatch($batch, $is_full_scan, $bypass_rest_window);
     }
+
+    /**
+     * Normalize the excluded domain configuration into a list of hosts.
+     *
+     * @param mixed $raw Raw option value.
+     *
+     * @return string[]
+     */
+    private function normalizeExcludedDomains($raw): array
+    {
+        if (is_string($raw)) {
+            $candidates = preg_split('/[\r\n,]+/', $raw);
+            if (!is_array($candidates)) {
+                $candidates = [];
+            }
+        } elseif (is_array($raw)) {
+            $candidates = $raw;
+        } elseif (is_scalar($raw)) {
+            $candidates = [(string) $raw];
+        } else {
+            $candidates = [];
+        }
+
+        $normalized = [];
+        foreach ($candidates as $candidate) {
+            if (is_array($candidate) || is_object($candidate)) {
+                continue;
+            }
+
+            $value = trim((string) $candidate);
+            if ($value === '') {
+                continue;
+            }
+
+            $host = blc_normalize_remote_host($value);
+            if ($host === '') {
+                continue;
+            }
+
+            $normalized[$host] = true;
+        }
+
+        return array_keys($normalized);
+    }
+
+    /**
+     * Collect global content sources such as widgets and menus.
+     *
+     * @param string $site_url Canonical site URL with trailing slash.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function collectGlobalLinkSources(string $site_url): array
+    {
+        $sources = [];
+
+        $text_widgets = get_option('widget_text', []);
+        if (is_array($text_widgets)) {
+            foreach ($text_widgets as $widget_id => $widget_config) {
+                if ($widget_id === '_multiwidget' || !is_array($widget_config)) {
+                    continue;
+                }
+
+                $content = isset($widget_config['text']) ? (string) $widget_config['text'] : '';
+                if ($content === '') {
+                    continue;
+                }
+
+                if (function_exists('do_shortcode')) {
+                    $content = do_shortcode($content);
+                }
+
+                $title = isset($widget_config['title']) ? trim((string) $widget_config['title']) : '';
+                $label = $title !== ''
+                    ? sprintf(__('Widget texte « %s »', 'liens-morts-detector-jlg'), $title)
+                    : __('Widget texte', 'liens-morts-detector-jlg');
+
+                $sources[] = [
+                    'html'          => $content,
+                    'post_id'       => 0,
+                    'permalink'     => $site_url,
+                    'storage_title' => blc_prepare_text_field_for_storage($label),
+                    'debug_label'   => $label,
+                ];
+            }
+        }
+
+        $custom_widgets = get_option('widget_custom_html', []);
+        if (is_array($custom_widgets)) {
+            foreach ($custom_widgets as $widget_id => $widget_config) {
+                if ($widget_id === '_multiwidget' || !is_array($widget_config)) {
+                    continue;
+                }
+
+                $content = isset($widget_config['content']) ? (string) $widget_config['content'] : '';
+                if ($content === '') {
+                    continue;
+                }
+
+                $title = isset($widget_config['title']) ? trim((string) $widget_config['title']) : '';
+                $label = $title !== ''
+                    ? sprintf(__('Widget HTML personnalisé « %s »', 'liens-morts-detector-jlg'), $title)
+                    : __('Widget HTML personnalisé', 'liens-morts-detector-jlg');
+
+                $sources[] = [
+                    'html'          => $content,
+                    'post_id'       => 0,
+                    'permalink'     => $site_url,
+                    'storage_title' => blc_prepare_text_field_for_storage($label),
+                    'debug_label'   => $label,
+                ];
+            }
+        }
+
+        if (function_exists('wp_get_nav_menus') && function_exists('wp_get_nav_menu_items')) {
+            $menus = wp_get_nav_menus();
+            if (is_array($menus)) {
+                foreach ($menus as $menu) {
+                    $menu_name = '';
+                    if (is_object($menu)) {
+                        $menu_name = isset($menu->name) ? (string) $menu->name : '';
+                    } elseif (is_array($menu)) {
+                        $menu_name = isset($menu['name']) ? (string) $menu['name'] : '';
+                    }
+
+                    $items = wp_get_nav_menu_items($menu);
+                    if (!is_array($items)) {
+                        continue;
+                    }
+
+                    foreach ($items as $item) {
+                        if (is_object($item)) {
+                            $url = isset($item->url) ? (string) $item->url : '';
+                            $title = isset($item->title) ? (string) $item->title : '';
+                        } elseif (is_array($item)) {
+                            $url = isset($item['url']) ? (string) $item['url'] : '';
+                            $title = isset($item['title']) ? (string) $item['title'] : '';
+                        } else {
+                            continue;
+                        }
+
+                        $url = trim($url);
+                        if ($url === '' || $url === '#') {
+                            continue;
+                        }
+
+                        $link_text = $title !== '' ? $title : $url;
+                        $label = $menu_name !== ''
+                            ? sprintf(__('Menu « %1$s » — %2$s', 'liens-morts-detector-jlg'), $menu_name, $link_text)
+                            : sprintf(__('Menu — %s', 'liens-morts-detector-jlg'), $link_text);
+
+                        if (function_exists('esc_attr')) {
+                            $href = esc_attr($url);
+                        } else {
+                            $href = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
+                        }
+                        $html = sprintf('<a href="%s">%s</a>', $href, $link_text);
+
+                        $sources[] = [
+                            'html'          => $html,
+                            'post_id'       => 0,
+                            'permalink'     => $site_url,
+                            'storage_title' => blc_prepare_text_field_for_storage($label),
+                            'debug_label'   => $label,
+                        ];
+                    }
+                }
+            }
+        }
+
+        return $sources;
+    }
+
+
 }
-
-
-
