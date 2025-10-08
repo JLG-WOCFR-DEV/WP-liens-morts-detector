@@ -10,10 +10,10 @@ use WP_Error;
 use WP_Query;
 
 class ScanQueue {
-        /** @var RemoteRequestClient */
+        /** @var HttpClientInterface */
         private $remoteRequestClient;
 
-    public function __construct(RemoteRequestClient $remoteRequestClient) {
+    public function __construct(HttpClientInterface $remoteRequestClient) {
         $this->remoteRequestClient = $remoteRequestClient;
     }
 
@@ -193,6 +193,236 @@ class ScanQueue {
         ];
     }
 
+    private function acquireLockOrReschedule($current_hook, $batch, $is_full_scan, $bypass_rest_window, $batch_delay_s, $lock_timeout, $debug_mode)
+    {
+        $lock_token = blc_acquire_link_scan_lock($lock_timeout);
+
+        if ($lock_token !== '') {
+            return [
+                'status'     => 'acquired',
+                'lock_token' => $lock_token,
+            ];
+        }
+
+        if ($current_hook === 'blc_check_links') {
+            if ($debug_mode) {
+                error_log('Analyse de liens déjà en cours, reprogrammation du lot.');
+            }
+
+            $retry_delay = max(60, $batch_delay_s);
+            $scheduled   = wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
+
+            if (false === $scheduled) {
+                error_log(sprintf('BLC: Failed to reschedule link batch #%d while waiting for lock.', $batch));
+                do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'lock_unavailable');
+            }
+
+            return [
+                'status' => 'rescheduled',
+            ];
+        }
+
+        \blc_update_link_scan_status([
+            'state'   => 'running',
+            'message' => \__('Une analyse des liens est déjà en cours. Veuillez réessayer plus tard.', 'liens-morts-detector-jlg'),
+        ]);
+
+        return [
+            'status' => 'error',
+            'error'  => new WP_Error(
+                'blc_link_scan_in_progress',
+                __('Une analyse des liens est déjà en cours. Veuillez réessayer plus tard.', 'liens-morts-detector-jlg')
+            ),
+        ];
+    }
+
+    private function deferDuringRestWindow(array $preflight, $lock_token, $debug_mode)
+    {
+        $batch              = $preflight['batch'];
+        $is_full_scan       = $preflight['is_full_scan'];
+        $bypass_rest_window = $preflight['bypass_rest_window'];
+        $rest_start_hour    = $preflight['rest_start_hour'];
+        $rest_end_hour      = $preflight['rest_end_hour'];
+
+        $current_hour = (int) current_time('H');
+        $is_in_rest_window = false;
+
+        if ($rest_start_hour <= $rest_end_hour) {
+            $is_in_rest_window = ($current_hour >= $rest_start_hour && $current_hour < $rest_end_hour);
+        } else {
+            $is_in_rest_window = ($current_hour >= $rest_start_hour || $current_hour < $rest_end_hour);
+        }
+
+        if (!$is_in_rest_window || $bypass_rest_window) {
+            return [
+                'deferred'   => false,
+                'lock_token' => $lock_token,
+            ];
+        }
+
+        if ($debug_mode) {
+            error_log('Scan arrêté : dans la plage horaire de repos.');
+        }
+
+        $current_gmt_timestamp = time();
+        $timezone              = null;
+
+        if (function_exists('wp_timezone')) {
+            $maybe_timezone = wp_timezone();
+            if ($maybe_timezone instanceof \DateTimeZone) {
+                $timezone = $maybe_timezone;
+            }
+        }
+
+        if (!$timezone instanceof \DateTimeZone && function_exists('wp_timezone_string')) {
+            $timezone_string = wp_timezone_string();
+            if (is_string($timezone_string) && $timezone_string !== '') {
+                try {
+                    $timezone = new \DateTimeZone($timezone_string);
+                } catch (\Exception $e) {
+                    $timezone = null;
+                }
+            }
+        }
+
+        if (!$timezone instanceof \DateTimeZone) {
+            $offset         = (float) get_option('gmt_offset', 0);
+            $offset_seconds = (int) round($offset * 3600);
+            $timezone_name  = timezone_name_from_abbr('', $offset_seconds, 0);
+
+            if (is_string($timezone_name) && $timezone_name !== '') {
+                try {
+                    $timezone = new \DateTimeZone($timezone_name);
+                } catch (\Exception $e) {
+                    $timezone = null;
+                }
+            }
+
+            if (!$timezone instanceof \DateTimeZone) {
+                $sign       = $offset >= 0 ? '+' : '-';
+                $abs_offset = abs($offset);
+                $hours      = (int) floor($abs_offset);
+                $minutes    = (int) round(($abs_offset - $hours) * 60);
+
+                if ($minutes === 60) {
+                    $hours  += 1;
+                    $minutes = 0;
+                }
+
+                $formatted_offset = sprintf('%s%02d:%02d', $sign, $hours, $minutes);
+
+                try {
+                    $timezone = new \DateTimeZone($formatted_offset);
+                } catch (\Exception $e) {
+                    $timezone = new \DateTimeZone('UTC');
+                }
+            }
+        }
+
+        if (!$timezone instanceof \DateTimeZone) {
+            $timezone = new \DateTimeZone('UTC');
+        }
+
+        $current_datetime = (new \DateTimeImmutable('@' . $current_gmt_timestamp))->setTimezone($timezone);
+        $next_run         = $current_datetime->setTime($rest_end_hour, 0, 0);
+
+        if ($rest_start_hour > $rest_end_hour) {
+            if ($current_hour >= $rest_start_hour) {
+                $next_run = $next_run->modify('+1 day');
+            } elseif ($next_run <= $current_datetime) {
+                $next_run = $next_run->modify('+1 day');
+            }
+        } elseif ($next_run <= $current_datetime) {
+            $next_run = $next_run->modify('+1 day');
+        }
+
+        $next_timestamp = $next_run->getTimestamp();
+
+        if ($next_timestamp <= $current_gmt_timestamp) {
+            $next_timestamp = $current_gmt_timestamp + 60;
+        }
+
+        $scheduled = wp_schedule_single_event($next_timestamp, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
+        if (false === $scheduled) {
+            error_log(sprintf('BLC: Failed to schedule link batch #%d during rest window.', $batch));
+            do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'rest_window');
+        }
+
+        if ($lock_token !== '') {
+            blc_release_link_scan_lock($lock_token);
+            $lock_token = '';
+        }
+
+        return [
+            'deferred'   => true,
+            'lock_token' => $lock_token,
+        ];
+    }
+
+    private function deferForServerLoad(array $preflight, $lock_token, $debug_mode)
+    {
+        if (!function_exists('sys_getloadavg')) {
+            return [
+                'deferred'   => false,
+                'lock_token' => $lock_token,
+            ];
+        }
+
+        $load_values = sys_getloadavg();
+        if (!is_array($load_values) || empty($load_values)) {
+            return [
+                'deferred'   => false,
+                'lock_token' => $lock_token,
+            ];
+        }
+
+        $current_load = reset($load_values);
+        if (!is_numeric($current_load)) {
+            return [
+                'deferred'   => false,
+                'lock_token' => $lock_token,
+            ];
+        }
+
+        $current_load        = (float) $current_load;
+        $max_load_threshold  = (float) apply_filters('blc_max_load_threshold', 2.0);
+        $batch               = $preflight['batch'];
+        $is_full_scan        = $preflight['is_full_scan'];
+        $bypass_rest_window  = $preflight['bypass_rest_window'];
+
+        if ($max_load_threshold <= 0 || $current_load <= $max_load_threshold) {
+            return [
+                'deferred'   => false,
+                'lock_token' => $lock_token,
+            ];
+        }
+
+        $retry_delay = (int) apply_filters('blc_load_retry_delay', 300);
+        if ($retry_delay < 0) {
+            $retry_delay = 0;
+        }
+
+        if ($debug_mode) {
+            error_log('Scan reporté : charge serveur trop élevée (' . $current_load . ').');
+        }
+
+        $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
+        if (false === $scheduled) {
+            error_log(sprintf('BLC: Failed to schedule link batch #%d after high load.', $batch));
+            do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'server_load');
+        }
+
+        if ($lock_token !== '') {
+            blc_release_link_scan_lock($lock_token);
+            $lock_token = '';
+        }
+
+        return [
+            'deferred'   => true,
+            'lock_token' => $lock_token,
+        ];
+    }
+
     public function runBatch($batch = 0, $is_full_scan = false, $bypass_rest_window = false) {
         $remote_request_client = $this->remoteRequestClient;
         global $wpdb;
@@ -203,8 +433,6 @@ class ScanQueue {
         $bypass_rest_window = $preflight['bypass_rest_window'];
         $debug_mode = $preflight['debug_mode'];
         $current_hook = $preflight['current_hook'];
-        $rest_start_hour = $preflight['rest_start_hour'];
-        $rest_end_hour = $preflight['rest_end_hour'];
         $link_delay_ms = $preflight['link_delay_ms'];
         $batch_delay_s = $preflight['batch_delay_s'];
         $lock_timeout = $preflight['lock_timeout'];
@@ -219,36 +447,36 @@ class ScanQueue {
 
         $job_id = $this->ensureActiveJobId();
 
-        $lock_token = blc_acquire_link_scan_lock($lock_timeout);
-        if ($lock_token === '') {
-            if ($current_hook === 'blc_check_links') {
-                if ($debug_mode) { error_log('Analyse de liens déjà en cours, reprogrammation du lot.'); }
-                    $retry_delay = max(60, $batch_delay_s);
-                    $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
-                    if (false === $scheduled) {
-                        error_log(sprintf('BLC: Failed to reschedule link batch #%d while waiting for lock.', $batch));
-                        do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'lock_unavailable');
-                    }
-                    return;
-                }
+        $lock_outcome = $this->acquireLockOrReschedule($current_hook, $batch, $is_full_scan, $bypass_rest_window, $batch_delay_s, $lock_timeout, $debug_mode);
 
-                \blc_update_link_scan_status([
-                    'state'   => 'running',
-                    'message' => \__('Une analyse des liens est déjà en cours. Veuillez réessayer plus tard.', 'liens-morts-detector-jlg'),
-                ]);
+        if ($lock_outcome['status'] === 'rescheduled') {
+            return;
+        }
 
-                return new WP_Error(
-                    'blc_link_scan_in_progress',
-                    __('Une analyse des liens est déjà en cours. Veuillez réessayer plus tard.', 'liens-morts-detector-jlg')
-                );
-            }
+        if ($lock_outcome['status'] === 'error') {
+            return $lock_outcome['error'];
+        }
 
-            \blc_update_link_scan_status([
-                'state'         => 'running',
-                'current_batch' => (int) $batch,
-                'is_full_scan'  => (bool) $is_full_scan,
-                'message'       => \__('Analyse des liens en cours…', 'liens-morts-detector-jlg'),
-            ]);
+        $lock_token = $lock_outcome['lock_token'];
+
+        $rest_window = $this->deferDuringRestWindow($preflight, $lock_token, $debug_mode);
+        $lock_token  = $rest_window['lock_token'];
+        if ($rest_window['deferred']) {
+            return;
+        }
+
+        $server_load = $this->deferForServerLoad($preflight, $lock_token, $debug_mode);
+        $lock_token  = $server_load['lock_token'];
+        if ($server_load['deferred']) {
+            return;
+        }
+
+        \blc_update_link_scan_status([
+            'state'         => 'running',
+            'current_batch' => (int) $batch,
+            'is_full_scan'  => (bool) $is_full_scan,
+            'message'       => \__('Analyse des liens en cours…', 'liens-morts-detector-jlg'),
+        ]);
 
             $timeout_constraints = blc_get_request_timeout_constraints();
             $head_timeout_limits = $timeout_constraints['head'];
@@ -395,484 +623,6 @@ class ScanQueue {
 
             $register_internal_host($raw_home_url);
             $register_internal_host($raw_site_url);
-
-            // --- 2. Contrôles pré-analyse ---
-            $current_hour = (int) current_time('H');
-            $is_in_rest_window = false;
-            if ($rest_start_hour <= $rest_end_hour) {
-                $is_in_rest_window = ($current_hour >= $rest_start_hour && $current_hour < $rest_end_hour);
-            } else {
-                $is_in_rest_window = ($current_hour >= $rest_start_hour || $current_hour < $rest_end_hour);
-            }
-
-            if ($is_in_rest_window && !$bypass_rest_window) {
-                if ($debug_mode) { error_log("Scan arrêté : dans la plage horaire de repos."); }
-
-                $current_gmt_timestamp = time();
-                $timezone = null;
-
-                if (function_exists('wp_timezone')) {
-                    $maybe_timezone = wp_timezone();
-                    if ($maybe_timezone instanceof \DateTimeZone) {
-                        $timezone = $maybe_timezone;
-                    }
-                }
-
-                if (!$timezone instanceof \DateTimeZone && function_exists('wp_timezone_string')) {
-                    $timezone_string = wp_timezone_string();
-                    if (is_string($timezone_string) && $timezone_string !== '') {
-                        try {
-                            $timezone = new \DateTimeZone($timezone_string);
-                        } catch (\Exception $e) {
-                            $timezone = null;
-                        }
-                    }
-                }
-
-                if (!$timezone instanceof \DateTimeZone) {
-                    $offset = (float) get_option('gmt_offset', 0);
-                    $offset_seconds = (int) round($offset * 3600);
-                    $timezone_name = timezone_name_from_abbr('', $offset_seconds, 0);
-
-                    if (is_string($timezone_name) && $timezone_name !== '') {
-                        try {
-                            $timezone = new \DateTimeZone($timezone_name);
-                        } catch (\Exception $e) {
-                            $timezone = null;
-                        }
-                    }
-
-                    if (!$timezone instanceof \DateTimeZone) {
-                        $sign = $offset >= 0 ? '+' : '-';
-                        $abs_offset = abs($offset);
-                        $hours = (int) floor($abs_offset);
-                        $minutes = (int) round(($abs_offset - $hours) * 60);
-
-                        if ($minutes === 60) {
-                            $hours += 1;
-                            $minutes = 0;
-                        }
-
-                        $formatted_offset = sprintf('%s%02d:%02d', $sign, $hours, $minutes);
-
-                        try {
-                            $timezone = new \DateTimeZone($formatted_offset);
-                        } catch (\Exception $e) {
-                            $timezone = new \DateTimeZone('UTC');
-                        }
-                    }
-                }
-
-                if (!$timezone instanceof \DateTimeZone) {
-                    $timezone = new \DateTimeZone('UTC');
-                }
-
-                $current_datetime = (new \DateTimeImmutable('@' . $current_gmt_timestamp))->setTimezone($timezone);
-                $next_run = $current_datetime->setTime($rest_end_hour, 0, 0);
-
-                if ($rest_start_hour > $rest_end_hour) {
-                    if ($current_hour >= $rest_start_hour) {
-                        $next_run = $next_run->modify('+1 day');
-                    } elseif ($next_run <= $current_datetime) {
-                        $next_run = $next_run->modify('+1 day');
-                    }
-                } elseif ($next_run <= $current_datetime) {
-                    $next_run = $next_run->modify('+1 day');
-                }
-
-                $next_timestamp = $next_run->getTimestamp();
-
-                if ($next_timestamp <= $current_gmt_timestamp) {
-                    $next_timestamp = $current_gmt_timestamp + 60;
-                }
-
-                $scheduled = wp_schedule_single_event($next_timestamp, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
-                if (false === $scheduled) {
-                    error_log(sprintf('BLC: Failed to schedule link batch #%d during rest window.', $batch));
-                    do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'rest_window');
-                }
-                if ($lock_token !== '') {
-                    blc_release_link_scan_lock($lock_token);
-                    $lock_token = '';
-                }
-                return;
-            }
-
-            if (function_exists('sys_getloadavg')) {
-                $load_values = sys_getloadavg();
-
-                if (is_array($load_values) && !empty($load_values)) {
-                    $current_load = reset($load_values);
-
-                    if (is_numeric($current_load)) {
-                        $current_load = (float) $current_load;
-                        $max_load_threshold = (float) apply_filters('blc_max_load_threshold', 2.0);
-
-                        if ($max_load_threshold > 0 && $current_load > $max_load_threshold) {
-                            $retry_delay = (int) apply_filters('blc_load_retry_delay', 300);
-                            if ($retry_delay < 0) { $retry_delay = 0; }
-
-                            if ($debug_mode) { error_log("Scan reporté : charge serveur trop élevée (" . $current_load . ")."); }
-                            $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
-                            if (false === $scheduled) {
-                                error_log(sprintf('BLC: Failed to schedule link batch #%d after high load.', $batch));
-                                do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'server_load');
-                            }
-                            if ($lock_token !== '') {
-                                blc_release_link_scan_lock($lock_token);
-                                $lock_token = '';
-                            }
-                            return;
-                        }
-                    } elseif ($debug_mode) {
-                        error_log('Contrôle de charge ignoré : la première valeur retournée par sys_getloadavg() n\'est pas numérique.');
-                    }
-                } elseif ($debug_mode) {
-                    error_log('Contrôle de charge ignoré : sys_getloadavg() n\'a pas retourné de données valides.');
-                }
-            }
-
-            $excluded_domains = [];
-            if (!empty($excluded_domains_raw)) {
-                $excluded_domains = array_filter(
-                    array_map(
-                        static function ($domain) {
-                            return blc_normalize_remote_host($domain);
-                        },
-                        explode("\n", $excluded_domains_raw)
-                    ),
-                    'strlen'
-                );
-            }
-
-            $scan_cache_context = blc_get_scan_cache_context('link', (int) $batch);
-            $scan_cache_data = isset($scan_cache_context['data']) && is_array($scan_cache_context['data'])
-                ? $scan_cache_context['data']
-                : [];
-            $scan_cache_dirty = false;
-            $scan_cache_identifier = isset($scan_cache_context['key']) && is_string($scan_cache_context['key'])
-                ? $scan_cache_context['key']
-                : '';
-
-            // --- 3. Récupération des données et préparation ---
-            $batch_size_option = get_option('blc_batch_size', blc_get_link_batch_size_constraints()['default']);
-            $batch_size = blc_normalize_link_batch_size($batch_size_option);
-            $batch_size = apply_filters('blc_link_batch_size', $batch_size, $batch, $is_full_scan);
-            $batch_size = blc_normalize_link_batch_size($batch_size);
-            $last_check_time = (int) get_option('blc_last_check_time', 0);
-            $table_name      = $wpdb->prefix . 'blc_broken_links';
-            $link_dataset_row_types = \blc_get_dataset_row_types('link');
-            if (!is_array($link_dataset_row_types) || $link_dataset_row_types === []) {
-                $link_dataset_row_types = ['link'];
-            } else {
-                $link_dataset_row_types = array_values(array_filter(
-                    array_map(
-                        static function ($type) {
-                            return is_string($type) ? trim($type) : '';
-                        },
-                        $link_dataset_row_types
-                    ),
-                    static function ($value) {
-                        return $value !== '';
-                    }
-                ));
-
-                if ($link_dataset_row_types === []) {
-                    $link_dataset_row_types = ['link'];
-                }
-            }
-
-            // Limiter la requête aux types de contenus publics (repli sur « post ») tout en conservant la pagination existante.
-            $args = [
-                'post_type'      => blc_get_scannable_post_types(),
-                'post_status'    => blc_get_scannable_post_statuses(),
-                'posts_per_page' => $batch_size,
-                'paged'          => $batch + 1,
-            ];
-            if (!$is_full_scan && $last_check_time > 0) {
-                $threshold = gmdate('Y-m-d H:i:s', $last_check_time);
-                $args['date_query'] = [[
-                    'column' => 'post_modified_gmt',
-                    'after'  => $threshold,
-                ]];
-            }
-
-            $wp_query = new WP_Query($args);
-            $posts = $wp_query->posts;
-
-            $total_items = isset($wp_query->found_posts) ? max(0, (int) $wp_query->found_posts) : 0;
-            $max_pages = isset($wp_query->max_num_pages) ? (int) $wp_query->max_num_pages : 0;
-            if ($max_pages <= 0) {
-                if ($total_items > 0 && $batch_size > 0) {
-                    $max_pages = (int) ceil($total_items / $batch_size);
-                } elseif (!empty($posts) && $batch === 0) {
-                    $max_pages = 1;
-                } else {
-                    $max_pages = max(1, $batch + 1);
-                }
-            }
-
-            $total_batches = max(1, $max_pages);
-            $processed_batches = min($total_batches, $batch + 1);
-            $remaining_batches = max(0, $total_batches - $processed_batches);
-            $posts_in_batch = is_array($posts) ? count($posts) : 0;
-            $processed_items = max(0, ($batch * $batch_size) + $posts_in_batch);
-            if ($total_items > 0) {
-                $processed_items = min($processed_items, $total_items);
-            }
-
-            $status_message = sprintf(
-                /* translators: 1: current batch number, 2: total batch count. */
-                \__('Analyse du lot %1$d sur %2$d en cours…', 'liens-morts-detector-jlg'),
-                $processed_batches,
-                $total_batches
-            );
-
-            \blc_update_link_scan_status([
-                'state'             => 'running',
-                'current_batch'     => (int) $batch,
-                'processed_batches' => $processed_batches,
-                'total_batches'     => $total_batches,
-                'remaining_batches' => $remaining_batches,
-                'total_items'       => $total_items,
-                'processed_items'   => $processed_items,
-                'is_full_scan'      => (bool) $is_full_scan,
-                'message'           => $status_message,
-            ]);
-
-            $cleanup_size = 0;
-            $type_placeholders = implode(',', array_fill(0, count($link_dataset_row_types), '%s'));
-            if (method_exists($wpdb, 'get_var')) {
-                $cleanup_query = "SELECT SUM(COALESCE(LENGTH(blc.url), 0) + COALESCE(LENGTH(blc.anchor), 0) + COALESCE(LENGTH(blc.post_title), 0))
-                         FROM $table_name AS blc
-                         LEFT JOIN {$wpdb->posts} AS posts ON blc.post_id = posts.ID
-                         WHERE blc.type IN ($type_placeholders) AND posts.ID IS NULL";
-                $cleanup_size = (int) $wpdb->get_var($wpdb->prepare($cleanup_query, ...$link_dataset_row_types));
-            }
-            $cleanup_sql = "DELETE blc FROM $table_name AS blc LEFT JOIN {$wpdb->posts} AS posts ON blc.post_id = posts.ID WHERE blc.type IN ($type_placeholders) AND posts.ID IS NULL";
-            $deleted_orphans = $wpdb->query($wpdb->prepare($cleanup_sql, ...$link_dataset_row_types));
-            if ($deleted_orphans && $cleanup_size > 0) {
-                blc_adjust_dataset_storage_footprint('link', -$cleanup_size);
-            }
-
-            $post_ids_in_batch = array_map('intval', wp_list_pluck($posts, 'ID'));
-            $post_ids_in_batch = array_values(array_unique(array_filter($post_ids_in_batch, static function ($value) {
-                return $value > 0;
-            })));
-
-            $scan_run_token = '';
-            if (!empty($post_ids_in_batch)) {
-                $scan_run_token = blc_generate_scan_run_token();
-                $stage_result = blc_stage_dataset_refresh($table_name, $link_dataset_row_types, $scan_run_token, $post_ids_in_batch);
-                if (is_wp_error($stage_result)) {
-                    if ($lock_token !== '') {
-                        blc_release_link_scan_lock($lock_token);
-                        $lock_token = '';
-                    }
-                    return $stage_result;
-                }
-            }
-
-            $global_link_sources = [];
-            $register_global_source = static function (array $source) use (&$global_link_sources) {
-                $html = isset($source['html']) ? (string) $source['html'] : '';
-                if (trim($html) === '' || !\blc_html_contains_reference_candidates($html)) {
-                    return;
-                }
-
-                $label = isset($source['debug_label']) ? (string) $source['debug_label'] : '';
-                if ($label === '') {
-                    $label = __('Source hors publication', 'liens-morts-detector-jlg');
-                }
-
-                $global_link_sources[] = [
-                    'html'          => $html,
-                    'post_id'       => isset($source['post_id']) ? (int) $source['post_id'] : 0,
-                    'permalink'     => isset($source['permalink']) ? (string) $source['permalink'] : '',
-                    'storage_title' => isset($source['storage_title']) && $source['storage_title'] !== ''
-                        ? (string) $source['storage_title']
-                        : blc_prepare_text_field_for_storage($label),
-                    'debug_label'   => $label,
-                ];
-            };
-
-            if (function_exists('get_option')) {
-                $raw_widgets = get_option('widget_text', []);
-                if (is_array($raw_widgets)) {
-                    foreach ($raw_widgets as $widget_id => $widget_data) {
-                        if (!is_array($widget_data)) {
-                            continue;
-                        }
-
-                        $widget_text = isset($widget_data['text']) ? (string) $widget_data['text'] : '';
-                        if ($widget_text === '') {
-                            continue;
-                        }
-
-                        if (function_exists('do_shortcode')) {
-                            $widget_text = do_shortcode($widget_text);
-                        }
-
-                        if (trim($widget_text) === '') {
-                            continue;
-                        }
-
-                        $widget_title = '';
-                        if (isset($widget_data['title'])) {
-                            $widget_title = (string) $widget_data['title'];
-                        }
-                        if ($widget_title === '' && isset($widget_data['name'])) {
-                            $widget_title = (string) $widget_data['name'];
-                        }
-
-                        if ($widget_title === '') {
-                            $label = sprintf(__('Widget texte #%s', 'liens-morts-detector-jlg'), $widget_id);
-                        } else {
-                            $label = sprintf(__('Widget texte « %s »', 'liens-morts-detector-jlg'), $widget_title);
-                        }
-
-                        $register_global_source([
-                            'html'          => $widget_text,
-                            'storage_title' => blc_prepare_text_field_for_storage($label),
-                            'debug_label'   => $label,
-                        ]);
-                    }
-                }
-
-                $custom_html_widgets = get_option('widget_custom_html', []);
-                if (is_array($custom_html_widgets)) {
-                    foreach ($custom_html_widgets as $widget_id => $widget_data) {
-                        if (!is_array($widget_data)) {
-                            continue;
-                        }
-
-                        $widget_content = isset($widget_data['content']) ? (string) $widget_data['content'] : '';
-                        if ($widget_content === '') {
-                            continue;
-                        }
-
-                        if (function_exists('do_shortcode')) {
-                            $widget_content = do_shortcode($widget_content);
-                        }
-
-                        if (trim($widget_content) === '') {
-                            continue;
-                        }
-
-                        $widget_title = '';
-                        if (isset($widget_data['title'])) {
-                            $widget_title = (string) $widget_data['title'];
-                        }
-                        if ($widget_title === '' && isset($widget_data['name'])) {
-                            $widget_title = (string) $widget_data['name'];
-                        }
-
-                        if ($widget_title === '') {
-                            $label = sprintf(__('Widget HTML personnalisé #%s', 'liens-morts-detector-jlg'), $widget_id);
-                        } else {
-                            $label = sprintf(__('Widget HTML personnalisé « %s »', 'liens-morts-detector-jlg'), $widget_title);
-                        }
-
-                        $register_global_source([
-                            'html'          => $widget_content,
-                            'storage_title' => blc_prepare_text_field_for_storage($label),
-                            'debug_label'   => $label,
-                        ]);
-                    }
-                }
-            }
-
-            if (function_exists('wp_get_nav_menus') && function_exists('wp_get_nav_menu_items')) {
-                $nav_menus = wp_get_nav_menus();
-                if (!is_array($nav_menus)) {
-                    $nav_menus = [];
-                }
-
-                foreach ($nav_menus as $menu) {
-                    $menu_name = '';
-                    $menu_id   = 0;
-
-                    if (is_object($menu)) {
-                        $menu_name = isset($menu->name) ? (string) $menu->name : '';
-                        if ($menu_name === '' && isset($menu->slug)) {
-                            $menu_name = (string) $menu->slug;
-                        }
-                        $menu_id = isset($menu->term_id) ? (int) $menu->term_id : 0;
-                    } elseif (is_array($menu)) {
-                        $menu_name = isset($menu['name']) ? (string) $menu['name'] : '';
-                        if ($menu_name === '' && isset($menu['slug'])) {
-                            $menu_name = (string) $menu['slug'];
-                        }
-                        $menu_id = isset($menu['term_id']) ? (int) $menu['term_id'] : 0;
-                    }
-
-                    $menu_items = wp_get_nav_menu_items($menu_id !== 0 ? $menu_id : $menu);
-                    if (!is_array($menu_items)) {
-                        continue;
-                    }
-
-                    foreach ($menu_items as $menu_item) {
-                        $item_url = '';
-                        $item_title = '';
-
-                        if (is_object($menu_item)) {
-                            $item_url = isset($menu_item->url) ? (string) $menu_item->url : '';
-                            if ($item_title === '' && isset($menu_item->title)) {
-                                $item_title = (string) $menu_item->title;
-                            }
-                            if ($item_title === '' && isset($menu_item->post_title)) {
-                                $item_title = (string) $menu_item->post_title;
-                            }
-                        } elseif (is_array($menu_item)) {
-                            $item_url = isset($menu_item['url']) ? (string) $menu_item['url'] : '';
-                            if ($item_title === '' && isset($menu_item['title'])) {
-                                $item_title = (string) $menu_item['title'];
-                            }
-                            if ($item_title === '' && isset($menu_item['post_title'])) {
-                                $item_title = (string) $menu_item['post_title'];
-                            }
-                        }
-
-                        $item_url = trim($item_url);
-                        if ($item_url === '' || $item_url === '#') {
-                            continue;
-                        }
-
-                        if ($item_title === '') {
-                            $item_title = $item_url;
-                        }
-
-                        $link_html = sprintf('<a href="%s">%s</a>', esc_url($item_url), esc_html($item_title));
-
-                        if ($menu_name !== '') {
-                            $label = sprintf(__('Menu « %1$s » — %2$s', 'liens-morts-detector-jlg'), $menu_name, $item_title);
-                        } else {
-                            $label = sprintf(__('Menu — %s', 'liens-morts-detector-jlg'), $item_title);
-                        }
-
-                        $register_global_source([
-                            'html'          => $link_html,
-                            'storage_title' => blc_prepare_text_field_for_storage($label),
-                            'debug_label'   => $label,
-                        ]);
-                    }
-                }
-            }
-
-            if (!empty($global_link_sources)) {
-                if ($scan_run_token === '') {
-                    $scan_run_token = blc_generate_scan_run_token();
-                }
-
-                $stage_result = blc_stage_dataset_refresh($table_name, $link_dataset_row_types, $scan_run_token, [0]);
-                if (is_wp_error($stage_result)) {
-                    if ($lock_token !== '') {
-                        blc_release_link_scan_lock($lock_token);
-                        $lock_token = '';
-                    }
-                    return $stage_result;
-                }
-            }
 
             // --- 4. Boucle d'analyse des LIENS <a> ---
             $upload_dir_info = wp_upload_dir();
@@ -1175,7 +925,7 @@ class ScanQueue {
                 $mark_remote_request_complete,
                 $parallel_requests_dispatcher
             ) {
-                /** @var RemoteRequestClient */
+                /** @var HttpClientInterface */
                 private $client;
 
                 /** @var int */
@@ -1194,7 +944,7 @@ class ScanQueue {
                 private $pending = [];
 
                 public function __construct(
-                    RemoteRequestClient $client,
+                    HttpClientInterface $client,
                     int $concurrency,
                     callable $waitCallback,
                     callable $completeCallback,

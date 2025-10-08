@@ -3,6 +3,7 @@
 if (!defined('ABSPATH')) exit;
 
 
+require_once __DIR__ . '/Scanner/HttpClientInterface.php';
 require_once __DIR__ . '/Scanner/RemoteRequestClient.php';
 require_once __DIR__ . '/Scanner/ImageUrlNormalizer.php';
 require_once __DIR__ . '/Scanner/ImageNormalizationContext.php';
@@ -1789,7 +1790,7 @@ if (!class_exists('ImageScanController')) {
  *
  * @param bool $force_refresh Whether to force the creation of a fresh client instance.
  *
- * @return \JLG\BrokenLinks\Scanner\RemoteRequestClient
+ * @return \JLG\BrokenLinks\Scanner\HttpClientInterface
  */
 function blc_make_remote_request_client($force_refresh = false) {
     static $cache = [
@@ -1849,7 +1850,7 @@ function blc_make_remote_request_client($force_refresh = false) {
     $config_hash = md5($config_payload);
 
     if (!$force_refresh
-        && $cache['instance'] instanceof \JLG\BrokenLinks\Scanner\RemoteRequestClient
+        && $cache['instance'] instanceof \JLG\BrokenLinks\Scanner\HttpClientInterface
         && $cache['config_hash'] === $config_hash
     ) {
         return $cache['instance'];
@@ -1859,7 +1860,7 @@ function blc_make_remote_request_client($force_refresh = false) {
 
     if (function_exists('apply_filters')) {
         $maybe_client = apply_filters('blc_remote_request_client_instance', $client, $default_args, $retry_plan, $user_agents);
-        if ($maybe_client instanceof \JLG\BrokenLinks\Scanner\RemoteRequestClient) {
+        if ($maybe_client instanceof \JLG\BrokenLinks\Scanner\HttpClientInterface) {
             $client = $maybe_client;
         }
     }
@@ -1874,7 +1875,7 @@ function blc_make_remote_request_client($force_refresh = false) {
     return $client;
 }
 
-function blc_make_scan_queue(\JLG\BrokenLinks\Scanner\RemoteRequestClient $client) {
+function blc_make_scan_queue(\JLG\BrokenLinks\Scanner\HttpClientInterface $client) {
     return new \JLG\BrokenLinks\Scanner\ScanQueue($client);
 }
 

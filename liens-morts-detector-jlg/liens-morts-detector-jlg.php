@@ -50,6 +50,8 @@ function blc_load_textdomain() {
 
 // --- Chargement des Fichiers ---
 // On inclut tous les fichiers nécessaires au fonctionnement.
+require_once BLC_PLUGIN_PATH . 'includes/Admin/AdminAssets.php';
+require_once BLC_PLUGIN_PATH . 'includes/Admin/AdminScriptLocalizations.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-activation.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-cron.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-scanner.php';
@@ -125,354 +127,32 @@ add_action('blc_generate_report_exports', 'blc_run_automated_report_exports');
 add_action('admin_enqueue_scripts', 'blc_enqueue_admin_assets');
 add_filter('admin_body_class', 'blc_add_admin_body_class');
 
-/**
- * Charge les fichiers CSS et JavaScript sur les pages d'administration du plugin.
- *
- * @param string $hook Le nom de la page d'administration actuelle.
- */
+function blc_admin_assets_manager() {
+    static $manager = null;
+
+    if ($manager === null) {
+        $manager = new \JLG\BrokenLinks\Admin\AdminAssets(__FILE__);
+    }
+
+    return $manager;
+}
+
 function blc_enqueue_admin_assets($hook) {
-    // On s'assure de ne charger les scripts que sur nos pages pour ne pas alourdir le reste de l'admin.
-    if (!blc_should_enqueue_admin_assets($hook)) {
-        return;
-    }
-
-    // Chargement du fichier CSS
-    $css_path    = __DIR__ . '/assets/css/blc-admin-styles.css';
-    $css_version = file_exists($css_path) ? filemtime($css_path) : time();
-
-    wp_enqueue_style(
-        'blc-admin-css',
-        plugin_dir_url(__FILE__) . 'assets/css/blc-admin-styles.css',
-        array(),
-        $css_version
-    );
-
-    // Chargement du fichier JavaScript
-    $js_path    = __DIR__ . '/assets/js/blc-admin-scripts.js';
-    $js_version = file_exists($js_path) ? filemtime($js_path) : time();
-
-    wp_enqueue_script(
-        'blc-admin-js',
-        plugin_dir_url(__FILE__) . 'assets/js/blc-admin-scripts.js',
-        array('jquery', 'wp-util'),
-        $js_version,
-        true // Charger dans le pied de page pour de meilleures performances
-    );
-
-    if (function_exists('wp_set_script_translations')) {
-        wp_set_script_translations(
-            'blc-admin-js',
-            'liens-morts-detector-jlg',
-            plugin_dir_path(__FILE__) . 'languages'
-        );
-    }
-
-    $ui_preset     = blc_get_active_ui_preset();
-    $ui_preset_key = sanitize_key($ui_preset);
-    $preset_class  = 'blc-preset--' . (function_exists('sanitize_html_class') ? sanitize_html_class($ui_preset_key) : $ui_preset_key);
-
-    wp_localize_script(
-        'blc-admin-js',
-        'blcAdminMessages',
-        array(
-            /* translators: %s: original URL displayed in the edit prompt. */
-            'editPromptMessage'  => __("Entrez la nouvelle URL pour :\n%s", 'liens-morts-detector-jlg'),
-            'editPromptDefault'  => __('https://', 'liens-morts-detector-jlg'),
-            'unlinkConfirmation' => __('Êtes-vous sûr de vouloir supprimer ce lien ? Le texte sera conservé.', 'liens-morts-detector-jlg'),
-            'errorPrefix'        => __('Erreur : ', 'liens-morts-detector-jlg'),
-            'editModalTitle'     => __('Modifier le lien', 'liens-morts-detector-jlg'),
-            'editModalLabel'     => __('Nouvelle URL', 'liens-morts-detector-jlg'),
-            'editModalConfirm'   => __('Mettre à jour', 'liens-morts-detector-jlg'),
-            'unlinkModalTitle'   => __('Supprimer le lien', 'liens-morts-detector-jlg'),
-            'unlinkModalConfirm' => __('Supprimer', 'liens-morts-detector-jlg'),
-            'cancelButton'       => __('Annuler', 'liens-morts-detector-jlg'),
-            'closeButton'        => __('Fermer', 'liens-morts-detector-jlg'),
-            'closeLabel'         => __('Fermer la fenêtre modale', 'liens-morts-detector-jlg'),
-            'simpleConfirmModalConfirm' => __('Confirmer', 'liens-morts-detector-jlg'),
-            'simpleConfirmModalCancel'  => __('Annuler', 'liens-morts-detector-jlg'),
-            'emptyUrlMessage'    => __('Veuillez saisir une URL.', 'liens-morts-detector-jlg'),
-            'invalidUrlMessage'  => __('Veuillez saisir une URL valide.', 'liens-morts-detector-jlg'),
-            'sameUrlMessage'     => __('La nouvelle URL doit être différente de l\'URL actuelle.', 'liens-morts-detector-jlg'),
-            'genericError'        => __('Une erreur est survenue. Veuillez réessayer.', 'liens-morts-detector-jlg'),
-            'successAnnouncement' => __('Action effectuée avec succès. La ligne a été retirée de la liste.', 'liens-morts-detector-jlg'),
-            'noItemsMessage'      => __('Aucun lien cassé à afficher.', 'liens-morts-detector-jlg'),
-            'ignoreModalTitle'    => __('Ignorer le lien', 'liens-morts-detector-jlg'),
-            /* translators: %s: URL that will be ignored. */
-            'ignoreModalMessage'  => __('Voulez-vous ignorer ce lien ? Il ne sera plus signalé.\n%s', 'liens-morts-detector-jlg'),
-            'ignoreModalConfirm'  => __('Ignorer', 'liens-morts-detector-jlg'),
-            'restoreModalTitle'   => __('Ne plus ignorer', 'liens-morts-detector-jlg'),
-            /* translators: %s: URL that will be restored. */
-            'restoreModalMessage' => __('Voulez-vous réintégrer ce lien dans la liste ?\n%s', 'liens-morts-detector-jlg'),
-            'restoreModalConfirm' => __('Réintégrer', 'liens-morts-detector-jlg'),
-            'ignoredAnnouncement' => __('Le lien est désormais ignoré.', 'liens-morts-detector-jlg'),
-            'restoredAnnouncement' => __('Le lien n\'est plus ignoré.', 'liens-morts-detector-jlg'),
-            /* translators: %s: number of selected links. */
-            'bulkIgnoreModalMessage'   => __('Voulez-vous ignorer les %s liens sélectionnés ?', 'liens-morts-detector-jlg'),
-            /* translators: %s: number of selected links. */
-            'bulkRestoreModalMessage'  => __('Voulez-vous réintégrer les %s liens sélectionnés ?', 'liens-morts-detector-jlg'),
-            /* translators: %s: number of selected links. */
-            'bulkUnlinkModalMessage'   => __('Voulez-vous dissocier les %s liens sélectionnés ?', 'liens-morts-detector-jlg'),
-            /* translators: %s: number of selected items. */
-            'bulkGenericModalMessage'  => __('Voulez-vous appliquer cette action aux %s éléments sélectionnés ?', 'liens-morts-detector-jlg'),
-            'bulkNoSelectionMessage'   => __('Veuillez sélectionner au moins un lien avant d\'appliquer une action groupée.', 'liens-morts-detector-jlg'),
-            'bulkSuccessAnnouncement'  => __('Les actions groupées ont été appliquées avec succès.', 'liens-morts-detector-jlg'),
-            'applyRedirectConfirmation' => __('Appliquer la redirection détectée vers %s ?', 'liens-morts-detector-jlg'),
-            'applyRedirectSuccess'      => __('La redirection détectée a été appliquée.', 'liens-morts-detector-jlg'),
-            'applyRedirectError'        => __('Impossible d\'appliquer la redirection détectée.', 'liens-morts-detector-jlg'),
-            'applyRedirectMissingTarget' => __('Aucune redirection détectée n\'est disponible pour ce lien.', 'liens-morts-detector-jlg'),
-            'applyRedirectModalTitle'   => __('Appliquer la redirection détectée', 'liens-morts-detector-jlg'),
-            'applyRedirectModalConfirm' => __('Appliquer', 'liens-morts-detector-jlg'),
-            /* translators: %s: detected redirect target URL. */
-            'applyRedirectModalMessage' => __('Voulez-vous appliquer la redirection détectée vers %s ?', 'liens-morts-detector-jlg'),
-            'applyRedirectMissingModalTitle' => __('Redirection indisponible', 'liens-morts-detector-jlg'),
-            'applyRedirectMissingModalMessage' => __('Aucune redirection détectée n\'est disponible pour ce lien.', 'liens-morts-detector-jlg'),
-            /* translators: %s: number of selected links. */
-            'bulkApplyRedirectModalMessage' => __('Voulez-vous appliquer la redirection détectée aux %s liens sélectionnés ?', 'liens-morts-detector-jlg'),
-        )
-    );
-
-    wp_localize_script(
-        'blc-admin-js',
-        'blcAdminUi',
-        array(
-            'preset'      => $ui_preset_key,
-            'presetClass' => $preset_class,
-            'enhanced'    => true,
-        )
-    );
-
-    $rest_url = function_exists('rest_url') ? rest_url('blc/v1/scan-status') : '';
-    $scan_status = blc_get_link_scan_status_payload();
-    $poll_interval = apply_filters('blc_scan_status_poll_interval', 10000);
-    if (!is_int($poll_interval)) {
-        $poll_interval = 10000;
-    }
-
-    wp_localize_script(
-        'blc-admin-js',
-        'blcAdminScanConfig',
-        array(
-            'restUrl'         => $rest_url ? esc_url_raw($rest_url) : '',
-            'restNonce'       => wp_create_nonce('wp_rest'),
-            'startScanNonce'  => wp_create_nonce('blc_start_manual_scan'),
-            'cancelScanNonce' => wp_create_nonce('blc_cancel_manual_scan'),
-            'getStatusNonce'  => wp_create_nonce('blc_get_scan_status'),
-            'pollInterval'    => max(2000, (int) $poll_interval),
-            'status'          => $scan_status,
-            'scanType'        => 'link',
-            'ajax'            => array(
-                'start'  => 'blc_start_manual_scan',
-                'cancel' => 'blc_cancel_manual_scan',
-                'status' => 'blc_get_scan_status',
-            ),
-            'selectors'       => array(
-                'panel'   => '#blc-scan-status-panel',
-                'form'    => '#blc-manual-scan-form',
-                'cancel'  => '#blc-cancel-scan',
-                'restart' => '#blc-restart-scan',
-                'fullScan'=> 'input[name="blc_full_scan"]',
-            ),
-            'i18n'            => array(
-                'panelTitle'        => __('Statut du scan manuel', 'liens-morts-detector-jlg'),
-                'states'            => array(
-                    'idle'      => __('Inactif', 'liens-morts-detector-jlg'),
-                    'queued'    => __('En file d\'attente', 'liens-morts-detector-jlg'),
-                    'running'   => __('Analyse en cours', 'liens-morts-detector-jlg'),
-                    'completed' => __('Terminée', 'liens-morts-detector-jlg'),
-                    'failed'    => __('Échec', 'liens-morts-detector-jlg'),
-                    'cancelled' => __('Annulée', 'liens-morts-detector-jlg'),
-                ),
-                'batchSummary'     => __('Lot %1$d sur %2$d', 'liens-morts-detector-jlg'),
-                'remainingBatches' => __('Lots restants : %d', 'liens-morts-detector-jlg'),
-                'nextBatch'        => __('Prochain lot prévu à %s', 'liens-morts-detector-jlg'),
-                'queueMessage'     => __('Analyse programmée. Le premier lot démarrera sous peu.', 'liens-morts-detector-jlg'),
-                'startError'       => __('Impossible de lancer l\'analyse. Veuillez réessayer.', 'liens-morts-detector-jlg'),
-                'cancelSuccess'    => __('Les lots planifiés ont été annulés.', 'liens-morts-detector-jlg'),
-                'cancelError'      => __('Impossible d\'annuler l\'analyse. Veuillez réessayer.', 'liens-morts-detector-jlg'),
-                'cancelConfirm'    => __('Voulez-vous annuler les lots planifiés ?', 'liens-morts-detector-jlg'),
-                'cancelTitle'      => __('Annuler le scan', 'liens-morts-detector-jlg'),
-                'cancelConfirmLabel' => __('Annuler', 'liens-morts-detector-jlg'),
-                'restartConfirm'   => __('Voulez-vous reprogrammer immédiatement un nouveau scan ?', 'liens-morts-detector-jlg'),
-                'restartTitle'     => __('Replanifier un scan', 'liens-morts-detector-jlg'),
-                'restartConfirmLabel' => __('Replanifier', 'liens-morts-detector-jlg'),
-                'unknownState'     => __('Statut inconnu', 'liens-morts-detector-jlg'),
-            ),
-        )
-    );
-
-    $image_rest_base = $rest_url ? $rest_url : (function_exists('rest_url') ? rest_url('blc/v1/scan-status') : '');
-    $image_rest_url = $image_rest_base ? add_query_arg('type', 'image', $image_rest_base) : '';
-    $image_scan_status = blc_get_image_scan_status_payload();
-    $image_poll_interval = apply_filters('blc_image_scan_status_poll_interval', 10000);
-    if (!is_int($image_poll_interval)) {
-        $image_poll_interval = 10000;
-    }
-
-    wp_localize_script(
-        'blc-admin-js',
-        'blcAdminNotifications',
-        array(
-            'action'                 => 'blc_send_test_email',
-            'nonce'                  => wp_create_nonce('blc_send_test_email'),
-            'ajaxUrl'                => admin_url('admin-ajax.php'),
-            'sendingText'            => __('Envoi du message de test…', 'liens-morts-detector-jlg'),
-            'successText'            => __('Notifications de test envoyées avec succès.', 'liens-morts-detector-jlg'),
-            'partialSuccessText'     => __('Notifications de test envoyées avec des avertissements.', 'liens-morts-detector-jlg'),
-            'errorText'              => __('Échec de l’envoi de la notification de test. Veuillez vérifier vos réglages.', 'liens-morts-detector-jlg'),
-            'missingRecipientsText'  => __('Ajoutez un destinataire ou configurez un webhook avant d’envoyer un test.', 'liens-morts-detector-jlg'),
-            'missingChannelText'     => __('Sélectionnez au moins un type de résumé à tester.', 'liens-morts-detector-jlg'),
-        )
-    );
-
-    wp_localize_script(
-        'blc-admin-js',
-        'blcAdminImageScanConfig',
-        array(
-            'restUrl'         => $image_rest_url ? esc_url_raw($image_rest_url) : '',
-            'restNonce'       => wp_create_nonce('wp_rest'),
-            'startScanNonce'  => wp_create_nonce('blc_start_manual_image_scan'),
-            'cancelScanNonce' => wp_create_nonce('blc_cancel_manual_image_scan'),
-            'getStatusNonce'  => wp_create_nonce('blc_get_image_scan_status'),
-            'pollInterval'    => max(2000, (int) $image_poll_interval),
-            'status'          => $image_scan_status,
-            'scanType'        => 'image',
-            'ajax'            => array(
-                'start'  => 'blc_start_manual_image_scan',
-                'cancel' => 'blc_cancel_manual_image_scan',
-                'status' => 'blc_get_image_scan_status',
-            ),
-            'selectors'       => array(
-                'panel'   => '#blc-image-scan-status-panel',
-                'form'    => '#blc-image-manual-scan-form',
-                'cancel'  => '#blc-image-cancel-scan',
-                'restart' => '#blc-image-restart-scan',
-                'fullScan'=> '',
-            ),
-            'i18n'            => array(
-                'panelTitle'        => __('Statut du scan des images', 'liens-morts-detector-jlg'),
-                'states'            => array(
-                    'idle'      => __('Inactif', 'liens-morts-detector-jlg'),
-                    'queued'    => __('En file d\'attente', 'liens-morts-detector-jlg'),
-                    'running'   => __('Analyse en cours', 'liens-morts-detector-jlg'),
-                    'completed' => __('Terminée', 'liens-morts-detector-jlg'),
-                    'failed'    => __('Échec', 'liens-morts-detector-jlg'),
-                    'cancelled' => __('Annulée', 'liens-morts-detector-jlg'),
-                ),
-                'batchSummary'     => __('Lot %1$d sur %2$d', 'liens-morts-detector-jlg'),
-                'remainingBatches' => __('Lots restants : %d', 'liens-morts-detector-jlg'),
-                'nextBatch'        => __('Prochain lot prévu à %s', 'liens-morts-detector-jlg'),
-                'queueMessage'     => __('Analyse programmée. Le premier lot démarrera sous peu.', 'liens-morts-detector-jlg'),
-                'startError'       => __('Impossible de lancer l\'analyse des images. Veuillez réessayer.', 'liens-morts-detector-jlg'),
-                'cancelSuccess'    => __('Les lots planifiés ont été annulés.', 'liens-morts-detector-jlg'),
-                'cancelError'      => __('Impossible d\'annuler l\'analyse des images. Veuillez réessayer.', 'liens-morts-detector-jlg'),
-                'cancelConfirm'    => __('Voulez-vous annuler les lots planifiés ?', 'liens-morts-detector-jlg'),
-                'cancelTitle'      => __('Annuler le scan', 'liens-morts-detector-jlg'),
-                'cancelConfirmLabel' => __('Annuler', 'liens-morts-detector-jlg'),
-                'restartConfirm'   => __('Voulez-vous reprogrammer immédiatement un nouveau scan ?', 'liens-morts-detector-jlg'),
-                'restartTitle'     => __('Replanifier un scan', 'liens-morts-detector-jlg'),
-                'restartConfirmLabel' => __('Replanifier', 'liens-morts-detector-jlg'),
-                'unknownState'     => __('Statut inconnu', 'liens-morts-detector-jlg'),
-            ),
-        )
-    );
-
-    $soft_404_config = blc_get_soft_404_heuristics();
-    wp_localize_script(
-        'blc-admin-js',
-        'blcAdminSoft404Config',
-        array(
-            'minLength'       => isset($soft_404_config['min_length']) ? (int) $soft_404_config['min_length'] : 0,
-            'titleWeight'     => isset($soft_404_config['title_weight']) ? (float) $soft_404_config['title_weight'] : 0.0,
-            'titleIndicators' => isset($soft_404_config['title_indicators']) && is_array($soft_404_config['title_indicators'])
-                ? array_values($soft_404_config['title_indicators'])
-                : array(),
-            'bodyIndicators'  => isset($soft_404_config['body_indicators']) && is_array($soft_404_config['body_indicators'])
-                ? array_values($soft_404_config['body_indicators'])
-                : array(),
-            'ignorePatterns'  => isset($soft_404_config['ignore_patterns']) && is_array($soft_404_config['ignore_patterns'])
-                ? array_values($soft_404_config['ignore_patterns'])
-                : array(),
-            'labels'          => array(
-                'length' => __('Contenu trop court', 'liens-morts-detector-jlg'),
-                'title'  => __('Titre suspect', 'liens-morts-detector-jlg'),
-                'body'   => __('Message d’erreur détecté', 'liens-morts-detector-jlg'),
-                'titleWeight' => __('Pondération du titre', 'liens-morts-detector-jlg'),
-            ),
-        )
-    );
+    blc_admin_assets_manager()->enqueue($hook);
 }
 
-/**
- * Détermine si les assets doivent être chargés pour le hook d'administration donné.
- *
- * @param string $hook Identifiant du hook courant.
- *
- * @return bool
- */
 function blc_should_enqueue_admin_assets($hook) {
-    if (blc_is_plugin_admin_request()) {
-        return true;
-    }
-
-    if (!is_string($hook) || '' === $hook) {
-        return false;
-    }
-
-    foreach (blc_get_admin_page_slugs() as $slug) {
-        if (false !== strpos($hook, $slug)) {
-            return true;
-        }
-    }
-
-    return false;
+    return blc_admin_assets_manager()->shouldEnqueue($hook);
 }
 
-/**
- * Retourne la liste des slugs des pages d'administration du plugin.
- *
- * @return array<int,string>
- */
 function blc_get_admin_page_slugs() {
-    $pages = array('blc-dashboard', 'blc-images-dashboard', 'blc-history', 'blc-settings');
-
-    /**
-     * Filtre la liste des slugs des pages d'administration du plugin.
-     *
-     * @since 1.0.0
-     *
-     * @param array<int,string> $pages Slugs des pages.
-     */
-    $pages = apply_filters('blc_admin_page_slugs', $pages);
-
-    return is_array($pages) ? array_values(array_filter(array_map('sanitize_key', $pages))) : array();
+    return blc_admin_assets_manager()->getAdminPageSlugs();
 }
 
-/**
- * Indique si la requête actuelle cible une page d'administration du plugin.
- *
- * @return bool
- */
 function blc_is_plugin_admin_request() {
-    if (!is_admin()) {
-        return false;
-    }
-
-    if (!isset($_GET['page']) || !is_scalar($_GET['page'])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- lecture simple.
-        return false;
-    }
-
-    $page = sanitize_key(wp_unslash((string) $_GET['page'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- lecture simple.
-
-    return in_array($page, blc_get_admin_page_slugs(), true);
+    return blc_admin_assets_manager()->isPluginAdminRequest();
 }
 
-/**
- * Ajoute la classe correspondant au preset actif sur le body des pages du plugin.
- *
- * @param string $classes Classes existantes.
- *
- * @return string
- */
 function blc_add_admin_body_class($classes) {
     if (!blc_is_plugin_admin_request()) {
         return $classes;
@@ -483,11 +163,11 @@ function blc_add_admin_body_class($classes) {
     $ui_preset_key = sanitize_key($ui_preset);
     $preset_class  = 'blc-preset--' . (function_exists('sanitize_html_class') ? sanitize_html_class($ui_preset_key) : $ui_preset_key);
 
-    if (false === strpos($classes, 'blc-ui-enhanced')) {
+    if (strpos($classes, 'blc-ui-enhanced') === false) {
         $classes .= ' blc-ui-enhanced';
     }
 
-    if (false === strpos($classes, $preset_class)) {
+    if (strpos($classes, $preset_class) === false) {
         $classes .= ' ' . $preset_class;
     }
 

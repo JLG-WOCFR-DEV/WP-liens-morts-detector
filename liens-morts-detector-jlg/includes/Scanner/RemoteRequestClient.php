@@ -4,7 +4,7 @@ namespace JLG\BrokenLinks\Scanner;
 
 use WP_Error;
 
-class RemoteRequestClient
+class RemoteRequestClient implements HttpClientInterface
 {
     /**
      * Default request arguments applied to every HTTP call.
