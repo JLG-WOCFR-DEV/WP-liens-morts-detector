@@ -62,22 +62,71 @@ function blc_create_broken_links_table($table_name = null) {
     global $wpdb;
 
     if ($table_name === null) {
+        if (!isset($wpdb) || !is_object($wpdb) || !isset($wpdb->prefix)) {
+            return;
+        }
+
         $table_name = $wpdb->prefix . 'blc_broken_links';
     }
 
-    $table_pattern = $wpdb->esc_like($table_name);
-    $table_exists  = $wpdb->get_var(
-        $wpdb->prepare('SHOW TABLES LIKE %s', $table_pattern)
-    );
-
-    if (!empty($table_exists)) {
+    if (blc_broken_links_table_exists($table_name)) {
         return;
     }
 
-    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+    if (!function_exists('dbDelta')) {
+        $upgrade_file = ABSPATH . 'wp-admin/includes/upgrade.php';
+
+        if (file_exists($upgrade_file)) {
+            require_once $upgrade_file;
+        }
+    }
+
+    if (!function_exists('dbDelta')) {
+        return;
+    }
 
     $sql = blc_get_broken_links_table_schema($table_name);
     dbDelta($sql);
+}
+
+/**
+ * Determine if the broken links table currently exists in the database.
+ *
+ * @param string|null $table_name Optional table name override.
+ *
+ * @return bool
+ */
+function blc_broken_links_table_exists($table_name = null) {
+    global $wpdb;
+
+    if ($table_name === null) {
+        if (!isset($wpdb) || !is_object($wpdb) || !isset($wpdb->prefix)) {
+            return false;
+        }
+
+        $table_name = $wpdb->prefix . 'blc_broken_links';
+    }
+
+    if (!isset($wpdb) || !is_object($wpdb) || !method_exists($wpdb, 'prepare') || !method_exists($wpdb, 'get_var')) {
+        return false;
+    }
+
+    if (method_exists($wpdb, 'esc_like')) {
+        $table_pattern = $wpdb->esc_like($table_name);
+    } elseif (function_exists('esc_like')) {
+        $table_pattern = esc_like($table_name);
+    } else {
+        $table_pattern = addcslashes($table_name, '_%');
+    }
+
+    $query = $wpdb->prepare('SHOW TABLES LIKE %s', $table_pattern);
+    if (!is_string($query) || $query === '') {
+        return false;
+    }
+
+    $table_exists = $wpdb->get_var($query);
+
+    return !empty($table_exists);
 }
 
 /**
@@ -92,16 +141,16 @@ function blc_maybe_upgrade_database() {
 
     global $wpdb;
 
-    $table_name   = $wpdb->prefix . 'blc_broken_links';
-    $table_pattern = $wpdb->esc_like($table_name);
-    $table_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table_pattern));
+    $table_name = $wpdb->prefix . 'blc_broken_links';
 
-    if (empty($table_exists)) {
+    if (!blc_broken_links_table_exists($table_name)) {
         blc_create_broken_links_table($table_name);
 
-        $table_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table_pattern));
+        if (!blc_broken_links_table_exists($table_name)) {
+            if (function_exists('error_log')) {
+                error_log(sprintf('BLC: Unable to create the %s table.', $table_name));
+            }
 
-        if (empty($table_exists)) {
             return;
         }
     }
@@ -161,6 +210,30 @@ function blc_maybe_upgrade_database() {
     }
 
     update_option('blc_plugin_db_version', BLC_DB_VERSION);
+}
+
+/**
+ * Ensure the broken links table exists before attempting a scan.
+ *
+ * @return bool
+ */
+function blc_ensure_broken_links_table_exists() {
+    blc_maybe_upgrade_database();
+
+    if (blc_broken_links_table_exists()) {
+        return true;
+    }
+
+    if (function_exists('error_log')) {
+        global $wpdb;
+        $table_name = (isset($wpdb) && isset($wpdb->prefix))
+            ? $wpdb->prefix . 'blc_broken_links'
+            : 'blc_broken_links';
+
+        error_log(sprintf('BLC: Broken links table "%s" is missing and could not be created.', $table_name));
+    }
+
+    return false;
 }
 
 /**

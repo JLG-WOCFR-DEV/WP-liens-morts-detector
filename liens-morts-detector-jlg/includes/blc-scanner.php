@@ -3947,6 +3947,38 @@ function blc_restore_dataset_refresh($table_name, $types, $scan_run_id, ?array $
 
 function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_window = false) {
     $execution_started_at = microtime(true);
+    global $wpdb;
+
+    $table_name = (isset($wpdb) && isset($wpdb->prefix))
+        ? $wpdb->prefix . 'blc_broken_links'
+        : 'blc_broken_links';
+
+    if (function_exists('blc_ensure_broken_links_table_exists') && !blc_ensure_broken_links_table_exists()) {
+        $message = sprintf(
+            /* translators: %s: database table name. */
+            __('La table de suivi des liens cassés « %s » est introuvable. Réactivez l’extension pour la recréer.', 'liens-morts-detector-jlg'),
+            $table_name
+        );
+
+        if (function_exists('error_log')) {
+            error_log('BLC: ' . $message);
+        }
+
+        if (function_exists('blc_update_link_scan_status')) {
+            blc_update_link_scan_status([
+                'state'      => 'failed',
+                'last_error' => $message,
+                'message'    => $message,
+            ]);
+        }
+
+        if (class_exists('WP_Error')) {
+            return new \WP_Error('blc_missing_broken_links_table', $message);
+        }
+
+        return false;
+    }
+
     $remote_client = blc_make_remote_request_client();
     $queue = blc_make_scan_queue($remote_client);
     $controller = blc_make_link_scan_controller($queue);
@@ -3998,6 +4030,38 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
  */
 
 function blc_perform_image_check($batch = 0, $is_full_scan = true) {
+    global $wpdb;
+
+    $table_name = (isset($wpdb) && isset($wpdb->prefix))
+        ? $wpdb->prefix . 'blc_broken_links'
+        : 'blc_broken_links';
+
+    if (function_exists('blc_ensure_broken_links_table_exists') && !blc_ensure_broken_links_table_exists()) {
+        $message = sprintf(
+            /* translators: %s: database table name. */
+            __('La table de suivi des liens cassés « %s » est introuvable. Réactivez l’extension pour la recréer.', 'liens-morts-detector-jlg'),
+            $table_name
+        );
+
+        if (function_exists('error_log')) {
+            error_log('BLC: ' . $message);
+        }
+
+        if (function_exists('blc_update_image_scan_status')) {
+            blc_update_image_scan_status([
+                'state'      => 'failed',
+                'last_error' => $message,
+                'message'    => $message,
+            ]);
+        }
+
+        if (class_exists('WP_Error')) {
+            return new \WP_Error('blc_missing_broken_links_table', $message);
+        }
+
+        return false;
+    }
+
     $queue = blc_make_image_scan_queue();
     $controller = blc_make_image_scan_controller($queue);
 
