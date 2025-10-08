@@ -397,7 +397,7 @@ function blc_register_settings_sections() {
         $page,
         'blc_planification_section',
         array(
-            'label_for' => 'blc_frequency',
+            'label_for' => 'blc_frequency_daily',
         )
     );
 
@@ -944,14 +944,34 @@ function blc_render_frequency_field() {
     <fieldset id="blc_frequency_fieldset" class="blc-frequency-field">
         <legend class="screen-reader-text"><?php esc_html_e('Fréquence de vérification des liens', 'liens-morts-detector-jlg'); ?></legend>
         <div class="blc-frequency-options">
-            <?php foreach ($preset_options as $value => $label) : ?>
-                <label class="blc-frequency-option">
-                    <input type="radio" name="blc_frequency" value="<?php echo esc_attr($value); ?>" <?php checked($frequency, $value); ?>>
+            <?php foreach ($preset_options as $value => $label) :
+                $option_id_suffix = sanitize_html_class((string) $value);
+                if ('' === $option_id_suffix) {
+                    $option_id_suffix = 'option_' . md5((string) $value);
+                }
+
+                $option_id = 'blc_frequency_' . $option_id_suffix;
+                ?>
+                <label class="blc-frequency-option" for="<?php echo esc_attr($option_id); ?>">
+                    <input
+                        type="radio"
+                        id="<?php echo esc_attr($option_id); ?>"
+                        name="blc_frequency"
+                        value="<?php echo esc_attr($value); ?>"
+                        <?php checked($frequency, $value); ?>
+                    >
                     <span><?php echo esc_html($label); ?></span>
                 </label>
             <?php endforeach; ?>
-            <label class="blc-frequency-option blc-frequency-option--custom">
-                <input type="radio" name="blc_frequency" value="custom" <?php checked($is_custom_selected); ?>>
+            <?php $custom_option_id = 'blc_frequency_custom'; ?>
+            <label class="blc-frequency-option blc-frequency-option--custom" for="<?php echo esc_attr($custom_option_id); ?>">
+                <input
+                    type="radio"
+                    id="<?php echo esc_attr($custom_option_id); ?>"
+                    name="blc_frequency"
+                    value="custom"
+                    <?php checked($is_custom_selected); ?>
+                >
                 <span><?php esc_html_e('Intervalle personnalisé', 'liens-morts-detector-jlg'); ?></span>
             </label>
         </div>
