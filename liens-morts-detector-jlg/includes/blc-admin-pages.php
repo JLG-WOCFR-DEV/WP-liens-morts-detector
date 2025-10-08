@@ -109,6 +109,81 @@ function blc_render_dashboard_tabs($active_tab) {
 }
 
 /**
+ * Retrieve the domains generating the highest volume of active broken links.
+ *
+ * @param int $limit Maximum number of domains to return.
+ *
+ * @return array<int,array{host:string,count:int,client_errors:int,server_errors:int,redirects:int,other:int}>
+ */
+function blc_get_top_broken_link_domains($limit = 5) {
+    $limit = (int) $limit;
+    if ($limit <= 0) {
+        $limit = 5;
+    }
+
+    $link_row_types = blc_get_dataset_row_types('link');
+    if (empty($link_row_types)) {
+        $link_row_types = array('link');
+    }
+
+    global $wpdb;
+
+    $table_name    = $wpdb->prefix . 'blc_broken_links';
+    $placeholders  = implode(',', array_fill(0, count($link_row_types), '%s'));
+    $prepared_args = array_merge($link_row_types, array($limit));
+
+    $sql = $wpdb->prepare(
+        "
+        SELECT url_host,
+               COUNT(*) AS total_count,
+               SUM(CASE WHEN http_status BETWEEN 400 AND 499 THEN 1 ELSE 0 END) AS client_error_count,
+               SUM(CASE WHEN http_status BETWEEN 500 AND 599 THEN 1 ELSE 0 END) AS server_error_count,
+               SUM(CASE WHEN http_status BETWEEN 300 AND 399 THEN 1 ELSE 0 END) AS redirect_count,
+               SUM(CASE WHEN http_status IS NULL OR http_status = 0 OR http_status >= 600 THEN 1 ELSE 0 END) AS other_count
+          FROM $table_name
+         WHERE ignored_at IS NULL
+           AND url_host IS NOT NULL
+           AND url_host <> ''
+           AND type IN ($placeholders)
+         GROUP BY url_host
+         ORDER BY total_count DESC
+         LIMIT %d
+        ",
+        $prepared_args
+    );
+
+    $rows = $wpdb->get_results($sql, ARRAY_A);
+    if (!is_array($rows)) {
+        return array();
+    }
+
+    $domains = array();
+
+    foreach ($rows as $row) {
+        $host = isset($row['url_host']) ? (string) $row['url_host'] : '';
+        if ($host === '') {
+            continue;
+        }
+
+        $total = isset($row['total_count']) ? (int) $row['total_count'] : 0;
+        if ($total <= 0) {
+            continue;
+        }
+
+        $domains[] = array(
+            'host'          => $host,
+            'count'         => $total,
+            'client_errors' => isset($row['client_error_count']) ? (int) $row['client_error_count'] : 0,
+            'server_errors' => isset($row['server_error_count']) ? (int) $row['server_error_count'] : 0,
+            'redirects'     => isset($row['redirect_count']) ? (int) $row['redirect_count'] : 0,
+            'other'         => isset($row['other_count']) ? (int) $row['other_count'] : 0,
+        );
+    }
+
+    return $domains;
+}
+
+/**
  * Affiche la modale utilisée pour l'édition et la suppression rapides.
  *
  * Cette modale est rendue une seule fois puis réutilisée via JavaScript pour
@@ -1294,7 +1369,7 @@ function blc_dashboard_links_page() {
             'label'     => $card_data['label'],
         );
     }
-    $option_size_bytes = blc_get_dataset_storage_footprint_bytes('link');
+    $option_size_bytes  = blc_get_dataset_storage_footprint_bytes('link');
     $last_check_time    = get_option('blc_last_check_time', 0);
     $option_size_kb     = $option_size_bytes / 1024;
     $size_display       = ($option_size_kb < 1024)
@@ -1303,6 +1378,7 @@ function blc_dashboard_links_page() {
     $last_check_display = $last_check_time
         ? wp_date('j M Y', $last_check_time)
         : __('Jamais', 'liens-morts-detector-jlg');
+    $top_domains        = blc_get_top_broken_link_domains(5);
 
     $list_table->prepare_items();
     blc_render_action_modal();
@@ -1358,6 +1434,65 @@ function blc_dashboard_links_page() {
                 <?php endif; ?>
             </div>
         </div>
+        <?php if (!empty($top_domains)) : ?>
+            <div class="blc-admin-card blc-admin-card--subtle blc-top-domains">
+                <h2 class="blc-top-domains__title"><?php esc_html_e('Domaines les plus concernés', 'liens-morts-detector-jlg'); ?></h2>
+                <p class="blc-top-domains__description">
+                    <?php esc_html_e("Identifiez les sources externes qui concentrent le plus d'erreurs afin de prioriser vos corrections ou de contacter les partenaires concernés.", 'liens-morts-detector-jlg'); ?>
+                </p>
+                <ol class="blc-top-domains__list">
+                    <?php foreach ($top_domains as $domain) :
+                        $total_label = sprintf(
+                            _n('%s lien cassé actif', '%s liens cassés actifs', $domain['count'], 'liens-morts-detector-jlg'),
+                            number_format_i18n($domain['count'])
+                        );
+                        $breakdown_parts = array();
+                        if ($domain['client_errors'] > 0) {
+                            $breakdown_parts[] = sprintf(
+                                __('4xx : %s', 'liens-morts-detector-jlg'),
+                                number_format_i18n($domain['client_errors'])
+                            );
+                        }
+                        if ($domain['server_errors'] > 0) {
+                            $breakdown_parts[] = sprintf(
+                                __('5xx : %s', 'liens-morts-detector-jlg'),
+                                number_format_i18n($domain['server_errors'])
+                            );
+                        }
+                        if ($domain['redirects'] > 0) {
+                            $breakdown_parts[] = sprintf(
+                                __('Redirections : %s', 'liens-morts-detector-jlg'),
+                                number_format_i18n($domain['redirects'])
+                            );
+                        }
+                        if ($domain['other'] > 0) {
+                            $breakdown_parts[] = sprintf(
+                                __('Autres : %s', 'liens-morts-detector-jlg'),
+                                number_format_i18n($domain['other'])
+                            );
+                        }
+                        $breakdown = implode(' • ', $breakdown_parts);
+                        $search_url = add_query_arg(
+                            array('s' => $domain['host']),
+                            $build_dashboard_url('all')
+                        );
+                        ?>
+                        <li class="blc-top-domains__item">
+                            <div class="blc-top-domains__header">
+                                <span class="blc-top-domains__host"><?php echo esc_html($domain['host']); ?></span>
+                                <span class="blc-top-domains__count"><?php echo esc_html($total_label); ?></span>
+                            </div>
+                            <?php if ($breakdown !== '') : ?>
+                                <span class="blc-top-domains__breakdown"><?php echo esc_html($breakdown); ?></span>
+                            <?php endif; ?>
+                            <a class="blc-top-domains__link" href="<?php echo esc_url($search_url); ?>">
+                                <?php esc_html_e('Voir les liens', 'liens-morts-detector-jlg'); ?>
+                            </a>
+                        </li>
+                    <?php endforeach; ?>
+                </ol>
+            </div>
+        <?php endif; ?>
         <div
             id="blc-scan-status-panel"
             class="<?php echo esc_attr($scan_panel_class_attr); ?>"
