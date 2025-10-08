@@ -10,3 +10,6 @@
 
 3. **Export complet en mémoire**
    `blc_query_report_rows()` charge l'intégralité des lignes correspondant au dataset dans un tableau PHP avant l'écriture. Sur des catalogues volumineux (plusieurs dizaines de milliers de lignes), cette approche explose la consommation mémoire et le temps d'exécution, contrairement aux solutions pro qui streament les résultats par lots. Introduire une itération paginée (curseur SQL, LIMIT/OFFSET) ou un générateur permettrait de réduire le pic mémoire et de mieux s'intégrer à des files de traitement. 【F:liens-morts-detector-jlg/includes/blc-reporting.php†L324-L400】
+
+4. **Déduplication des cron jobs fragile**
+   `blc_schedule_automated_report_generation()` injecte systématiquement un horodatage `completed_at` basé sur `time()` dans le contexte avant d'interroger `wp_next_scheduled()`. Deux appels consécutifs produisent donc des arguments différents, empêchant la détection d'un évènement déjà planifié et multipliant les jobs concurrents sur les gros sites. Il faudrait figer les valeurs volatiles avant la vérification (ou stocker un identifiant séparé) pour garantir l'idempotence. 【F:liens-morts-detector-jlg/includes/blc-reporting.php†L90-L115】【F:liens-morts-detector-jlg/includes/blc-reporting.php†L159-L166】
