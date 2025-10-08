@@ -161,6 +161,31 @@ describe('blc-admin-scripts modal interactions', () => {
     };
   }
 
+  test('ensures the accessibility live region is created once and re-used', () => {
+    const regionA = window.blcAdmin.accessibility.ensureLiveRegion();
+    expect(regionA.attr('aria-live')).toBe('polite');
+    expect(regionA.attr('aria-atomic')).toBe('true');
+
+    regionA.text('message existant');
+
+    const regionB = window.blcAdmin.accessibility.ensureLiveRegion();
+    expect(regionB.get(0)).toBe(regionA.get(0));
+    expect(regionB.text()).toBe('message existant');
+  });
+
+  test('falls back to the live region when wp.a11y.speak is unavailable', () => {
+    const { ensureLiveRegion, speak } = window.blcAdmin.accessibility;
+    const region = ensureLiveRegion();
+
+    speak('Annonce de test');
+
+    expect(region.text()).toBe('');
+
+    jest.advanceTimersByTime(60);
+
+    expect(region.text()).toBe('Annonce de test');
+  });
+
   test('opens and closes the modal via edit link interactions', () => {
     const modal = openEditModal();
 
@@ -358,6 +383,55 @@ describe('blc-admin-scripts modal interactions', () => {
     expect(confirm.prop('disabled')).toBe(false);
     expect(row.css('opacity')).toBe('1');
     expect(modal.find('.blc-modal__error').text()).toBe(`${defaultMessages.prefixedError}Serveur indisponible`);
+  });
+
+  test('displays a mass update summary notice and announces the result', () => {
+    const speakSpy = jest.spyOn(window.blcAdmin.accessibility, 'speak');
+    const listActions = window.blcAdmin.listActions;
+    const row = $('#the-list tr');
+    const helpers = { close: jest.fn() };
+
+    $('body').prepend('<div class="wrap"></div>');
+
+    listActions.handleSuccessfulResponse(
+      {
+        success: true,
+        data: {
+          rowRemoved: true,
+          massUpdate: {
+            applyGlobally: true,
+            updatedCount: '2',
+            failureCount: '1',
+            failures: [
+              {
+                postTitle: 'Article Brouillon',
+                postId: '57',
+                reason: 'Droits insuffisants'
+              }
+            ]
+          }
+        }
+      },
+      row,
+      helpers
+    );
+
+    const notices = $('.wrap .blc-inline-notices .notice');
+    expect(notices.length).toBeGreaterThan(0);
+
+    const notice = notices.last();
+    expect(notice.hasClass('notice-warning')).toBe(true);
+    expect(notice.text()).toContain('2 contenu(s) mis à jour, 1 échec(s).');
+    expect(notice.find('ul li').length).toBe(1);
+
+    const messageRow = $('#the-list tr.no-items');
+    expect(messageRow.length).toBe(1);
+    expect(messageRow.find('td').attr('colspan')).toBe('1');
+    expect(messageRow.text()).toBe('Aucun élément à afficher.');
+
+    expect(speakSpy).toHaveBeenCalledWith(expect.stringContaining('2 contenu(s) mis à jour'), 'assertive');
+
+    speakSpy.mockRestore();
   });
 
   test('shows a generic error message when the AJAX request is rejected', () => {
