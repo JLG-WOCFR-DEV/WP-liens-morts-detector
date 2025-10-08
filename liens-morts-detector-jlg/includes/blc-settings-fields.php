@@ -154,6 +154,16 @@ function blc_register_settings() {
 
     register_setting(
         $option_group,
+        'blc_ui_preset',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_ui_preset_option',
+            'default'           => blc_get_ui_preset_default(),
+        )
+    );
+
+    register_setting(
+        $option_group,
         'blc_soft_404_min_length',
         array(
             'type'              => 'integer',
@@ -678,6 +688,24 @@ function blc_register_settings_sections() {
         'blc_notifications_section',
         array(
             'label_for' => 'blc_notification_recipients',
+        )
+    );
+
+    add_settings_section(
+        'blc_ui_section',
+        __('Interface', 'liens-morts-detector-jlg'),
+        '__return_false',
+        $page
+    );
+
+    add_settings_field(
+        'blc_ui_preset',
+        __('Style du tableau de bord', 'liens-morts-detector-jlg'),
+        'blc_render_ui_preset_field',
+        $page,
+        'blc_ui_section',
+        array(
+            'label_for' => 'blc_ui_preset',
         )
     );
 
@@ -1697,6 +1725,186 @@ function blc_render_debug_mode_field() {
         </p>
     </fieldset>
     <?php
+}
+
+/**
+ * Render the UI preset selector field.
+ *
+ * @return void
+ */
+function blc_render_ui_preset_field() {
+    $current_preset = blc_get_active_ui_preset();
+    $presets        = blc_get_ui_presets();
+
+    if (empty($presets)) {
+        printf('<p class="description">%s</p>', esc_html__('Aucun preset disponible.', 'liens-morts-detector-jlg'));
+        return;
+    }
+
+    $field_id = 'blc_ui_preset';
+    ?>
+    <fieldset class="blc-preset-picker" role="radiogroup" aria-labelledby="<?php echo esc_attr($field_id); ?>">
+        <legend class="screen-reader-text" id="<?php echo esc_attr($field_id); ?>">
+            <?php esc_html_e('Choisissez un style pour le tableau de bord du plugin.', 'liens-morts-detector-jlg'); ?>
+        </legend>
+        <div class="blc-preset-picker__grid">
+            <?php foreach ($presets as $preset_slug => $preset_config) :
+                $input_id    = $field_id . '-' . $preset_slug;
+                $label       = isset($preset_config['label']) ? (string) $preset_config['label'] : ucfirst($preset_slug);
+                $description = isset($preset_config['description']) ? (string) $preset_config['description'] : '';
+                $accent      = isset($preset_config['accent']) ? (string) $preset_config['accent'] : '#6e56cf';
+                $badges      = isset($preset_config['badges']) && is_array($preset_config['badges'])
+                    ? array_filter(array_map('sanitize_text_field', $preset_config['badges']))
+                    : array();
+                ?>
+                <label class="blc-preset-card" for="<?php echo esc_attr($input_id); ?>">
+                    <input
+                        type="radio"
+                        name="blc_ui_preset"
+                        id="<?php echo esc_attr($input_id); ?>"
+                        value="<?php echo esc_attr($preset_slug); ?>"
+                        <?php checked($current_preset, $preset_slug); ?>
+                    >
+                    <span class="blc-preset-card__surface" style="--blc-preset-accent: <?php echo esc_attr($accent); ?>">
+                        <span class="blc-preset-card__preview" aria-hidden="true">
+                            <span class="blc-preset-card__preview-tab"></span>
+                            <span class="blc-preset-card__preview-tab is-secondary"></span>
+                            <span class="blc-preset-card__preview-panel"></span>
+                        </span>
+                        <span class="blc-preset-card__content">
+                            <span class="blc-preset-card__title"><?php echo esc_html($label); ?></span>
+                            <?php if ($description !== '') : ?>
+                                <span class="blc-preset-card__description"><?php echo esc_html($description); ?></span>
+                            <?php endif; ?>
+                            <?php if (!empty($badges)) : ?>
+                                <span class="blc-preset-card__badges">
+                                    <?php foreach ($badges as $badge) : ?>
+                                        <span class="blc-preset-card__badge"><?php echo esc_html($badge); ?></span>
+                                    <?php endforeach; ?>
+                                </span>
+                            <?php endif; ?>
+                        </span>
+                    </span>
+                </label>
+            <?php endforeach; ?>
+        </div>
+        <p class="description">
+            <?php esc_html_e('Le preset sélectionné ajuste couleurs, typographie et animations des pages du plugin sans impacter le reste de l’administration.', 'liens-morts-detector-jlg'); ?>
+        </p>
+    </fieldset>
+    <?php
+}
+
+/**
+ * Return the available UI presets definitions.
+ *
+ * @return array<string,array<string,mixed>>
+ */
+function blc_get_ui_presets() {
+    static $presets = null;
+
+    if (null !== $presets) {
+        return $presets;
+    }
+
+    $presets = array(
+        'headless-minimal' => array(
+            'label'       => __('Headless Minimal', 'liens-morts-detector-jlg'),
+            'description' => __('Palette neutre, focus renforcé et transitions discrètes.', 'liens-morts-detector-jlg'),
+            'accent'      => '#2563eb',
+            'badges'      => array('A11y', __('Focus clair', 'liens-morts-detector-jlg')),
+        ),
+        'shadcn-clean'     => array(
+            'label'       => __('Shadcn Clean', 'liens-morts-detector-jlg'),
+            'description' => __('Design système structuré avec accents verts et cartes en relief.', 'liens-morts-detector-jlg'),
+            'accent'      => '#22c55e',
+            'badges'      => array(__('Cards', 'liens-morts-detector-jlg'), 'Radix'),
+        ),
+        'radix-structured' => array(
+            'label'       => __('Radix Structured', 'liens-morts-detector-jlg'),
+            'description' => __('Tokens inspirés de Radix UI pour une interface sobre et accessible.', 'liens-morts-detector-jlg'),
+            'accent'      => '#7c3aed',
+            'badges'      => array('Tokens', __('Transitions', 'liens-morts-detector-jlg')),
+        ),
+        'bootstrap-audit'  => array(
+            'label'       => __('Bootstrap Audit', 'liens-morts-detector-jlg'),
+            'description' => __('Look & feel familier avec badges colorés et typographie système.', 'liens-morts-detector-jlg'),
+            'accent'      => '#0d6efd',
+            'badges'      => array('Bootstrap', __('Responsive', 'liens-morts-detector-jlg')),
+        ),
+        'semantic-insight' => array(
+            'label'       => __('Semantic Insight', 'liens-morts-detector-jlg'),
+            'description' => __('Interface expressive avec labels colorés pour hiérarchiser les statuts.', 'liens-morts-detector-jlg'),
+            'accent'      => '#f97316',
+            'badges'      => array(__('Labels', 'liens-morts-detector-jlg'), __('KPIs', 'liens-morts-detector-jlg')),
+        ),
+        'anime-motion'     => array(
+            'label'       => __('Anime Motion', 'liens-morts-detector-jlg'),
+            'description' => __('Animations fluides, timeline et feedback visuel inspirés d’anime.js.', 'liens-morts-detector-jlg'),
+            'accent'      => '#06b6d4',
+            'badges'      => array(__('Animations', 'liens-morts-detector-jlg'), 'SVG'),
+        ),
+    );
+
+    /**
+     * Filter the UI presets list.
+     *
+     * @since 1.0.0
+     *
+     * @param array<string,array<string,mixed>> $presets Preset definitions.
+     */
+    $presets = apply_filters('blc_ui_presets', $presets);
+
+    return is_array($presets) ? $presets : array();
+}
+
+/**
+ * Return the default preset slug.
+ *
+ * @return string
+ */
+function blc_get_ui_preset_default() {
+    return 'headless-minimal';
+}
+
+/**
+ * Retrieve the currently selected preset slug ensuring it exists.
+ *
+ * @return string
+ */
+function blc_get_active_ui_preset() {
+    $available = array_keys(blc_get_ui_presets());
+    $value     = get_option('blc_ui_preset', blc_get_ui_preset_default());
+
+    if (!is_string($value)) {
+        return blc_get_ui_preset_default();
+    }
+
+    return in_array($value, $available, true)
+        ? $value
+        : blc_get_ui_preset_default();
+}
+
+/**
+ * Sanitize the preset option before persisting it.
+ *
+ * @param mixed $value Submitted value.
+ *
+ * @return string
+ */
+function blc_sanitize_ui_preset_option($value) {
+    if (!is_string($value)) {
+        return blc_get_ui_preset_default();
+    }
+
+    $value   = sanitize_key($value);
+    $presets = blc_get_ui_presets();
+
+    if (isset($presets[$value])) {
+        return $value;
+    }
+
+    return blc_get_ui_preset_default();
 }
 
 /**

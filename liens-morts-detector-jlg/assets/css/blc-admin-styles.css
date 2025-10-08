@@ -1,6 +1,7 @@
 /* Styles pour le plugin Liens morts detector - JLG */
 
 :root {
+    --blc-admin-font-family: "Inter", "Segoe UI", Roboto, sans-serif;
     --blc-admin-surface: #fcfcfd;
     --blc-admin-surface-subtle: #f5f6f8;
     --blc-admin-surface-muted: #eef0f6;
@@ -30,7 +31,7 @@
 }
 
 .wp-admin {
-    font-family: "Inter", "Segoe UI", Roboto, sans-serif;
+    font-family: var(--blc-admin-font-family);
     --blc-admin-accent: var(--wp-admin-theme-color, #6e56cf);
     --blc-admin-accent-strong: var(--wp-admin-theme-color-darker-20, #5746af);
     --blc-admin-accent-soft: color-mix(in srgb, var(--blc-admin-accent) 15%, #f6f1ff);
@@ -1136,5 +1137,494 @@ body.blc-modal-open {
     .blc-modal__close {
         top: 14px;
         right: 14px;
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Preset picker                                                              */
+/* -------------------------------------------------------------------------- */
+
+.blc-preset-picker {
+    margin-top: 12px;
+}
+
+.blc-preset-picker__grid {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    margin: 12px 0 20px;
+}
+
+.blc-preset-card {
+    position: relative;
+    display: block;
+    cursor: pointer;
+    isolation: isolate;
+}
+
+.blc-preset-card input[type="radio"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.blc-preset-card__surface {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 18px 20px;
+    border-radius: var(--blc-admin-radius-md);
+    border: 1px solid var(--blc-admin-border);
+    background: linear-gradient(155deg, var(--blc-admin-surface) 0%, var(--blc-admin-surface-subtle) 100%);
+    box-shadow: 0 22px 50px -35px rgba(15, 23, 42, 0.35);
+    transition:
+        border-color var(--blc-admin-transition),
+        box-shadow var(--blc-admin-transition),
+        transform var(--blc-admin-transition);
+}
+
+.blc-preset-card__surface::after {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    background: linear-gradient(140deg, color-mix(in srgb, var(--blc-preset-accent, var(--blc-admin-accent)) 40%, transparent), transparent 60%);
+    transition: opacity var(--blc-admin-transition);
+}
+
+.blc-preset-card:hover .blc-preset-card__surface,
+.blc-preset-card:focus-within .blc-preset-card__surface {
+    transform: translateY(-2px);
+    box-shadow: 0 26px 60px -34px rgba(15, 23, 42, 0.4);
+}
+
+.blc-preset-card input[type="radio"]:checked + .blc-preset-card__surface {
+    border-color: var(--blc-preset-accent, var(--blc-admin-accent));
+    box-shadow: 0 32px 80px -40px color-mix(in srgb, var(--blc-preset-accent, var(--blc-admin-accent)) 48%, rgba(15, 23, 42, 0.55));
+}
+
+.blc-preset-card input[type="radio"]:checked + .blc-preset-card__surface::after {
+    opacity: 0.8;
+}
+
+.blc-preset-card input[type="radio"]:focus-visible + .blc-preset-card__surface {
+    outline: 3px solid color-mix(in srgb, var(--blc-preset-accent, var(--blc-admin-accent)) 55%, transparent);
+    outline-offset: 2px;
+}
+
+.blc-preset-card__preview {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 6px;
+    padding: 12px;
+    border-radius: calc(var(--blc-admin-radius-md) - 6px);
+    background: color-mix(in srgb, var(--blc-preset-accent, var(--blc-admin-accent)) 8%, var(--blc-admin-surface-subtle));
+    border: 1px solid color-mix(in srgb, var(--blc-preset-accent, var(--blc-admin-accent)) 12%, var(--blc-admin-border-subtle));
+    min-height: 84px;
+}
+
+.blc-preset-card__preview-tab,
+.blc-preset-card__preview-panel {
+    display: block;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--blc-preset-accent, var(--blc-admin-accent)) 60%, var(--blc-admin-surface));
+    height: 6px;
+}
+
+.blc-preset-card__preview-tab {
+    grid-column: span 4;
+}
+
+.blc-preset-card__preview-tab.is-secondary {
+    grid-column: span 3;
+    opacity: 0.55;
+}
+
+.blc-preset-card__preview-panel {
+    grid-column: 1 / -1;
+    height: 28px;
+    border-radius: calc(var(--blc-admin-radius-sm) - 2px);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--blc-preset-accent, var(--blc-admin-accent)) 20%, var(--blc-admin-surface)) 0%, var(--blc-admin-surface) 60%);
+}
+
+.blc-preset-card__content {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.blc-preset-card__title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--blc-admin-text);
+}
+
+.blc-preset-card__description {
+    color: var(--blc-admin-text-subtle);
+    font-size: 0.92rem;
+    line-height: 1.5;
+}
+
+.blc-preset-card__badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.blc-preset-card__badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--blc-preset-accent, var(--blc-admin-accent)) 14%, var(--blc-admin-surface-subtle));
+    border: 1px solid color-mix(in srgb, var(--blc-preset-accent, var(--blc-admin-accent)) 18%, var(--blc-admin-border-subtle));
+    color: color-mix(in srgb, var(--blc-preset-accent, var(--blc-admin-accent)) 55%, var(--blc-admin-text));
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+@media (max-width: 782px) {
+    .blc-preset-picker__grid {
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/* UI preset overrides                                                        */
+/* -------------------------------------------------------------------------- */
+
+.wp-admin.blc-ui-enhanced .wrap > h1,
+.wp-admin.blc-ui-enhanced .wrap > h1 + p.description {
+    letter-spacing: -0.01em;
+}
+
+.wp-admin.blc-ui-enhanced .wrap > h1 {
+    font-weight: 700;
+}
+
+.wp-admin.blc-ui-enhanced .wrap > h1 + p.description {
+    color: var(--blc-admin-text-subtle);
+}
+
+.wp-admin.blc-ui-enhanced .form-table th {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--blc-admin-text);
+}
+
+.wp-admin.blc-preset--headless-minimal {
+    --blc-admin-font-family: "Inter", "Source Sans Pro", "Segoe UI", sans-serif;
+    --blc-admin-surface: #ffffff;
+    --blc-admin-surface-subtle: #f8fafc;
+    --blc-admin-surface-muted: #eff6ff;
+    --blc-admin-border: #d9e3f5;
+    --blc-admin-border-subtle: #e6edf9;
+    --blc-admin-text: #111827;
+    --blc-admin-text-subtle: #475569;
+    --blc-admin-accent: #2563eb;
+    --blc-admin-accent-strong: #1d4ed8;
+    --blc-admin-accent-soft: rgba(37, 99, 235, 0.18);
+    --blc-admin-accent-muted: rgba(37, 99, 235, 0.32);
+    --blc-admin-success-bg: #dcfce7;
+    --blc-admin-success-text: #047857;
+    --blc-admin-danger-bg: #fee2e2;
+    --blc-admin-danger-text: #b91c1c;
+    --blc-admin-danger-border: #fecaca;
+    --blc-admin-warning-bg: #fef3c7;
+    --blc-admin-warning-text: #b45309;
+    --blc-admin-info-bg: #e0e7ff;
+    --blc-admin-info-text: #4338ca;
+    --blc-admin-shadow-sm: 0 12px 30px -26px rgba(15, 23, 42, 0.6);
+    --blc-admin-shadow-md: 0 36px 72px -40px rgba(15, 23, 42, 0.45);
+    --blc-admin-radius-sm: 10px;
+    --blc-admin-radius-md: 14px;
+    --blc-admin-transition: 150ms cubic-bezier(0.2, 0.8, 0.4, 1);
+}
+
+.wp-admin.blc-preset--headless-minimal .blc-admin-card,
+.wp-admin.blc-preset--headless-minimal .blc-meta {
+    background: var(--blc-admin-surface);
+    border: 1px solid var(--blc-admin-border);
+    box-shadow: var(--blc-admin-shadow-sm);
+}
+
+.wp-admin.blc-preset--headless-minimal .blc-admin-card:hover,
+.wp-admin.blc-preset--headless-minimal .blc-meta:hover {
+    border-color: color-mix(in srgb, var(--blc-admin-accent) 25%, var(--blc-admin-border));
+}
+
+.wp-admin.blc-preset--headless-minimal .blc-admin-tabs__link.is-active {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blc-admin-accent) 50%, transparent);
+}
+
+.wp-admin.blc-preset--shadcn-clean {
+    --blc-admin-font-family: "Geist", "Geist Sans", "Inter", "system-ui", sans-serif;
+    --blc-admin-surface: #fafafa;
+    --blc-admin-surface-subtle: #f5f5f5;
+    --blc-admin-surface-muted: #ececec;
+    --blc-admin-border: #e7e7e7;
+    --blc-admin-border-subtle: #eeeeee;
+    --blc-admin-text: #111111;
+    --blc-admin-text-subtle: #52525b;
+    --blc-admin-accent: #22c55e;
+    --blc-admin-accent-strong: #16a34a;
+    --blc-admin-accent-soft: rgba(34, 197, 94, 0.14);
+    --blc-admin-accent-muted: rgba(34, 197, 94, 0.35);
+    --blc-admin-success-bg: rgba(34, 197, 94, 0.12);
+    --blc-admin-success-text: #15803d;
+    --blc-admin-danger-bg: rgba(248, 113, 113, 0.16);
+    --blc-admin-danger-text: #b91c1c;
+    --blc-admin-danger-border: rgba(248, 113, 113, 0.28);
+    --blc-admin-warning-bg: rgba(251, 191, 36, 0.16);
+    --blc-admin-warning-text: #b45309;
+    --blc-admin-info-bg: rgba(59, 130, 246, 0.16);
+    --blc-admin-info-text: #1d4ed8;
+    --blc-admin-shadow-sm: 0 20px 60px -40px rgba(15, 23, 42, 0.45);
+    --blc-admin-shadow-md: 0 40px 90px -50px rgba(15, 23, 42, 0.55);
+    --blc-admin-radius-sm: 14px;
+    --blc-admin-radius-md: 20px;
+    --blc-admin-transition: 190ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.wp-admin.blc-preset--shadcn-clean .blc-admin-card {
+    border: 1px solid color-mix(in srgb, var(--blc-admin-accent) 10%, var(--blc-admin-border));
+    background: var(--blc-admin-surface);
+    box-shadow: var(--blc-admin-shadow-sm);
+}
+
+.wp-admin.blc-preset--shadcn-clean .blc-admin-card:hover {
+    transform: translateY(-3px) scale(1.01);
+}
+
+.wp-admin.blc-preset--shadcn-clean .blc-stat {
+    background: var(--blc-admin-surface);
+    border: 1px solid color-mix(in srgb, var(--blc-admin-accent) 12%, var(--blc-admin-border-subtle));
+    box-shadow: inset 0 0 0 1px rgba(17, 17, 17, 0.05);
+}
+
+.wp-admin.blc-preset--shadcn-clean .blc-stat:hover {
+    box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.3);
+}
+
+.wp-admin.blc-preset--radix-structured {
+    --blc-admin-font-family: "Work Sans", "Inter", "Segoe UI", sans-serif;
+    --blc-admin-surface: #fcfcfd;
+    --blc-admin-surface-subtle: #f4f4f8;
+    --blc-admin-surface-muted: #ebeef6;
+    --blc-admin-border: #d7d9df;
+    --blc-admin-border-subtle: #e3e5ee;
+    --blc-admin-text: #11181c;
+    --blc-admin-text-subtle: #687076;
+    --blc-admin-accent: #7c3aed;
+    --blc-admin-accent-strong: #5b21b6;
+    --blc-admin-accent-soft: rgba(124, 58, 237, 0.18);
+    --blc-admin-accent-muted: rgba(124, 58, 237, 0.36);
+    --blc-admin-shadow-sm: 0 24px 55px -40px rgba(51, 48, 82, 0.5);
+    --blc-admin-shadow-md: 0 45px 90px -50px rgba(51, 48, 82, 0.55);
+}
+
+.wp-admin.blc-preset--radix-structured [data-state="open"],
+.wp-admin.blc-preset--radix-structured [data-state="checked"] {
+    transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--blc-admin-accent) 60%, transparent);
+}
+
+.wp-admin.blc-preset--bootstrap-audit {
+    --blc-admin-font-family: "system-ui", "-apple-system", "Segoe UI", Roboto, sans-serif;
+    --blc-admin-surface: #ffffff;
+    --blc-admin-surface-subtle: #f8f9fa;
+    --blc-admin-surface-muted: #e9ecef;
+    --blc-admin-border: #dee2e6;
+    --blc-admin-border-subtle: #e2e6ea;
+    --blc-admin-text: #212529;
+    --blc-admin-text-subtle: #6c757d;
+    --blc-admin-accent: #0d6efd;
+    --blc-admin-accent-strong: #0a58ca;
+    --blc-admin-accent-soft: rgba(13, 110, 253, 0.16);
+    --blc-admin-accent-muted: rgba(13, 110, 253, 0.36);
+    --blc-admin-success-bg: #d1e7dd;
+    --blc-admin-success-text: #0f5132;
+    --blc-admin-danger-bg: #f8d7da;
+    --blc-admin-danger-text: #842029;
+    --blc-admin-danger-border: #f5c2c7;
+    --blc-admin-warning-bg: #fff3cd;
+    --blc-admin-warning-text: #664d03;
+    --blc-admin-info-bg: #cff4fc;
+    --blc-admin-info-text: #055160;
+    --blc-admin-shadow-sm: 0 0.75rem 1.5rem -0.75rem rgba(33, 37, 41, 0.2);
+    --blc-admin-shadow-md: 0 1.5rem 3.5rem -1.5rem rgba(33, 37, 41, 0.25);
+    --blc-admin-radius-sm: 10px;
+    --blc-admin-radius-md: 14px;
+    --blc-admin-transition: 0.2s ease-in-out;
+}
+
+.wp-admin.blc-preset--bootstrap-audit .blc-admin-tabs__link {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.wp-admin.blc-preset--bootstrap-audit .blc-stat {
+    border: 1px solid color-mix(in srgb, var(--blc-admin-accent) 15%, var(--blc-admin-border));
+    background: linear-gradient(180deg, #ffffff 0%, var(--blc-admin-surface-subtle) 100%);
+}
+
+.wp-admin.blc-preset--bootstrap-audit .blc-meta-value {
+    font-family: "Segoe UI", "system-ui", sans-serif;
+    font-weight: 700;
+}
+
+.wp-admin.blc-preset--semantic-insight {
+    --blc-admin-font-family: "Lato", "Inter", "Segoe UI", sans-serif;
+    --blc-admin-surface: #ffffff;
+    --blc-admin-surface-subtle: #fdf6ff;
+    --blc-admin-surface-muted: #fbeeed;
+    --blc-admin-border: #f2d5ff;
+    --blc-admin-border-subtle: #f8e7ff;
+    --blc-admin-text: #1f2937;
+    --blc-admin-text-subtle: #6b7280;
+    --blc-admin-accent: #f97316;
+    --blc-admin-accent-strong: #ea580c;
+    --blc-admin-accent-soft: rgba(249, 115, 22, 0.18);
+    --blc-admin-accent-muted: rgba(249, 115, 22, 0.36);
+    --blc-admin-success-bg: rgba(34, 197, 94, 0.16);
+    --blc-admin-success-text: #047857;
+    --blc-admin-danger-bg: rgba(248, 113, 113, 0.18);
+    --blc-admin-danger-text: #b91c1c;
+    --blc-admin-danger-border: rgba(248, 113, 113, 0.32);
+    --blc-admin-warning-bg: rgba(251, 191, 36, 0.2);
+    --blc-admin-warning-text: #b45309;
+    --blc-admin-info-bg: rgba(59, 130, 246, 0.18);
+    --blc-admin-info-text: #1d4ed8;
+    --blc-admin-shadow-sm: 0 28px 70px -45px rgba(249, 115, 22, 0.4);
+    --blc-admin-shadow-md: 0 48px 110px -60px rgba(249, 115, 22, 0.45);
+}
+
+.wp-admin.blc-preset--semantic-insight .blc-admin-card {
+    border-left: 6px solid var(--blc-admin-accent);
+    padding-left: 26px;
+}
+
+.wp-admin.blc-preset--semantic-insight .blc-stat {
+    align-items: flex-start;
+    text-align: left;
+}
+
+.wp-admin.blc-preset--semantic-insight .blc-stat-label {
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    letter-spacing: 0.08em;
+    color: var(--blc-admin-text-subtle);
+}
+
+.wp-admin.blc-preset--semantic-insight .blc-stat-value {
+    font-size: 2.1rem;
+    font-weight: 700;
+}
+
+.wp-admin.blc-preset--semantic-insight .blc-history-state {
+    text-transform: uppercase;
+    font-size: 0.75rem;
+}
+
+.wp-admin.blc-preset--anime-motion {
+    --blc-admin-font-family: "Manrope", "Inter", "Segoe UI", sans-serif;
+    --blc-admin-surface: #0f172a;
+    --blc-admin-surface-subtle: #111c30;
+    --blc-admin-surface-muted: #14213d;
+    --blc-admin-border: rgba(148, 163, 184, 0.35);
+    --blc-admin-border-subtle: rgba(148, 163, 184, 0.25);
+    --blc-admin-text: #f8fafc;
+    --blc-admin-text-subtle: rgba(226, 232, 240, 0.7);
+    --blc-admin-accent: #06b6d4;
+    --blc-admin-accent-strong: #0891b2;
+    --blc-admin-accent-soft: rgba(6, 182, 212, 0.24);
+    --blc-admin-accent-muted: rgba(6, 182, 212, 0.42);
+    --blc-admin-success-bg: rgba(16, 185, 129, 0.22);
+    --blc-admin-success-text: #5eead4;
+    --blc-admin-danger-bg: rgba(248, 113, 113, 0.22);
+    --blc-admin-danger-text: #fca5a5;
+    --blc-admin-danger-border: rgba(248, 113, 113, 0.32);
+    --blc-admin-warning-bg: rgba(250, 204, 21, 0.24);
+    --blc-admin-warning-text: #fde68a;
+    --blc-admin-info-bg: rgba(96, 165, 250, 0.24);
+    --blc-admin-info-text: #bae6fd;
+    --blc-admin-shadow-sm: 0 25px 70px -40px rgba(6, 182, 212, 0.45);
+    --blc-admin-shadow-md: 0 60px 120px -55px rgba(6, 182, 212, 0.55);
+}
+
+.wp-admin.blc-preset--anime-motion .wrap {
+    background: radial-gradient(circle at top left, rgba(6, 182, 212, 0.15), transparent 45%), radial-gradient(circle at 80% 10%, rgba(14, 165, 233, 0.12), transparent 55%);
+    padding: 32px 28px 40px;
+    border-radius: var(--blc-admin-radius-md);
+    color: var(--blc-admin-text);
+}
+
+.wp-admin.blc-preset--anime-motion .wrap a {
+    color: color-mix(in srgb, var(--blc-admin-accent) 75%, #ffffff 25%);
+}
+
+.wp-admin.blc-preset--anime-motion .blc-admin-card {
+    overflow: hidden;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    background: linear-gradient(160deg, rgba(15, 23, 42, 0.8) 0%, rgba(14, 165, 233, 0.18) 100%);
+}
+
+.wp-admin.blc-preset--anime-motion .blc-admin-card::before {
+    content: "";
+    position: absolute;
+    width: 180px;
+    height: 180px;
+    background: radial-gradient(circle, rgba(6, 182, 212, 0.6), transparent 70%);
+    top: -60px;
+    right: -40px;
+    opacity: 0.6;
+    filter: blur(0.5px);
+    animation: blc-orbit 16s linear infinite;
+}
+
+.wp-admin.blc-preset--anime-motion .blc-stat-value {
+    font-variant-numeric: tabular-nums;
+    animation: blc-counter-pulse 6s ease-in-out infinite;
+}
+
+.wp-admin.blc-preset--anime-motion .blc-history-state {
+    box-shadow: inset 0 0 0 1px rgba(6, 182, 212, 0.4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .wp-admin.blc-preset--anime-motion .blc-admin-card::before,
+    .wp-admin.blc-preset--anime-motion .blc-stat-value {
+        animation: none;
+    }
+}
+
+@keyframes blc-orbit {
+    0% {
+        transform: rotate(0deg) translate3d(0, 0, 0);
+    }
+
+    50% {
+        transform: rotate(180deg) translate3d(-6px, 4px, 0);
+    }
+
+    100% {
+        transform: rotate(360deg) translate3d(0, 0, 0);
+    }
+}
+
+@keyframes blc-counter-pulse {
+    0%,
+    100% {
+        text-shadow: 0 0 0 rgba(6, 182, 212, 0.2);
+    }
+
+    50% {
+        text-shadow: 0 0 14px rgba(6, 182, 212, 0.55);
     }
 }

@@ -123,6 +123,7 @@ add_action('blc_generate_report_exports', 'blc_run_automated_report_exports');
 
 // Ajoute nos fichiers CSS et JS dans l'administration
 add_action('admin_enqueue_scripts', 'blc_enqueue_admin_assets');
+add_filter('admin_body_class', 'blc_add_admin_body_class');
 
 /**
  * Charge les fichiers CSS et JavaScript sur les pages d'administration du plugin.
@@ -131,15 +132,10 @@ add_action('admin_enqueue_scripts', 'blc_enqueue_admin_assets');
  */
 function blc_enqueue_admin_assets($hook) {
     // On s'assure de ne charger les scripts que sur nos pages pour ne pas alourdir le reste de l'admin.
-    if (
-        strpos($hook, 'blc-dashboard') === false
-        && strpos($hook, 'blc-images-dashboard') === false
-        && strpos($hook, 'blc-history') === false
-        && strpos($hook, 'blc-settings') === false
-    ) {
+    if (!blc_should_enqueue_admin_assets($hook)) {
         return;
     }
-    
+
     // Chargement du fichier CSS
     $css_path    = __DIR__ . '/assets/css/blc-admin-styles.css';
     $css_version = file_exists($css_path) ? filemtime($css_path) : time();
@@ -170,6 +166,10 @@ function blc_enqueue_admin_assets($hook) {
             plugin_dir_path(__FILE__) . 'languages'
         );
     }
+
+    $ui_preset     = blc_get_active_ui_preset();
+    $ui_preset_key = sanitize_key($ui_preset);
+    $preset_class  = 'blc-preset--' . (function_exists('sanitize_html_class') ? sanitize_html_class($ui_preset_key) : $ui_preset_key);
 
     wp_localize_script(
         'blc-admin-js',
@@ -228,6 +228,16 @@ function blc_enqueue_admin_assets($hook) {
             'applyRedirectMissingModalMessage' => __('Aucune redirection détectée n\'est disponible pour ce lien.', 'liens-morts-detector-jlg'),
             /* translators: %s: number of selected links. */
             'bulkApplyRedirectModalMessage' => __('Voulez-vous appliquer la redirection détectée aux %s liens sélectionnés ?', 'liens-morts-detector-jlg'),
+        )
+    );
+
+    wp_localize_script(
+        'blc-admin-js',
+        'blcAdminUi',
+        array(
+            'preset'      => $ui_preset_key,
+            'presetClass' => $preset_class,
+            'enhanced'    => true,
         )
     );
 
@@ -390,6 +400,98 @@ function blc_enqueue_admin_assets($hook) {
             ),
         )
     );
+}
+
+/**
+ * Détermine si les assets doivent être chargés pour le hook d'administration donné.
+ *
+ * @param string $hook Identifiant du hook courant.
+ *
+ * @return bool
+ */
+function blc_should_enqueue_admin_assets($hook) {
+    if (blc_is_plugin_admin_request()) {
+        return true;
+    }
+
+    if (!is_string($hook) || '' === $hook) {
+        return false;
+    }
+
+    foreach (blc_get_admin_page_slugs() as $slug) {
+        if (false !== strpos($hook, $slug)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Retourne la liste des slugs des pages d'administration du plugin.
+ *
+ * @return array<int,string>
+ */
+function blc_get_admin_page_slugs() {
+    $pages = array('blc-dashboard', 'blc-images-dashboard', 'blc-history', 'blc-settings');
+
+    /**
+     * Filtre la liste des slugs des pages d'administration du plugin.
+     *
+     * @since 1.0.0
+     *
+     * @param array<int,string> $pages Slugs des pages.
+     */
+    $pages = apply_filters('blc_admin_page_slugs', $pages);
+
+    return is_array($pages) ? array_values(array_filter(array_map('sanitize_key', $pages))) : array();
+}
+
+/**
+ * Indique si la requête actuelle cible une page d'administration du plugin.
+ *
+ * @return bool
+ */
+function blc_is_plugin_admin_request() {
+    if (!is_admin()) {
+        return false;
+    }
+
+    if (!isset($_GET['page']) || !is_scalar($_GET['page'])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- lecture simple.
+        return false;
+    }
+
+    $page = sanitize_key(wp_unslash((string) $_GET['page'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- lecture simple.
+
+    return in_array($page, blc_get_admin_page_slugs(), true);
+}
+
+/**
+ * Ajoute la classe correspondant au preset actif sur le body des pages du plugin.
+ *
+ * @param string $classes Classes existantes.
+ *
+ * @return string
+ */
+function blc_add_admin_body_class($classes) {
+    if (!blc_is_plugin_admin_request()) {
+        return $classes;
+    }
+
+    $classes       = is_string($classes) ? $classes : '';
+    $ui_preset     = blc_get_active_ui_preset();
+    $ui_preset_key = sanitize_key($ui_preset);
+    $preset_class  = 'blc-preset--' . (function_exists('sanitize_html_class') ? sanitize_html_class($ui_preset_key) : $ui_preset_key);
+
+    if (false === strpos($classes, 'blc-ui-enhanced')) {
+        $classes .= ' blc-ui-enhanced';
+    }
+
+    if (false === strpos($classes, $preset_class)) {
+        $classes .= ' ' . $preset_class;
+    }
+
+    return trim($classes);
 }
 
 /**
