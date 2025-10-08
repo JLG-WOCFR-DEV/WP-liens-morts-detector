@@ -19,21 +19,21 @@ Cette analyse met en avant les zones du plugin où une application professionnel
   - Ajouter une interface de politiques de sécurité (par exemple validation IP, CDN approuvés) paramétrable depuis l'administration.
 
 ## `blc_update_link_scan_status`
-- **Pourquoi l'améliorer :** la fonction applique la logique métier directement dans la mise à jour des options, sans piste d'audit ni gestion des transitions interdites. Les outils pro conservent l'historique des transitions et exposent des états enrichis (durées, progression). 【F:liens-morts-detector-jlg/includes/blc-scanner.php†L73-L138】
-- **Attentes côté solutions pro :** machine à états explicite, validations contextuelles (ex. empêcher `completed` sans `processed_items`), et historisation des événements pour faciliter le support.
+- **Pourquoi l'améliorer :** la fonction valide désormais les transitions et alimente un journal mémoire, mais elle persiste toujours l'état dans une simple option WordPress partagée. Les solutions pro stockent ces statuts dans des tables dédiées avec verrouillage optimiste et historisation longue durée pour éviter les écrasements concurrents et faciliter les audits multi-sites. 【F:liens-morts-detector-jlg/includes/blc-scanner.php†L557-L666】
+- **Attentes côté solutions pro :** journalisation durable (table SQL avec clé composite site/job), conservation d'un historique complet et exposition d'API permettant la consultation différée ou l'export BI.
 - **Pistes concrètes :**
-  - Introduire un validateur de transition afin de bloquer les séquences incohérentes (ex. retour à `running` depuis `failed` sans reset).
-  - Journaliser chaque changement (timestamp, acteur) dans une table dédiée ou via un hook d'observabilité.
-  - Calculer et stocker des métriques dérivées (progression %, durée totale) afin de rapprocher l'UI de standards pro.
+  - Migrer les statuts et le journal `blc_link_scan_transition_log` vers une table structurée avec identifiant de job et horodatage indexé.【F:liens-morts-detector-jlg/includes/blc-scanner.php†L266-L320】
+  - Exposer une couche d'accès transactionnelle (verrous applicatifs, versions) pour sécuriser les mises à jour simultanées depuis WP-Cron et WP-CLI.
+  - Offrir une API de consultation paginée/REST pour que les équipes support puissent remonter plusieurs cycles de scans sans manipuler directement les options.
 
 ## `JLG\BrokenLinks\Scanner\RemoteRequestClient`
-- **Pourquoi l'améliorer :** l'adaptateur HTTP se contente de déléguer à `wp_safe_remote_*` sans configuration des délais, redirections ou instrumentation. Les solutions professionnelles exposent un client résilient avec backoff, traçage et statistiques réseau. 【F:liens-morts-detector-jlg/includes/Scanner/RemoteRequestClient.php†L7-L20】
+- **Pourquoi l'améliorer :** la classe intègre désormais un backoff exponentiel, une rotation d'User-Agent et le respect de `Retry-After`, mais elle reste limitée à une unique sortie réseau et ne trace pas finement les tentatives. Les offres professionnelles pilotent plusieurs pools de proxys/IP, collectent des métriques détaillées et exposent des compteurs de réussite/échec par domaine. 【F:liens-morts-detector-jlg/includes/Scanner/RemoteRequestClient.php†L17-L168】
 - **Attentes côté solutions pro :**
-  - Paramétrage centralisé des timeouts, limites de redirections, politiques TLS et suivi des tentatives.
-  - Support natif des journaux structurés et des identifiants de corrélation pour debugger les scans à grande échelle.
+  - Gestion de pools (proxys, régions, authentification) avec stratégies de bascule et quotas par cible.
+  - Emission de métriques structurées (latence, taille de réponse, nombre de retries) consommables par Prometheus/DataDog.
 - **Pistes concrètes :**
-  - Permettre l'injection d'options (timeouts, en-têtes) et implémenter une logique de retry exponentiel conditionnel.
-  - Exposer des hooks ou callbacks pour enregistrer les durées, codes et erreurs dans un système de télémétrie.
+  - Introduire une interface de fournisseur de transport permettant d'enregistrer plusieurs connecteurs (HTTP direct, proxy résidentiel, CDN) sélectionnés dynamiquement selon la cible.
+  - Ajouter des hooks `blc_http_request_attempted`/`blc_http_request_completed` contenant latence, tentative, code et identifiant de job pour alimenter la télémétrie externe.
 
 # Plan de débogage et tests
 
