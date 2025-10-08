@@ -5,6 +5,8 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+require_once __DIR__ . '/Admin/DashboardCache.php';
+
 if (!function_exists('blc_normalize_hour_option')) {
     require_once __DIR__ . '/blc-utils.php';
 }
@@ -121,6 +123,11 @@ function blc_get_top_broken_link_domains($limit = 5) {
         $limit = 5;
     }
 
+    $cached_domains = blc_get_cached_top_domain_stats($limit);
+    if (is_array($cached_domains)) {
+        return $cached_domains;
+    }
+
     $link_row_types = blc_get_dataset_row_types('link');
     if (empty($link_row_types)) {
         $link_row_types = array('link');
@@ -154,7 +161,7 @@ function blc_get_top_broken_link_domains($limit = 5) {
 
     $rows = $wpdb->get_results($sql, ARRAY_A);
     if (!is_array($rows)) {
-        return array();
+        $rows = array();
     }
 
     $domains = array();
@@ -179,6 +186,8 @@ function blc_get_top_broken_link_domains($limit = 5) {
             'other'         => isset($row['other_count']) ? (int) $row['other_count'] : 0,
         );
     }
+
+    blc_store_top_domain_stats_cache($limit, $domains);
 
     return $domains;
 }
