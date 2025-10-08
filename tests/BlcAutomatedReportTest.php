@@ -82,9 +82,6 @@ namespace {
             return true;
         }
     }
-
-    require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-utils.php';
-    require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-reporting.php';
 }
 
 namespace Tests {
@@ -113,6 +110,9 @@ class BlcAutomatedReportTest extends TestCase
         if (!defined('ARRAY_A')) {
             define('ARRAY_A', 'ARRAY_A');
         }
+
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-utils.php';
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-reporting.php';
 
         $this->previous_wpdb = $GLOBALS['wpdb'] ?? null;
     }
@@ -202,9 +202,9 @@ class BlcAutomatedReportTest extends TestCase
         $rows = [[
             'id'                 => 10,
             'url'                => 'https://example.com/broken',
-            'anchor'             => '<strong>Broken</strong>',
+            'anchor'             => '<strong>=SUM(A1)</strong>',
             'context_excerpt'    => '',
-            'context_html'       => '<p>Broken link in content.</p>',
+            'context_html'       => '<p>+Malicious context.</p>',
             'post_id'            => 123,
             'post_title'         => 'Sample article',
             'type'               => 'link',
@@ -256,9 +256,19 @@ class BlcAutomatedReportTest extends TestCase
         $this->assertSame(1, $result['row_count']);
         $this->assertSame('export-99', $result['context']['job_id']);
 
-        $csv_contents = file_get_contents($result['file_path']);
-        $this->assertNotFalse($csv_contents);
-        $this->assertStringContainsString('Broken link in content', $csv_contents);
+        $handle = fopen($result['file_path'], 'rb');
+        $this->assertIsResource($handle);
+        // Skip BOM
+        $first_bytes = fread($handle, 3);
+        $this->assertSame("\xEF\xBB\xBF", $first_bytes);
+        $headers = fgetcsv($handle, 0, ',', '"', '\\');
+        $this->assertIsArray($headers);
+        $row = fgetcsv($handle, 0, ',', '"', '\\');
+        $this->assertIsArray($row);
+        fclose($handle);
+
+        $this->assertContains("'=SUM(A1)", $row, 'Anchor text should be protected against formula injection.');
+        $this->assertContains("'+Malicious context.", $row, 'Context excerpt should be protected against formula injection.');
 
         $index = get_option('blc_automated_report_index', []);
         $this->assertArrayHasKey('link', $index);
@@ -269,6 +279,100 @@ class BlcAutomatedReportTest extends TestCase
         foreach (glob($temp_dir . '/blc-reports/*') ?: [] as $file) {
             @unlink($file);
         }
+        foreach (glob($temp_dir . '/*') ?: [] as $file) {
+            @unlink($file);
+        }
+        @rmdir($temp_dir . '/blc-reports');
+        @rmdir($temp_dir);
+    }
+
+    public function test_generate_automated_report_csv_returns_error_when_write_fails(): void
+    {
+        $temp_dir = sys_get_temp_dir() . '/blc-report-test-' . uniqid('', true);
+        $this->assertTrue(mkdir($temp_dir));
+
+        Functions\when('wp_upload_dir')->justReturn([
+            'basedir' => $temp_dir,
+            'baseurl' => 'https://example.com/wp-content/uploads',
+            'error'   => '',
+        ]);
+        Functions\when('apply_filters')->alias(static function ($tag, $value) {
+            return $value;
+        });
+        Functions\when('do_action')->alias(function () {
+            // No-op for tests.
+        });
+        Functions\when('wp_mkdir_p')->alias(static function ($dir) {
+            if (is_dir($dir)) {
+                return true;
+            }
+
+            return mkdir($dir, 0755, true);
+        });
+        $deleted_paths = [];
+        Functions\when('wp_delete_file')->alias(static function ($path) use (&$deleted_paths) {
+            $deleted_paths[] = $path;
+            if (is_file($path)) {
+                unlink($path);
+            }
+        });
+        Functions\expect('blc_write_csv_row')->once()->andReturn(false);
+
+        $rows = [[
+            'id'                 => 10,
+            'url'                => 'https://example.com/broken',
+            'anchor'             => '<strong>Broken</strong>',
+            'context_excerpt'    => '',
+            'context_html'       => '<p>Broken link in content.</p>',
+            'post_id'            => 123,
+            'post_title'         => 'Sample article',
+            'type'               => 'link',
+            'occurrence_index'   => 0,
+            'url_host'           => 'example.com',
+            'is_internal'        => 1,
+            'http_status'        => 404,
+            'last_checked_at'    => '2024-06-15 12:00:00',
+            'ignored_at'         => null,
+            'redirect_target_url'=> 'https://example.com/new',
+            'post_type'          => 'post',
+        ]];
+
+        $GLOBALS['wpdb'] = new class($rows) {
+            public $prefix = 'wp_';
+            public $posts = 'wp_posts';
+
+            /** @var array<int, array<string, mixed>> */
+            private $rows;
+
+            public function __construct(array $rows)
+            {
+                $this->rows = $rows;
+            }
+
+            public function prepare($query, $args = null)
+            {
+                return 'SQL';
+            }
+
+            public function get_results($query, $output = ARRAY_A)
+            {
+                return $this->rows;
+            }
+        };
+
+        $result = \blc_generate_automated_report_csv('link', []);
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('blc_report_file_write_failed', $result->get_error_code());
+
+        $index = get_option('blc_automated_report_index', []);
+        $this->assertSame([], $index, 'No report reference should be stored on failure.');
+
+        $files = glob($temp_dir . '/blc-reports/*');
+        $existing_files = array_filter($files ?: [], 'is_file');
+        $this->assertSame([], $existing_files, 'Partial files should be removed when writing fails.');
+        $this->assertNotEmpty($deleted_paths, 'Failed writes should trigger a deletion attempt.');
+
         foreach (glob($temp_dir . '/*') ?: [] as $file) {
             @unlink($file);
         }

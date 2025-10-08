@@ -32,6 +32,50 @@ if (!function_exists('blc_normalize_report_dataset_type')) {
     }
 }
 
+if (!function_exists('blc_escape_report_csv_field')) {
+    /**
+     * Escape a CSV field to avoid formula injection when opened in spreadsheet tools.
+     *
+     * @param mixed $value Raw field value.
+     *
+     * @return string
+     */
+    function blc_escape_report_csv_field($value)
+    {
+        $value = (string) $value;
+
+        if ($value === '') {
+            return $value;
+        }
+
+        $trimmed = ltrim($value);
+        if ($trimmed === '') {
+            return $value;
+        }
+
+        if (preg_match('/^[=+\-@]/', $trimmed) === 1) {
+            return "'" . $value;
+        }
+
+        return $value;
+    }
+}
+
+if (!function_exists('blc_write_csv_row')) {
+    /**
+     * Wrapper around fputcsv to ease testing and error handling.
+     *
+     * @param resource $handle CSV resource handle.
+     * @param array<int, string> $fields CSV fields to write.
+     *
+     * @return int|false
+     */
+    function blc_write_csv_row($handle, array $fields)
+    {
+        return fputcsv($handle, $fields, ',', '"', '\\');
+    }
+}
+
 if (!function_exists('blc_normalize_report_context')) {
     /**
      * Sanitize and normalize the metadata associated with a report generation.
@@ -313,7 +357,8 @@ if (!function_exists('blc_format_report_row')) {
         $result = [];
         foreach ($columns as $column) {
             $key = $column['key'];
-            $result[] = array_key_exists($key, $normalized) ? $normalized[$key] : '';
+            $value = array_key_exists($key, $normalized) ? $normalized[$key] : '';
+            $result[] = blc_escape_report_csv_field($value);
         }
 
         return $result;
@@ -533,6 +578,23 @@ if (!function_exists('blc_generate_automated_report_csv')) {
             return new \WP_Error('blc_report_file_open_failed', __('Unable to open the report file for writing.', 'liens-morts-detector-jlg'));
         }
 
+        $close_handle = static function () use (&$handle) {
+            if (is_resource($handle)) {
+                fclose($handle);
+                $handle = null;
+            }
+        };
+
+        $delete_file = static function ($path) {
+            if (is_file($path)) {
+                if (function_exists('wp_delete_file')) {
+                    wp_delete_file($path);
+                } else {
+                    @unlink($path);
+                }
+            }
+        };
+
         // Ensure Excel-friendly UTF-8 BOM.
         fwrite($handle, "\xEF\xBB\xBF");
 
@@ -540,19 +602,33 @@ if (!function_exists('blc_generate_automated_report_csv')) {
         foreach ($columns as $column) {
             $header[] = $column['label'];
         }
-        fputcsv($handle, $header);
+
+        if (false === blc_write_csv_row($handle, $header)) {
+            $close_handle();
+            $delete_file($file_path);
+
+            return new \WP_Error('blc_report_file_write_failed', __('Unable to write the automated report file (failed to write headers).', 'liens-morts-detector-jlg'));
+        }
 
         $row_count = 0;
         foreach ($rows as $row) {
             if (!is_array($row)) {
                 continue;
             }
+
             $formatted = blc_format_report_row($row, $columns, $normalized_type, $context);
-            fputcsv($handle, $formatted);
+
+            if (false === blc_write_csv_row($handle, $formatted)) {
+                $close_handle();
+                $delete_file($file_path);
+
+                return new \WP_Error('blc_report_file_write_failed', __('Unable to write the automated report file (failed to write a row).', 'liens-morts-detector-jlg'));
+            }
+
             $row_count++;
         }
 
-        fclose($handle);
+        $close_handle();
 
         $file_url = rtrim($storage['url'], '/\\') . '/' . basename($file_path);
         $bytes = filesize($file_path);

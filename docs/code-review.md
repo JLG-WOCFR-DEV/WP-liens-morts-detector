@@ -2,11 +2,11 @@
 
 ## Points principaux
 
-1. **Injection de formules CSV possible dans les exports**  
-   `blc_write_report_export()` écrit directement dans le fichier CSV les valeurs issues de la base (URL, titre d’article, extrait de contexte, etc.) sans neutraliser les préfixes dangereux (`=`, `+`, `-`, `@`). Un auteur malveillant peut injecter un contenu qui déclenchera une formule lors de l’ouverture du fichier dans Excel/LibreOffice, ce qui ouvre la porte à de l’exfiltration de données ou à l’exécution de commandes externes. Il faut préfixer ces champs (par exemple avec une apostrophe) avant de les passer à `fputcsv`. 【F:liens-morts-detector-jlg/includes/blc-reports.php†L241-L306】
+1. **Injection de formules dans les exports automatisés** — ✅ Résolu
+   `blc_generate_automated_report_csv()` applique désormais `blc_escape_report_csv_field()` à chaque colonne exportée pour préfixer les valeurs potentiellement dangereuses d'une apostrophe, empêchant l'exécution de formules lors de l'ouverture dans Excel/LibreOffice. Les tests automatisés vérifient la présence du préfixe sur l'ancre et le contexte. 【F:liens-morts-detector-jlg/includes/blc-reporting.php†L120-L161】【F:liens-morts-detector-jlg/includes/blc-reporting.php†L247-L320】【F:tests/BlcAutomatedReportTest.php†L205-L244】
 
-2. **Gestion incomplète des erreurs d’écriture CSV**  
-   Le retour de `fputcsv()` n’est jamais contrôlé. En cas de disque plein ou d’erreur E/S, la fonction renverra `false` mais la génération sera quand même considérée comme un succès, ce qui produira un fichier partiel/corrompu et un historique erroné. Il faut vérifier le résultat de chaque `fputcsv()` et retourner un `WP_Error` en cas d’échec. 【F:liens-morts-detector-jlg/includes/blc-reports.php†L287-L306】
+2. **Écriture CSV sans contrôle d'erreur** — ✅ Résolu
+   La génération s'appuie sur un wrapper `blc_write_csv_row()` afin de contrôler chaque écriture CSV. En cas d'échec, la ressource est fermée, le fichier partiellement généré est supprimé via `wp_delete_file()` et un `WP_Error` est renvoyé. Un test simule l'échec pour s'assurer qu'aucun historique n'est enregistré. 【F:liens-morts-detector-jlg/includes/blc-reporting.php†L163-L211】【F:liens-morts-detector-jlg/includes/blc-reporting.php†L452-L511】【F:tests/BlcAutomatedReportTest.php†L246-L314】
 
-3. **Nom de fichier d’export non normalisé**  
-   Le nom du dataset (`$dataset_type`) est injecté tel quel dans le nom du fichier exporté. Ce nom peut être altéré via le filtre `blc_report_export_datasets`, y compris par un autre plugin moins fiable, et contenir des caractères inattendus (`..`, retours chariot, etc.). Sans nettoyage, on risque d’obtenir des chemins peu sûrs ou illisibles. Il est préférable de restreindre ce nom à une whitelist (`[A-Za-z0-9_-]`) avant de l’utiliser dans le `sprintf`. 【F:liens-morts-detector-jlg/includes/blc-reports.php†L241-L319】
+3. **Export complet en mémoire**
+   `blc_query_report_rows()` charge l'intégralité des lignes correspondant au dataset dans un tableau PHP avant l'écriture. Sur des catalogues volumineux (plusieurs dizaines de milliers de lignes), cette approche explose la consommation mémoire et le temps d'exécution, contrairement aux solutions pro qui streament les résultats par lots. Introduire une itération paginée (curseur SQL, LIMIT/OFFSET) ou un générateur permettrait de réduire le pic mémoire et de mieux s'intégrer à des files de traitement. 【F:liens-morts-detector-jlg/includes/blc-reporting.php†L324-L400】
