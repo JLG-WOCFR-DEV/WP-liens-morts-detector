@@ -1,5 +1,9 @@
 <?php
 
+if (!defined('ABSPATH')) {
+    define('ABSPATH', __DIR__ . '/../');
+}
+
 if (!function_exists('__')) {
     function __($text, $domain = null)
     {

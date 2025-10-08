@@ -278,6 +278,7 @@ function blc_schedule_manual_link_scan($is_full_scan = false) {
             'total_items'       => 0,
             'processed_items'   => 0,
             'is_full_scan'      => $is_full_scan,
+            'started_at'        => 0,
             'job_id'            => $job_id,
             'attempt'           => $attempt,
         ]);
@@ -355,7 +356,7 @@ function blc_schedule_manual_link_scan($is_full_scan = false) {
         'is_full_scan'      => $is_full_scan,
         'message'           => $status_message,
         'last_error'        => '',
-        'started_at'        => time(),
+        'started_at'        => 0,
         'ended_at'          => 0,
         'job_id'            => $job_id,
         'attempt'           => $attempt,
@@ -396,6 +397,7 @@ function blc_schedule_manual_image_scan() {
             'state'      => 'failed',
             'message'    => $failure_message,
             'last_error' => $failure_message,
+            'started_at' => 0,
         ]);
 
         return [
@@ -447,7 +449,7 @@ function blc_schedule_manual_image_scan() {
         'is_full_scan'      => true,
         'message'           => $status_message,
         'last_error'        => '',
-        'started_at'        => time(),
+        'started_at'        => 0,
         'ended_at'          => 0,
     ]);
 
