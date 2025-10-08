@@ -34,8 +34,20 @@
     font-family: var(--blc-admin-font-family);
     --blc-admin-accent: var(--wp-admin-theme-color, #6e56cf);
     --blc-admin-accent-strong: var(--wp-admin-theme-color-darker-20, #5746af);
-    --blc-admin-accent-soft: color-mix(in srgb, var(--blc-admin-accent) 15%, #f6f1ff);
-    --blc-admin-accent-muted: color-mix(in srgb, var(--blc-admin-accent) 35%, #f6f1ff);
+    --blc-admin-accent-soft: #f3f0ff;
+    --blc-admin-accent-muted: #e8e4ff;
+}
+
+@supports (color: color-mix(in srgb, white 50%, black)) {
+    :root {
+        --blc-admin-accent-soft: color-mix(in srgb, var(--blc-admin-accent) 15%, #f6f1ff);
+        --blc-admin-accent-muted: color-mix(in srgb, var(--blc-admin-accent) 35%, #f6f1ff);
+    }
+
+    .wp-admin {
+        --blc-admin-accent-soft: color-mix(in srgb, var(--blc-admin-accent) 15%, #f6f1ff);
+        --blc-admin-accent-muted: color-mix(in srgb, var(--blc-admin-accent) 35%, #f6f1ff);
+    }
 }
 
 @media (prefers-color-scheme: dark) {
