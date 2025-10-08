@@ -825,6 +825,7 @@ HTML;
         return new class {
             public string $prefix = 'wp_';
             public string $posts = 'wp_posts';
+            public bool $tableExists = true;
             /** @var array<int, array<string, mixed>> */
             public array $queries = [];
             /** @var array<int, array<string, mixed>> */
@@ -853,6 +854,11 @@ HTML;
                 }
 
                 return true;
+            }
+
+            public function esc_like(string $text): string
+            {
+                return addcslashes($text, '_%');
             }
 
             public function insert(string $table, array $data, array $formats)
@@ -888,6 +894,11 @@ HTML;
             public function get_var(string $query)
             {
                 $this->queries[] = ['sql' => $query, 'type' => 'get_var'];
+
+                if (stripos($query, 'SHOW TABLES LIKE') !== false) {
+                    return $this->tableExists ? $this->prefix . 'blc_broken_links' : null;
+                }
+
                 if (!empty($this->getVarResults)) {
                     return array_shift($this->getVarResults);
                 }
@@ -3455,6 +3466,48 @@ HTML;
         if ($cacheKey !== '') {
             $this->assertSame(0, $this->options[$cacheKey] ?? null, 'Dataset footprint should be restored after rollback.');
         }
+    }
+
+    public function test_blc_perform_check_returns_error_when_table_is_missing(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+        $wpdb->tableExists = false;
+
+        \blc_link_scan_status_cache(null, true);
+        $this->options['blc_link_scan_status'] = ['state' => 'idle'];
+
+        $result = blc_perform_check(0, false);
+
+        $this->assertInstanceOf(\WP_Error::class, $result, 'Missing table should surface as WP_Error.');
+        $this->assertSame('blc_missing_broken_links_table', $result->get_error_code());
+        $this->assertNotSame('', $result->get_error_message(), 'Error message should describe the missing table.');
+        $this->assertNotEmpty($this->errorLogs, 'Missing table should be logged.');
+
+        $status = blc_get_link_scan_status();
+        $this->assertSame('failed', $status['state'], 'Link scan status should be marked as failed when the table is missing.');
+        $this->assertNotSame('', $status['message'], 'Failure message should be recorded in the link scan status.');
+    }
+
+    public function test_blc_perform_image_check_returns_error_when_table_is_missing(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+        $wpdb->tableExists = false;
+
+        \blc_image_scan_status_cache(null, true);
+        $this->options['blc_image_scan_status'] = ['state' => 'idle'];
+
+        $result = blc_perform_image_check(0, true);
+
+        $this->assertInstanceOf(\WP_Error::class, $result, 'Missing table should surface as WP_Error for image scans.');
+        $this->assertSame('blc_missing_broken_links_table', $result->get_error_code());
+        $this->assertNotSame('', $result->get_error_message(), 'Error message should describe the missing table.');
+        $this->assertNotEmpty($this->errorLogs, 'Missing table should be logged during image scans.');
+
+        $status = blc_get_image_scan_status();
+        $this->assertSame('failed', $status['state'], 'Image scan status should be marked as failed when the table is missing.');
+        $this->assertNotSame('', $status['message'], 'Failure message should be recorded in the image scan status.');
     }
 
     public function test_blc_perform_image_check_limits_queries_to_public_post_types(): void
