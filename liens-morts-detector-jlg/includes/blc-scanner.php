@@ -217,7 +217,7 @@ if (!function_exists('blc_get_link_scan_transition_rules')) {
      */
     function blc_get_link_scan_transition_rules() {
         return [
-            'idle'      => ['idle', 'queued', 'running'],
+            'idle'      => ['idle', 'queued', 'running', 'failed'],
             'queued'    => ['queued', 'running', 'cancelled', 'failed', 'idle'],
             'running'   => ['running', 'completed', 'failed', 'cancelled', 'idle'],
             'completed' => ['completed', 'idle', 'queued'],

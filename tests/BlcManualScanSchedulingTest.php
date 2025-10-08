@@ -178,6 +178,8 @@ class BlcManualScanSchedulingTest extends TestCase
         $this->assertSame('failed', $status['state']);
         $this->assertTrue($status['is_full_scan']);
         $this->assertSame($status['message'], $result['message']);
+        $this->assertSame(0, $status['started_at']);
+        $this->assertGreaterThan(0, $status['ended_at']);
 
         $this->assertSame('blc_manual_check_schedule_failed', $this->dispatchedActions[0]['hook']);
         $this->assertSame([true, true], $this->dispatchedActions[0]['args']);
@@ -201,6 +203,8 @@ class BlcManualScanSchedulingTest extends TestCase
         $this->assertFalse($status['is_full_scan']);
         $this->assertStringContainsString('Analyse programmée.', $status['message']);
         $this->assertStringContainsString("La vérification des liens a été programmée", $result['message']);
+        $this->assertSame(0, $status['started_at']);
+        $this->assertSame(0, $status['ended_at']);
     }
 
     public function test_it_marks_manual_trigger_failure_when_spawn_cron_returns_false(): void
@@ -221,6 +225,8 @@ class BlcManualScanSchedulingTest extends TestCase
         $this->assertStringContainsString('Analyse programmée.', $status['message']);
         $this->assertStringContainsString('Le déclenchement immédiat du cron a échoué.', $status['message']);
         $this->assertStringContainsString("La vérification des liens a été programmée", $result['message']);
+        $this->assertSame(0, $status['started_at']);
+        $this->assertSame(0, $status['ended_at']);
     }
 }
 }
