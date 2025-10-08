@@ -52,6 +52,7 @@ function blc_load_textdomain() {
 // On inclut tous les fichiers nécessaires au fonctionnement.
 require_once BLC_PLUGIN_PATH . 'includes/Admin/AdminAssets.php';
 require_once BLC_PLUGIN_PATH . 'includes/Admin/AdminScriptLocalizations.php';
+require_once BLC_PLUGIN_PATH . 'includes/Admin/DashboardCache.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-activation.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-cron.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-scanner.php';
@@ -112,6 +113,8 @@ add_action('admin_menu', 'blc_add_admin_menu');
 // Affiche la notification d'échec de planification lors de l'activation si nécessaire.
 add_action('admin_notices', 'blc_maybe_show_activation_schedule_notice');
 add_action('network_admin_notices', 'blc_maybe_show_activation_schedule_notice');
+
+add_action('blc_links_view_counts_marked_dirty', 'blc_invalidate_top_domain_stats_cache');
 
 // Ajoute nos planifications personnalisées (hebdomadaire, mensuelle) à WP-Cron
 add_filter('cron_schedules', 'blc_add_cron_schedules');
