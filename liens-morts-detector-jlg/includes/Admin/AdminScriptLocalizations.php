@@ -109,6 +109,7 @@ class AdminScriptLocalizations
             'startScanNonce'  => function_exists('wp_create_nonce') ? wp_create_nonce('blc_start_manual_scan') : '',
             'cancelScanNonce' => function_exists('wp_create_nonce') ? wp_create_nonce('blc_cancel_manual_scan') : '',
             'getStatusNonce'  => function_exists('wp_create_nonce') ? wp_create_nonce('blc_get_scan_status') : '',
+            'rescheduleNonce' => function_exists('wp_create_nonce') ? wp_create_nonce('blc_reschedule_cron_nonce') : '',
             'pollInterval'    => max(2000, $pollInterval),
             'status'          => isset($context['scanStatus']) && is_array($context['scanStatus']) ? $context['scanStatus'] : array(),
             'scanType'        => 'link',
@@ -116,14 +117,17 @@ class AdminScriptLocalizations
                 'start'  => 'blc_start_manual_scan',
                 'cancel' => 'blc_cancel_manual_scan',
                 'status' => 'blc_get_scan_status',
+                'reschedule' => 'blc_reschedule_cron',
             ),
             'selectors'       => array(
                 'panel'   => '#blc-scan-status-panel',
                 'form'    => '#blc-manual-scan-form',
                 'cancel'  => '#blc-cancel-scan',
                 'restart' => '#blc-restart-scan',
+                'reschedule' => 'form[data-blc-action="reschedule"]',
                 'fullScan'=> 'input[name="blc_full_scan"]',
             ),
+            'maxIdleCycles'   => 2,
             'i18n'            => array(
                 'panelTitle'        => __('Statut du scan manuel', 'liens-morts-detector-jlg'),
                 'states'            => array(
@@ -147,7 +151,15 @@ class AdminScriptLocalizations
                 'restartConfirm'   => __('Voulez-vous reprogrammer immédiatement un nouveau scan ?', 'liens-morts-detector-jlg'),
                 'restartTitle'     => __('Replanifier un scan', 'liens-morts-detector-jlg'),
                 'restartConfirmLabel' => __('Replanifier', 'liens-morts-detector-jlg'),
+                'forceStartConfirm' => __('Remplacer le scan en cours', 'liens-morts-detector-jlg'),
                 'unknownState'     => __('Statut inconnu', 'liens-morts-detector-jlg'),
+                'manualScanQueued' => __('Analyse planifiée. Le premier lot démarrera sous peu.', 'liens-morts-detector-jlg'),
+                'manualScanReplaced' => __('Le scan précédent a été remplacé par une nouvelle analyse.', 'liens-morts-detector-jlg'),
+                'rescheduleSuccess' => __('La planification automatique a été recréée.', 'liens-morts-detector-jlg'),
+                'rescheduleError'   => __('Impossible de reprogrammer l’analyse automatique. Vérifiez WP-Cron.', 'liens-morts-detector-jlg'),
+                'rescheduleWarning' => __('La planification précédente n’a pas pu être restaurée.', 'liens-morts-detector-jlg'),
+                'idlePollingPaused' => __('Le suivi en direct est mis en pause pour économiser des ressources.', 'liens-morts-detector-jlg'),
+                'idlePollingResume' => __('Relancez une action ou cliquez sur « Actualiser le statut » pour reprendre le suivi.', 'liens-morts-detector-jlg'),
             ),
         );
     }

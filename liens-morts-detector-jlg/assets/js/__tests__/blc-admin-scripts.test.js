@@ -191,11 +191,16 @@ describe('blc-admin-scripts modal interactions', () => {
 
     expect(modal.hasClass('is-open')).toBe(true);
     expect(document.body.classList.contains('blc-modal-open')).toBe(true);
+    const table = document.querySelector('table');
+    expect(table.getAttribute('aria-hidden')).toBe('true');
+    expect(table.hasAttribute('inert')).toBe(true);
 
     modal.find('.blc-modal__cancel').trigger('click');
 
     expect(modal.hasClass('is-open')).toBe(false);
     expect(document.body.classList.contains('blc-modal-open')).toBe(false);
+    expect(table.hasAttribute('aria-hidden')).toBe(false);
+    expect(table.hasAttribute('inert')).toBe(false);
   });
 
   test('validates user input before submitting changes', () => {
