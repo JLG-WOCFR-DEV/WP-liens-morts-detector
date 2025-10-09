@@ -91,6 +91,27 @@ class AdminScriptLocalizations
             'preset'      => isset($context['uiPresetKey']) ? (string) $context['uiPresetKey'] : 'default',
             'presetClass' => isset($context['presetClass']) ? (string) $context['presetClass'] : '',
             'enhanced'    => true,
+            'accessibility' => $this->getAccessibilityConfig($context),
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     *
+     * @return array<string, bool>
+     */
+    private function getAccessibilityConfig(array $context)
+    {
+        $preferences = array();
+
+        if (isset($context['accessibilityPreferences']) && is_array($context['accessibilityPreferences'])) {
+            $preferences = $context['accessibilityPreferences'];
+        }
+
+        return array(
+            'highContrast' => !empty($preferences['high_contrast']),
+            'reduceMotion' => !empty($preferences['reduce_motion']),
+            'largeFont'    => !empty($preferences['large_font']),
         );
     }
 

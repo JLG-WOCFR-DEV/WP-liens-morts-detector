@@ -176,6 +176,22 @@ function blc_add_admin_body_class($classes) {
         $classes .= ' ' . $preset_class;
     }
 
+    if (function_exists('blc_get_accessibility_preferences')) {
+        $accessibility = blc_get_accessibility_preferences();
+
+        if (!empty($accessibility['high_contrast']) && strpos($classes, 'blc-accessibility--high-contrast') === false) {
+            $classes .= ' blc-accessibility--high-contrast';
+        }
+
+        if (!empty($accessibility['reduce_motion']) && strpos($classes, 'blc-accessibility--reduce-motion') === false) {
+            $classes .= ' blc-accessibility--reduce-motion';
+        }
+
+        if (!empty($accessibility['large_font']) && strpos($classes, 'blc-accessibility--large-font') === false) {
+            $classes .= ' blc-accessibility--large-font';
+        }
+    }
+
     return trim($classes);
 }
 

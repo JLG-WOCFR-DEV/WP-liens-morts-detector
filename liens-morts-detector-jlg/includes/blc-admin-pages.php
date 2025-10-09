@@ -2822,6 +2822,7 @@ function blc_render_settings_sections_grouped($page) {
         'blc_post_types_section',
         'blc_post_statuses_section',
         'blc_ui_section',
+        'blc_accessibility_section',
     );
 
     $advanced_section_ids = array();

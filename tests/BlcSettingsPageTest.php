@@ -117,6 +117,7 @@ class BlcSettingsPageTest extends TestCase
 
             return true;
         });
+        Functions\when('current_user_can')->justReturn(true);
         Functions\when('add_option')->alias(static function ($name, $value, $deprecated = '', $autoload = 'yes') use ($test_case) {
             $test_case->setStoredOption((string) $name, $value);
 
@@ -219,7 +220,8 @@ class BlcSettingsPageTest extends TestCase
         blc_settings_page();
         $output = ob_get_clean();
 
-        $this->assertStringContainsString('<form method="post" action="options.php">', (string) $output);
+        $this->assertStringContainsString('<form method="post" action="options.php"', (string) $output);
+        $this->assertStringContainsString('<form method="post" action="options.php" class="blc-settings-form">', (string) $output);
         $this->assertStringContainsString('<div class="wrap">', (string) $output);
     }
 
@@ -398,6 +400,36 @@ class BlcSettingsPageTest extends TestCase
         $success = $this->findSettingsErrorByCode('blc_settings_saved');
         $this->assertNotNull($success);
         $this->assertSame('updated', $success['type']);
+    }
+
+    public function test_accessibility_preferences_defaults_are_disabled(): void
+    {
+        unset($this->options['blc_accessibility_high_contrast'], $this->options['blc_accessibility_reduce_motion'], $this->options['blc_accessibility_large_font']);
+
+        $preferences = blc_get_accessibility_preferences();
+
+        $this->assertFalse($preferences['high_contrast']);
+        $this->assertFalse($preferences['reduce_motion']);
+        $this->assertFalse($preferences['large_font']);
+    }
+
+    public function test_accessibility_preferences_reflect_stored_options(): void
+    {
+        $this->setStoredOption('blc_accessibility_high_contrast', 1);
+        $this->setStoredOption('blc_accessibility_reduce_motion', '1');
+        $this->setStoredOption('blc_accessibility_large_font', true);
+
+        $preferences = blc_get_accessibility_preferences();
+
+        $this->assertTrue($preferences['high_contrast']);
+        $this->assertTrue($preferences['reduce_motion']);
+        $this->assertTrue($preferences['large_font']);
+    }
+
+    public function test_sanitize_accessibility_flag_casts_to_boolean(): void
+    {
+        $this->assertTrue(blc_sanitize_accessibility_flag_option('on'));
+        $this->assertFalse(blc_sanitize_accessibility_flag_option(null));
     }
 
     /**
