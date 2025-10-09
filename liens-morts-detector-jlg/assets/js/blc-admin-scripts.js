@@ -3683,6 +3683,215 @@ jQuery(document).ready(function($) {
         window.localStorage.setItem(STORAGE_KEY, String(type));
     });
 
+    (function setupDashboardSparklines() {
+        var $sparklines = $('.blc-dashboard-links-page .blc-sparkline');
+
+        if (!$sparklines.length) {
+            return;
+        }
+
+        var SVG_NS = 'http://www.w3.org/2000/svg';
+
+        function parsePoints($el) {
+            var cached = $el.data('sparklinePoints');
+            if (Array.isArray(cached)) {
+                return cached;
+            }
+
+            var raw = $el.attr('data-blc-points');
+            var parsed = [];
+
+            if (typeof raw === 'string' && raw.trim() !== '') {
+                try {
+                    parsed = JSON.parse(raw);
+                } catch (error) {
+                    parsed = [];
+                }
+            } else if (Array.isArray(raw)) {
+                parsed = raw;
+            }
+
+            if (!Array.isArray(parsed)) {
+                parsed = [];
+            }
+
+            parsed = parsed
+                .filter(function(point) {
+                    return point && typeof point.value !== 'undefined';
+                })
+                .map(function(point) {
+                    var value = Number(point.value);
+                    if (!Number.isFinite(value)) {
+                        value = 0;
+                    }
+
+                    return {
+                        value: value,
+                        label: point.label || '',
+                        formatted: point.formatted || String(value)
+                    };
+                });
+
+            $el.data('sparklinePoints', parsed);
+
+            return parsed;
+        }
+
+        function createSvgElement(tagName, attributes) {
+            var element = document.createElementNS(SVG_NS, tagName);
+
+            Object.keys(attributes || {}).forEach(function(key) {
+                element.setAttribute(key, String(attributes[key]));
+            });
+
+            return element;
+        }
+
+        function buildSparklineSvg(points, width, height) {
+            var svg = createSvgElement('svg', {
+                viewBox: '0 0 ' + width + ' ' + height,
+                width: '100%',
+                height: '100%',
+                'aria-hidden': 'true',
+                focusable: 'false'
+            });
+
+            if (!points.length) {
+                return svg;
+            }
+
+            var values = points.map(function(point) {
+                return point.value;
+            });
+
+            var min = Math.min.apply(Math, values);
+            var max = Math.max.apply(Math, values);
+
+            if (!Number.isFinite(min) || !Number.isFinite(max)) {
+                min = 0;
+                max = 0;
+            }
+
+            if (min === max) {
+                var padding = max === 0 ? 1 : Math.abs(max) * 0.15;
+                min -= padding;
+                max += padding;
+            }
+
+            var range = max - min;
+            if (range <= 0) {
+                range = 1;
+            }
+
+            var coords = [];
+            var stepX = points.length > 1 ? width / (points.length - 1) : 0;
+
+            points.forEach(function(point, index) {
+                var x;
+                if (points.length === 1) {
+                    x = width / 2;
+                } else {
+                    x = index * stepX;
+                }
+
+                var ratio = (point.value - min) / range;
+                if (!Number.isFinite(ratio)) {
+                    ratio = 0;
+                }
+                var y = height - (ratio * height);
+
+                coords.push({
+                    x: Number(x.toFixed(2)),
+                    y: Number(y.toFixed(2)),
+                    point: point
+                });
+            });
+
+            if (coords.length > 1) {
+                var areaPath = 'M ' + coords[0].x + ' ' + height + ' ';
+                coords.forEach(function(coord) {
+                    areaPath += 'L ' + coord.x + ' ' + coord.y + ' ';
+                });
+                areaPath += 'L ' + coords[coords.length - 1].x + ' ' + height + ' Z';
+
+                svg.appendChild(createSvgElement('path', {
+                    d: areaPath.trim(),
+                    class: 'blc-sparkline__area'
+                }));
+            }
+
+            var linePath = '';
+            coords.forEach(function(coord, index) {
+                linePath += (index === 0 ? 'M ' : ' L ') + coord.x + ' ' + coord.y;
+            });
+
+            svg.appendChild(createSvgElement('path', {
+                d: linePath.trim(),
+                class: 'blc-sparkline__path'
+            }));
+
+            coords.forEach(function(coord) {
+                var circle = createSvgElement('circle', {
+                    class: 'blc-sparkline__point',
+                    cx: coord.x,
+                    cy: coord.y,
+                    r: 4
+                });
+
+                var labels = [];
+                if (coord.point.label) {
+                    labels.push(String(coord.point.label));
+                }
+                if (coord.point.formatted) {
+                    labels.push(String(coord.point.formatted));
+                }
+
+                if (labels.length) {
+                    var title = createSvgElement('title', {});
+                    title.textContent = labels.join(' · ');
+                    circle.appendChild(title);
+                }
+
+                svg.appendChild(circle);
+            });
+
+            return svg;
+        }
+
+        function renderSparkline($el) {
+            var points = parsePoints($el);
+            if (!points.length) {
+                var emptyMessage = $el.attr('data-empty-message') || (messages && messages.noItemsMessage) || 'Données insuffisantes.';
+                $el.empty().addClass('blc-sparkline--empty').text(emptyMessage);
+                return;
+            }
+
+            var width = Math.max($el.innerWidth(), 220);
+            var height = Math.max($el.innerHeight(), 120);
+
+            var svg = buildSparklineSvg(points, width, height);
+
+            $el.removeClass('blc-sparkline--empty');
+            $el.empty().append(svg);
+        }
+
+        $sparklines.each(function() {
+            renderSparkline($(this));
+        });
+
+        $(window).on('resize', debounce(function() {
+            $sparklines.each(function() {
+                var $el = $(this);
+                if ($el.hasClass('blc-sparkline--empty')) {
+                    return;
+                }
+                // Clear cached width-based rendering to recalculate.
+                $el.empty();
+                renderSparkline($el);
+            });
+        }, 200));
+    })();
+
     $(document).on('click', 'a[href*="page=blc-dashboard"]', function() {
         var href = $(this).attr('href');
         if (!href) {
