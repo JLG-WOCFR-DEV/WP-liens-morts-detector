@@ -1881,7 +1881,7 @@ class BLC_Links_List_Table extends WP_List_Table {
                     continue;
                 }
             } else {
-                if (!current_user_can('manage_options')) {
+                if (!function_exists('blc_current_user_can_fix_links') || !blc_current_user_can_fix_links()) {
                     $permission_denied++;
                     continue;
                 }
@@ -2103,6 +2103,10 @@ class BLC_Links_List_Table extends WP_List_Table {
             if ($post) {
                 return current_user_can('edit_post', $post_id);
             }
+        }
+
+        if (function_exists('blc_current_user_can_fix_links')) {
+            return blc_current_user_can_fix_links();
         }
 
         return current_user_can('manage_options');

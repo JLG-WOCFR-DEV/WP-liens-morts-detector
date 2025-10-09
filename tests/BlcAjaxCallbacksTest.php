@@ -113,6 +113,10 @@ class BlcAjaxCallbacksTest extends TestCase
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/liens-morts-detector-jlg.php';
 
+        Functions\when('blc_current_user_can_view_reports')->justReturn(true);
+        Functions\when('blc_current_user_can_fix_links')->justReturn(true);
+        Functions\when('blc_current_user_can_manage_settings')->justReturn(true);
+
         $_POST['row_id'] = '1';
         $_POST['occurrence_index'] = '0';
     }
@@ -625,9 +629,7 @@ class BlcAjaxCallbacksTest extends TestCase
         ];
 
         Functions\when('check_ajax_referer')->justReturn(true);
-        Functions\when('current_user_can')->alias(static function ($capability) {
-            return $capability !== 'manage_options';
-        });
+        Functions\when('blc_current_user_can_fix_links')->justReturn(false);
         Functions\expect('get_post')->once()->with(18)->andReturn(null);
 
         global $wpdb;
@@ -1168,7 +1170,7 @@ class BlcAjaxCallbacksTest extends TestCase
 
         Functions\when('check_ajax_referer')->justReturn(true);
         Functions\expect('get_post')->once()->with(11)->andReturn(null);
-        Functions\expect('current_user_can')->once()->with('manage_options')->andReturn(true);
+        Functions\expect('blc_current_user_can_fix_links')->once()->andReturn(true);
 
         global $wpdb;
         $wpdb = $this->createAjaxWpdbStub();
@@ -1716,9 +1718,7 @@ class BlcAjaxCallbacksTest extends TestCase
         ];
 
         Functions\when('check_ajax_referer')->justReturn(true);
-        Functions\when('current_user_can')->alias(static function ($capability) {
-            return $capability !== 'manage_options';
-        });
+        Functions\when('blc_current_user_can_fix_links')->justReturn(false);
         Functions\expect('get_post')->once()->with(48)->andReturn(null);
 
         global $wpdb;
@@ -1983,7 +1983,7 @@ class BlcAjaxCallbacksTest extends TestCase
 
         Functions\when('check_ajax_referer')->justReturn(true);
         Functions\expect('get_post')->once()->with(21)->andReturn(null);
-        Functions\expect('current_user_can')->once()->with('manage_options')->andReturn(true);
+        Functions\expect('blc_current_user_can_fix_links')->once()->andReturn(true);
 
         Functions\when('esc_url_raw')->alias(function ($url) {
             return $url;

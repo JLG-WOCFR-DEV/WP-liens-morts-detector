@@ -489,6 +489,10 @@ function blc_maybe_add_index($table_name, $index_name, $column_name, $prefix_len
 function blc_activate_site() {
     global $wpdb;
 
+    if (function_exists('blc_register_default_capabilities')) {
+        blc_register_default_capabilities();
+    }
+
     // Création de la table dédiée aux liens et images cassés
     blc_create_broken_links_table();
 
