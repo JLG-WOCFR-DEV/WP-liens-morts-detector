@@ -128,6 +128,9 @@ class AdminScriptLocalizations
                 'fullScan'=> 'input[name="blc_full_scan"]',
             ),
             'maxIdleCycles'   => 2,
+            'support'         => array(
+                'wpCliCommand' => 'wp cron event run blc_manual_check_batch',
+            ),
             'i18n'            => array(
                 'panelTitle'        => __('Statut du scan manuel', 'liens-morts-detector-jlg'),
                 'states'            => array(
@@ -160,6 +163,21 @@ class AdminScriptLocalizations
                 'rescheduleWarning' => __('La planification précédente n’a pas pu être restaurée.', 'liens-morts-detector-jlg'),
                 'idlePollingPaused' => __('Le suivi en direct est mis en pause pour économiser des ressources.', 'liens-morts-detector-jlg'),
                 'idlePollingResume' => __('Relancez une action ou cliquez sur « Actualiser le statut » pour reprendre le suivi.', 'liens-morts-detector-jlg'),
+                'queueDecisionTitle' => __('Ajouter à la file d’attente ou remplacer ?', 'liens-morts-detector-jlg'),
+                'queueDecisionNote'  => __('Remplacer le scan actuel effacera la file d’attente en cours.', 'liens-morts-detector-jlg'),
+                'queueAddLabel'      => __('Ajouter à la file d’attente', 'liens-morts-detector-jlg'),
+                'queueEmpty'         => __('Aucune analyse en attente.', 'liens-morts-detector-jlg'),
+                'queueSingle'        => __('%d analyse en attente', 'liens-morts-detector-jlg'),
+                'queuePlural'        => __('%d analyses en attente', 'liens-morts-detector-jlg'),
+                'queueCleared'       => __('La file d’attente a été vidée avant de relancer l’analyse.', 'liens-morts-detector-jlg'),
+                'queueFullScan'      => __('Analyse complète', 'liens-morts-detector-jlg'),
+                'queuePartialScan'   => __('Analyse ciblée', 'liens-morts-detector-jlg'),
+                'queueRequestedAt'   => __('Programmé le %s', 'liens-morts-detector-jlg'),
+                'queueRequestedBy'   => __('par %s', 'liens-morts-detector-jlg'),
+                'supportAssistMessage' => __('Besoin d’aide ? Consultez la checklist WP-Cron ou exécutez la commande WP-CLI pour débloquer la situation.', 'liens-morts-detector-jlg'),
+                'supportCopySuccess' => __('Commande copiée dans le presse-papiers.', 'liens-morts-detector-jlg'),
+                'supportCopyError'   => __('Impossible de copier la commande. Copiez-la manuellement.', 'liens-morts-detector-jlg'),
+                'logEmpty'           => __('Aucun incident récent à signaler.', 'liens-morts-detector-jlg'),
             ),
         );
     }

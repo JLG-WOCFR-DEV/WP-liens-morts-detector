@@ -645,32 +645,77 @@ function blc_render_action_modal() {
  *
  * @param bool $is_full_scan Whether to launch a full scan.
  *
- * @return array{success:bool,message:string,manual_trigger_failed:bool}
+ * @return array<string, mixed>
  */
-function blc_schedule_manual_link_scan($is_full_scan = false, $force_cancel = false) {
+function blc_schedule_manual_link_scan($is_full_scan = false, $force_cancel = false, $queue_on_busy = false, array $options = array()) {
     $is_full_scan = (bool) $is_full_scan;
     $force_cancel = (bool) $force_cancel;
+    $queue_on_busy = (bool) $queue_on_busy;
+    if (!is_array($options)) {
+        $options = array();
+    }
+
     $bypass_rest_window = $is_full_scan;
     $job_id = function_exists('blc_generate_link_scan_job_id') ? blc_generate_link_scan_job_id() : uniqid('blc_', true);
     $attempt = 1;
     $scheduled_at = time();
 
-    $current_status = blc_get_link_scan_status();
+    $current_status = blc_get_link_scan_status(true);
     $current_state = isset($current_status['state']) ? (string) $current_status['state'] : 'idle';
     $active_states = array('running', 'queued');
     $has_remaining_batches = !empty($current_status['remaining_batches']);
     $scan_is_active = in_array($current_state, $active_states, true) || $has_remaining_batches;
 
+    $from_queue = !empty($options['from_queue']);
+    $queue_entry = (isset($options['queue_entry']) && is_array($options['queue_entry'])) ? $options['queue_entry'] : null;
+    $requested_by = isset($options['requested_by']) ? (int) $options['requested_by'] : (function_exists('get_current_user_id') ? (int) get_current_user_id() : 0);
+    $queue_context = isset($options['enqueue_context']) && is_string($options['enqueue_context']) ? $options['enqueue_context'] : 'manual_dashboard';
+
     if ($scan_is_active && !$force_cancel) {
-        $message = __("Une analyse est déjà en cours. Confirmez le remplacement ou attendez la fin pour éviter la perte de progression.", 'liens-morts-detector-jlg');
+        if ($queue_on_busy) {
+            $queued_entry = blc_enqueue_manual_scan_request(
+                array(
+                    'is_full_scan' => $is_full_scan,
+                    'requested_by' => $requested_by,
+                    'context'      => $queue_context,
+                )
+            );
+
+            $queue_message = __("Un scan est déjà en cours. La nouvelle demande a été ajoutée à la file d’attente.", 'liens-morts-detector-jlg');
+
+            return array(
+                'success'               => true,
+                'message'               => $queue_message,
+                'manual_trigger_failed' => false,
+                'queued'                => true,
+                'queue_length'          => blc_manual_scan_queue_length(),
+                'queue_entry'           => blc_format_manual_queue_entry_for_response($queued_entry),
+            );
+        }
+
+        if ($from_queue && $queue_entry) {
+            blc_prepend_manual_scan_queue($queue_entry);
+        }
+
+        $message = __("Une analyse est déjà en cours. Ajoutez la demande à la file d’attente ou remplacez l’exécution en cours.", 'liens-morts-detector-jlg');
 
         return array(
             'success'               => false,
             'message'               => $message,
+            'manual_trigger_failed' => false,
             'requires_confirmation' => true,
             'current_state'         => $current_state,
-            'resolution_hint'       => __("Vous pouvez annuler l'analyse active ou confirmer le remplacement pour lancer un nouveau lot.", 'liens-morts-detector-jlg'),
+            'resolution_hint'       => __("Vous pouvez laisser la file d’attente démarrer automatiquement après l’analyse en cours ou confirmer le remplacement immédiat.", 'liens-morts-detector-jlg'),
+            'queue_available'       => true,
+            'queue_length'          => blc_manual_scan_queue_length(),
         );
+    }
+
+    $queue_was_cleared = false;
+
+    if ($force_cancel) {
+        $queue_was_cleared = (blc_manual_scan_queue_length() > 0);
+        blc_clear_manual_scan_queue();
     }
 
     if (function_exists('wp_clear_scheduled_hook')) {
@@ -728,11 +773,14 @@ function blc_schedule_manual_link_scan($is_full_scan = false, $force_cancel = fa
             'bypass_rest_window' => $bypass_rest_window,
         ]);
 
-        return [
+        blc_record_manual_scan_error($failure_message, array('context' => 'schedule_failed'));
+
+        return array(
             'success'               => false,
             'message'               => $failure_message,
             'manual_trigger_failed' => false,
-        ];
+            'queue_length'          => blc_manual_scan_queue_length(),
+        );
     }
 
     $manual_trigger_failed = false;
@@ -758,6 +806,10 @@ function blc_schedule_manual_link_scan($is_full_scan = false, $force_cancel = fa
             if ($is_error) {
                 $manual_trigger_failed = true;
                 error_log('BLC: Manual cron trigger failed for link check.');
+                blc_record_manual_scan_error(
+                    __('Le déclenchement immédiat de WP-Cron a échoué. WordPress réessaiera automatiquement.', 'liens-morts-detector-jlg'),
+                    array('context' => 'manual_trigger_failed')
+                );
             }
         }
     }
@@ -778,6 +830,7 @@ function blc_schedule_manual_link_scan($is_full_scan = false, $force_cancel = fa
         'bypass_rest_window'  => $bypass_rest_window,
         'manual_trigger_failed' => $manual_trigger_failed,
         'manual_trigger_error'  => $manual_trigger_error,
+        'queued_via'            => $from_queue ? 'queue' : 'manual',
     ]);
 
     blc_update_link_scan_status([
@@ -803,15 +856,20 @@ function blc_schedule_manual_link_scan($is_full_scan = false, $force_cancel = fa
         esc_html($job_id)
     );
 
-    if ($scan_is_active && $force_cancel) {
+    if ($queue_was_cleared) {
+        $return_message .= ' ' . __("La file d’attente précédente a été vidée avant de relancer l’analyse.", 'liens-morts-detector-jlg');
+    } elseif ($scan_is_active && $force_cancel) {
         $return_message .= ' ' . __("Le scan en cours a été remplacé par cette nouvelle exécution.", 'liens-morts-detector-jlg');
     }
 
-    return [
+    return array(
         'success'               => true,
         'message'               => $return_message,
         'manual_trigger_failed' => $manual_trigger_failed,
-    ];
+        'queue_length'          => blc_manual_scan_queue_length(),
+        'queue_cleared'         => $queue_was_cleared,
+        'dispatched_from_queue' => $from_queue,
+    );
 }
 
 /**
@@ -2059,6 +2117,46 @@ function blc_dashboard_links_page() {
                 </button>
             </div>
             <p class="blc-scan-status__message" aria-live="polite"><?php echo esc_html($scan_status['message']); ?></p>
+            <div
+                class="blc-scan-status__queue"
+                id="blc-manual-queue-indicator"
+                role="status"
+                aria-live="polite"
+                hidden
+            >
+                <h3 class="screen-reader-text"><?php esc_html_e('File d’attente des analyses manuelles', 'liens-morts-detector-jlg'); ?></h3>
+                <ul class="blc-scan-status__queue-list"></ul>
+            </div>
+            <p class="blc-scan-status__queue-warning" id="blc-queue-warning" hidden>
+                <?php esc_html_e('Remplacer ou reprogrammer un scan effacera la file d’attente actuelle.', 'liens-morts-detector-jlg'); ?>
+            </p>
+            <div class="blc-scan-status__assist" id="blc-scan-support" hidden>
+                <p class="blc-scan-status__assist-message"></p>
+                <div class="blc-scan-status__assist-actions">
+                    <a
+                        class="button button-link"
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        href="<?php echo esc_url(apply_filters('blc_wp_cron_checklist_url', 'https://wordpress.org/documentation/article/cron/')); ?>"
+                    >
+                        <?php esc_html_e('Consulter la checklist WP-Cron', 'liens-morts-detector-jlg'); ?>
+                    </a>
+                    <button
+                        type="button"
+                        class="button button-secondary blc-scan-status__assist-copy"
+                        data-command="wp cron event run blc_manual_check_batch"
+                    >
+                        <?php esc_html_e('Copier la commande WP-CLI', 'liens-morts-detector-jlg'); ?>
+                    </button>
+                </div>
+            </div>
+            <details class="blc-scan-status__log" id="blc-scan-error-log">
+                <summary class="blc-scan-status__log-summary">
+                    <?php esc_html_e('Journal des erreurs récentes', 'liens-morts-detector-jlg'); ?>
+                </summary>
+                <p class="blc-scan-status__log-empty"><?php esc_html_e('Aucun incident récent à signaler.', 'liens-morts-detector-jlg'); ?></p>
+                <ul class="blc-scan-status__log-list" aria-live="polite"></ul>
+            </details>
             <button type="button" class="button-link blc-scan-status__refresh" id="blc-refresh-scan-status">
                 <?php esc_html_e('Actualiser le statut', 'liens-morts-detector-jlg'); ?>
             </button>
@@ -2644,6 +2742,8 @@ function blc_reschedule_link_scan_event($context = 'dashboard') {
 
         $payload['resolution_hint'] = __("Assurez-vous que WP-Cron est actif (`DISABLE_WP_CRON` à false) ou exécutez `wp cron event run blc_check_batch`.", 'liens-morts-detector-jlg');
 
+        $payload['status'] = blc_get_link_scan_status_payload();
+
         return $payload;
     }
 
@@ -2659,6 +2759,8 @@ function blc_reschedule_link_scan_event($context = 'dashboard') {
             $payload['next_run'] = (int) $next_scheduled;
         }
     }
+
+    $payload['status'] = blc_get_link_scan_status_payload();
 
     return $payload;
 }
@@ -2690,13 +2792,24 @@ function blc_ajax_start_manual_scan() {
 
     $is_full_scan = isset($_POST['full_scan']) && (int) $_POST['full_scan'] === 1;
     $force_cancel = isset($_POST['force_cancel']) && (int) $_POST['force_cancel'] === 1;
-    $result = blc_schedule_manual_link_scan($is_full_scan, $force_cancel);
+    $queue_on_busy = isset($_POST['queue_on_busy']) && (int) $_POST['queue_on_busy'] === 1;
+
+    $options = array(
+        'requested_by'    => function_exists('get_current_user_id') ? get_current_user_id() : 0,
+        'enqueue_context' => 'manual_dashboard_ajax',
+    );
+
+    $result = blc_schedule_manual_link_scan($is_full_scan, $force_cancel, $queue_on_busy, $options);
 
     if (!$result['success']) {
         $error_data = array(
             'message' => $result['message'],
             'status'  => blc_get_link_scan_status_payload(),
         );
+
+        if (isset($result['queue_length'])) {
+            $error_data['queue_length'] = (int) $result['queue_length'];
+        }
 
         if (!empty($result['requires_confirmation'])) {
             $error_data['requires_confirmation'] = true;
@@ -2705,6 +2818,9 @@ function blc_ajax_start_manual_scan() {
             }
             if (!empty($result['resolution_hint'])) {
                 $error_data['resolution_hint'] = $result['resolution_hint'];
+            }
+            if (!empty($result['queue_available'])) {
+                $error_data['queue_available'] = true;
             }
             wp_send_json_error($error_data, 409);
         }
@@ -2716,14 +2832,32 @@ function blc_ajax_start_manual_scan() {
         wp_send_json_error($error_data, 500);
     }
 
+    $status_payload = blc_get_link_scan_status_payload();
+
     $response = array(
         'message'               => $result['message'],
-        'status'                => blc_get_link_scan_status_payload(),
+        'status'                => $status_payload,
         'manual_trigger_failed' => !empty($result['manual_trigger_failed']),
     );
 
     if (!empty($result['manual_trigger_failed'])) {
         $response['warning'] = __("Le déclenchement immédiat du cron a échoué. Le système WordPress essaiera de l'exécuter automatiquement.", 'liens-morts-detector-jlg');
+    }
+
+    if (!empty($result['queued'])) {
+        $response['queued'] = true;
+    }
+
+    if (isset($result['queue_length'])) {
+        $response['queue_length'] = (int) $result['queue_length'];
+    }
+
+    if (!empty($result['queue_entry'])) {
+        $response['queue_entry'] = $result['queue_entry'];
+    }
+
+    if (!empty($result['queue_cleared'])) {
+        $response['queue_cleared'] = true;
     }
 
     wp_send_json_success($response);

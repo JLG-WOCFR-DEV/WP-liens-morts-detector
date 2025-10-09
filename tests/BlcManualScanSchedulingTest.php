@@ -145,6 +145,13 @@ class BlcManualScanSchedulingTest extends TestCase
         });
 
         Functions\when('current_user_can')->justReturn(true);
+        Functions\when('get_current_user_id')->justReturn(42);
+        Functions\when('get_userdata')->alias(static function ($user_id) {
+            return (object) array(
+                'ID'           => $user_id,
+                'display_name' => 'Test User',
+            );
+        });
         Functions\when('wp_die')->alias(static function ($message) {
             throw new \RuntimeException((string) $message);
         });
@@ -183,6 +190,9 @@ class BlcManualScanSchedulingTest extends TestCase
 
         $this->assertSame('blc_manual_check_schedule_failed', $this->dispatchedActions[0]['hook']);
         $this->assertSame([true, true], $this->dispatchedActions[0]['args']);
+
+        $logEntries = $this->options['blc_manual_scan_errors'] ?? [];
+        $this->assertNotEmpty($logEntries, 'The manual scan error log should record the failure.');
     }
 
     public function test_it_updates_status_and_message_when_scheduling_succeeds(): void
@@ -227,6 +237,68 @@ class BlcManualScanSchedulingTest extends TestCase
         $this->assertStringContainsString("La vérification des liens a été programmée", $result['message']);
         $this->assertSame(0, $status['started_at']);
         $this->assertSame(0, $status['ended_at']);
+    }
+
+    public function test_it_queues_request_when_scan_is_active_and_queue_requested(): void
+    {
+        $status = \blc_get_default_link_scan_status();
+        $status['state'] = 'running';
+        $status['remaining_batches'] = 1;
+        $this->options['blc_link_scan_status'] = $status;
+
+        Functions\when('wp_schedule_single_event')->justReturn(true);
+        Functions\when('spawn_cron')->justReturn(true);
+
+        $result = \blc_schedule_manual_link_scan(false, false, true, array('requested_by' => 42));
+
+        $this->assertTrue($result['success']);
+        $this->assertTrue($result['queued']);
+        $this->assertSame(1, $result['queue_length']);
+
+        $queue = $this->options['blc_manual_scan_queue'] ?? [];
+        $this->assertCount(1, $queue);
+        $this->assertFalse($queue[0]['is_full_scan']);
+    }
+
+    public function test_it_returns_confirmation_with_queue_metadata_when_scan_active(): void
+    {
+        $status = \blc_get_default_link_scan_status();
+        $status['state'] = 'running';
+        $status['remaining_batches'] = 2;
+        $this->options['blc_link_scan_status'] = $status;
+
+        $result = \blc_schedule_manual_link_scan(false, false);
+
+        $this->assertFalse($result['success']);
+        $this->assertTrue($result['requires_confirmation']);
+        $this->assertTrue($result['queue_available']);
+        $this->assertSame('running', $result['current_state']);
+    }
+
+    public function test_it_clears_queue_when_force_cancel_is_requested(): void
+    {
+        $this->options['blc_manual_scan_queue'] = array(
+            array(
+                'id' => 'test',
+                'is_full_scan' => false,
+                'requested_at' => time(),
+                'requested_by' => 42,
+            ),
+        );
+
+        $status = \blc_get_default_link_scan_status();
+        $status['state'] = 'queued';
+        $this->options['blc_link_scan_status'] = $status;
+
+        Functions\when('wp_schedule_single_event')->justReturn(true);
+        Functions\when('spawn_cron')->justReturn(true);
+
+        $result = \blc_schedule_manual_link_scan(false, true);
+
+        $this->assertTrue($result['success']);
+        $this->assertArrayHasKey('queue_cleared', $result);
+        $this->assertTrue($result['queue_cleared']);
+        $this->assertEmpty($this->options['blc_manual_scan_queue']);
     }
 }
 }
