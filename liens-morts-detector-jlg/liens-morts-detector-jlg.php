@@ -53,6 +53,7 @@ function blc_load_textdomain() {
 require_once BLC_PLUGIN_PATH . 'includes/Admin/AdminAssets.php';
 require_once BLC_PLUGIN_PATH . 'includes/Admin/AdminScriptLocalizations.php';
 require_once BLC_PLUGIN_PATH . 'includes/Admin/DashboardCache.php';
+require_once BLC_PLUGIN_PATH . 'includes/blc-capabilities.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-activation.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-cron.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-scanner.php';
@@ -1013,7 +1014,7 @@ function blc_perform_link_update(array $args) {
     }
 
     if (!$post instanceof WP_Post) {
-        if (!current_user_can('manage_options')) {
+        if (!function_exists('blc_current_user_can_fix_links') || !blc_current_user_can_fix_links()) {
             return new WP_Error('blc_forbidden', __('Permissions insuffisantes.', 'liens-morts-detector-jlg'), ['status' => BLC_HTTP_FORBIDDEN]);
         }
 
@@ -1385,7 +1386,7 @@ function blc_ajax_unlink_callback() {
 
     $post = get_post($post_id);
     if (!$post) {
-        if (!current_user_can('manage_options')) {
+        if (!function_exists('blc_current_user_can_fix_links') || !blc_current_user_can_fix_links()) {
             wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')], BLC_HTTP_FORBIDDEN);
         }
 
@@ -1506,7 +1507,7 @@ function blc_ajax_ignore_link_callback() {
             ], BLC_HTTP_FORBIDDEN);
         }
     } else {
-        if (!current_user_can('manage_options')) {
+        if (!function_exists('blc_current_user_can_fix_links') || !blc_current_user_can_fix_links()) {
             wp_send_json_error([
                 'message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg'),
             ], BLC_HTTP_FORBIDDEN);
@@ -1611,7 +1612,7 @@ function blc_ajax_recheck_link_callback() {
             wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')], BLC_HTTP_FORBIDDEN);
         }
     } else {
-        if (!current_user_can('manage_options')) {
+        if (!function_exists('blc_current_user_can_fix_links') || !blc_current_user_can_fix_links()) {
             wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')], BLC_HTTP_FORBIDDEN);
         }
     }
@@ -1747,7 +1748,11 @@ function blc_ajax_recheck_link_callback() {
 
 add_action('wp_ajax_blc_send_test_email', 'blc_ajax_send_test_email');
 function blc_ajax_send_test_email() {
-    if (!current_user_can('manage_options')) {
+    $can_manage_settings = function_exists('blc_current_user_can_manage_settings')
+        ? blc_current_user_can_manage_settings()
+        : current_user_can('manage_options');
+
+    if (!$can_manage_settings) {
         wp_send_json_error(
             array('message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')),
             BLC_HTTP_FORBIDDEN

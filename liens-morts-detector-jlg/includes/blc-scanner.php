@@ -1360,6 +1360,10 @@ if (!function_exists('blc_rest_scan_status_permissions')) {
      * @return bool
      */
     function blc_rest_scan_status_permissions() {
+        if (function_exists('blc_current_user_can_view_reports')) {
+            return blc_current_user_can_view_reports();
+        }
+
         return current_user_can('manage_options');
     }
 }

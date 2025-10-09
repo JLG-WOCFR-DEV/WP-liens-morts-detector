@@ -15,14 +15,21 @@ if (!function_exists('blc_reset_link_check_schedule')) {
     require_once __DIR__ . '/blc-cron.php';
 }
 
+if (!function_exists('blc_get_required_capability')) {
+    require_once __DIR__ . '/blc-capabilities.php';
+}
+
 /**
  * Crée le menu principal et les sous-menus pour les rapports et les réglages.
  */
 function blc_add_admin_menu() {
+    $view_capability     = blc_get_required_capability('view_reports');
+    $settings_capability = blc_get_required_capability('manage_settings');
+
     add_menu_page(
         __('Liens Morts', 'liens-morts-detector-jlg'),
         __('Liens Morts', 'liens-morts-detector-jlg'),
-        'manage_options',
+        $view_capability,
         'blc-dashboard',
         'blc_dashboard_links_page',
         'dashicons-editor-unlink'
@@ -31,7 +38,7 @@ function blc_add_admin_menu() {
         'blc-dashboard',
         __('Liens Cassés', 'liens-morts-detector-jlg'),
         __('Liens Cassés', 'liens-morts-detector-jlg'),
-        'manage_options',
+        $view_capability,
         'blc-dashboard',
         'blc_dashboard_links_page'
     );
@@ -39,7 +46,7 @@ function blc_add_admin_menu() {
         'blc-dashboard',
         __('Images Cassées', 'liens-morts-detector-jlg'),
         __('Images Cassées', 'liens-morts-detector-jlg'),
-        'manage_options',
+        $view_capability,
         'blc-images-dashboard',
         'blc_dashboard_images_page'
     );
@@ -47,7 +54,7 @@ function blc_add_admin_menu() {
         'blc-dashboard',
         __('Historique', 'liens-morts-detector-jlg'),
         __('Historique', 'liens-morts-detector-jlg'),
-        'manage_options',
+        $view_capability,
         'blc-history',
         'blc_scan_history_page'
     );
@@ -55,7 +62,7 @@ function blc_add_admin_menu() {
         'blc-dashboard',
         __('Réglages', 'liens-morts-detector-jlg'),
         __('Réglages', 'liens-morts-detector-jlg'),
-        'manage_options',
+        $settings_capability,
         'blc-settings',
         'blc_settings_page'
     );
@@ -71,18 +78,22 @@ function blc_render_dashboard_tabs($active_tab) {
         'links'    => array(
             'label' => __('Liens', 'liens-morts-detector-jlg'),
             'page'  => 'blc-dashboard',
+            'capability' => blc_get_required_capability('view_reports'),
         ),
         'images'   => array(
             'label' => __('Images', 'liens-morts-detector-jlg'),
             'page'  => 'blc-images-dashboard',
+            'capability' => blc_get_required_capability('view_reports'),
         ),
         'history'  => array(
             'label' => __('Historique', 'liens-morts-detector-jlg'),
             'page'  => 'blc-history',
+            'capability' => blc_get_required_capability('view_reports'),
         ),
         'settings' => array(
             'label' => __('Réglages', 'liens-morts-detector-jlg'),
             'page'  => 'blc-settings',
+            'capability' => blc_get_required_capability('manage_settings'),
         ),
     );
 
@@ -91,6 +102,12 @@ function blc_render_dashboard_tabs($active_tab) {
     echo '<nav class="blc-admin-tabs" aria-label="' . esc_attr($navigation_label) . '"><ul class="blc-admin-tabs__list">';
 
     foreach ($tabs as $tab_key => $tab) {
+        $required_capability = isset($tab['capability']) ? $tab['capability'] : '';
+
+        if ($required_capability !== '' && !blc_user_can($required_capability)) {
+            continue;
+        }
+
         $is_active      = ($tab_key === $active_tab);
         $aria_current   = $is_active ? ' aria-current="page"' : '';
         $active_class   = $is_active ? ' is-active' : '';
@@ -1157,6 +1174,10 @@ function blc_get_history_state_class($state) {
  * Render the scan history dashboard and metrics explorer.
  */
 function blc_scan_history_page() {
+    if (!blc_current_user_can_view_reports()) {
+        wp_die(esc_html__('Permissions insuffisantes pour consulter les rapports.', 'liens-morts-detector-jlg'));
+    }
+
     $history_entries  = blc_get_link_scan_history();
     $metrics_history  = blc_get_link_scan_metrics_history();
     $insights         = blc_calculate_link_scan_history_insights($history_entries);
@@ -1581,11 +1602,15 @@ function blc_scan_history_page() {
  * Affiche la page du rapport des LIENS cassés.
  */
 function blc_dashboard_links_page() {
+    if (!blc_current_user_can_view_reports()) {
+        wp_die(esc_html__('Permissions insuffisantes pour consulter les rapports.', 'liens-morts-detector-jlg'));
+    }
+
     // Gère le lancement d'une vérification manuelle des liens
     if (isset($_POST['blc_manual_check'])) {
         check_admin_referer('blc_manual_check_nonce');
 
-        if (!current_user_can('manage_options')) {
+        if (!blc_current_user_can_fix_links()) {
             wp_die(esc_html__('Permissions insuffisantes pour lancer une analyse manuelle.', 'liens-morts-detector-jlg'));
         }
 
@@ -1618,7 +1643,7 @@ function blc_dashboard_links_page() {
     if (isset($_POST['blc_reschedule_cron'])) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- vérifié via wp_nonce_field.
         check_admin_referer('blc_reschedule_cron_nonce');
 
-        if (!current_user_can('manage_options')) {
+        if (!blc_current_user_can_fix_links()) {
             wp_die(esc_html__('Permissions insuffisantes pour reprogrammer la vérification automatique.', 'liens-morts-detector-jlg'));
         }
 
@@ -2308,12 +2333,16 @@ function blc_dashboard_links_page() {
  * Affiche la page du rapport des IMAGES cassées.
  */
 function blc_dashboard_images_page() {
+    if (!blc_current_user_can_view_reports()) {
+        wp_die(esc_html__('Permissions insuffisantes pour consulter les rapports.', 'liens-morts-detector-jlg'));
+    }
+
     blc_render_action_modal();
 
     if (isset($_POST['blc_reschedule_image_cron'])) {
         check_admin_referer('blc_reschedule_image_cron_nonce');
 
-        if (!current_user_can('manage_options')) {
+        if (!blc_current_user_can_fix_links()) {
             wp_die(esc_html__("Permissions insuffisantes pour reprogrammer l'analyse automatique des images.", 'liens-morts-detector-jlg'));
         }
 
@@ -2380,7 +2409,7 @@ function blc_dashboard_images_page() {
     if (isset($_POST['blc_manual_image_check'])) {
         check_admin_referer('blc_manual_image_check_nonce');
 
-        if (!current_user_can('manage_options')) {
+        if (!blc_current_user_can_fix_links()) {
             wp_die(esc_html__('Permissions insuffisantes pour lancer une analyse manuelle.', 'liens-morts-detector-jlg'));
         }
 
@@ -2628,6 +2657,10 @@ function blc_dashboard_images_page() {
  * Affiche la page des réglages du plugin.
  */
 function blc_settings_page() {
+    if (!blc_current_user_can_manage_settings()) {
+        wp_die(esc_html__('Permissions insuffisantes pour modifier les réglages.', 'liens-morts-detector-jlg'));
+    }
+
     ?>
     <div class="wrap">
         <?php blc_render_dashboard_tabs('settings'); ?>
@@ -3046,7 +3079,7 @@ add_action('wp_ajax_blc_fetch_links_table', 'blc_ajax_fetch_links_table');
 function blc_ajax_start_manual_scan() {
     check_ajax_referer('blc_start_manual_scan');
 
-    if (!current_user_can('manage_options')) {
+    if (!blc_current_user_can_fix_links()) {
         wp_send_json_error(
             array(
                 'message' => __('Permissions insuffisantes pour lancer une analyse manuelle.', 'liens-morts-detector-jlg'),
@@ -3136,7 +3169,7 @@ function blc_ajax_start_manual_scan() {
 function blc_ajax_reschedule_cron() {
     check_ajax_referer('blc_reschedule_cron_nonce');
 
-    if (!current_user_can('manage_options')) {
+    if (!blc_current_user_can_fix_links()) {
         wp_send_json_error(
             array(
                 'message' => __('Permissions insuffisantes pour reprogrammer la vérification automatique.', 'liens-morts-detector-jlg'),
@@ -3162,7 +3195,7 @@ function blc_ajax_reschedule_cron() {
 function blc_ajax_cancel_manual_scan() {
     check_ajax_referer('blc_cancel_manual_scan');
 
-    if (!current_user_can('manage_options')) {
+    if (!blc_current_user_can_fix_links()) {
         wp_send_json_error(
             array(
                 'message' => __('Permissions insuffisantes pour annuler une analyse manuelle.', 'liens-morts-detector-jlg'),
@@ -3207,7 +3240,7 @@ function blc_ajax_cancel_manual_scan() {
 function blc_ajax_get_scan_status() {
     check_ajax_referer('blc_get_scan_status');
 
-    if (!current_user_can('manage_options')) {
+    if (!blc_current_user_can_view_reports()) {
         wp_send_json_error(
             array(
                 'message' => __('Permissions insuffisantes pour consulter le statut du scan.', 'liens-morts-detector-jlg'),
@@ -3231,7 +3264,7 @@ function blc_ajax_get_scan_status() {
 function blc_ajax_start_manual_image_scan() {
     check_ajax_referer('blc_start_manual_image_scan');
 
-    if (!current_user_can('manage_options')) {
+    if (!blc_current_user_can_fix_links()) {
         wp_send_json_error(
             array(
                 'message' => __('Permissions insuffisantes pour lancer une analyse manuelle.', 'liens-morts-detector-jlg'),
@@ -3273,7 +3306,7 @@ function blc_ajax_start_manual_image_scan() {
 function blc_ajax_cancel_manual_image_scan() {
     check_ajax_referer('blc_cancel_manual_image_scan');
 
-    if (!current_user_can('manage_options')) {
+    if (!blc_current_user_can_fix_links()) {
         wp_send_json_error(
             array(
                 'message' => __('Permissions insuffisantes pour annuler une analyse manuelle.', 'liens-morts-detector-jlg'),
@@ -3314,7 +3347,7 @@ function blc_ajax_cancel_manual_image_scan() {
 function blc_ajax_get_image_scan_status() {
     check_ajax_referer('blc_get_image_scan_status');
 
-    if (!current_user_can('manage_options')) {
+    if (!blc_current_user_can_view_reports()) {
         wp_send_json_error(
             array(
                 'message' => __('Permissions insuffisantes pour consulter le statut du scan.', 'liens-morts-detector-jlg'),
@@ -3338,7 +3371,7 @@ function blc_ajax_get_image_scan_status() {
 function blc_ajax_fetch_links_table() {
     check_ajax_referer('blc_links_table');
 
-    if (!current_user_can('manage_options')) {
+    if (!blc_current_user_can_view_reports()) {
         wp_send_json_error(
             array(
                 'message' => __('Permissions insuffisantes pour consulter ce rapport.', 'liens-morts-detector-jlg'),
