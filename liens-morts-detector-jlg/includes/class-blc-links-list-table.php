@@ -26,6 +26,41 @@ class BLC_Links_List_Table extends WP_List_Table {
     private static $bulk_query_args_registered = false;
 
     /**
+     * Requête forcée lorsque le tableau est rendu en AJAX.
+     *
+     * @var array<string, mixed>
+     */
+    private $request_args = [];
+
+    /**
+     * Vue actuellement active (filtre "link_type").
+     *
+     * @var string
+     */
+    private $current_view = 'all';
+
+    /**
+     * Type de contenu sélectionné via le filtre.
+     *
+     * @var string
+     */
+    private $current_post_type = '';
+
+    /**
+     * Nombre d'éléments par page.
+     *
+     * @var int
+     */
+    private $current_per_page = 20;
+
+    /**
+     * Page courante (1-indexée).
+     *
+     * @var int
+     */
+    private $current_page = 1;
+
+    /**
      * Cache local pour les colonnes triables.
      *
      * @var array<string, array{0:string,1:bool}|string>|null
@@ -53,7 +88,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         parent::__construct([
             'singular' => __('Lien mort', 'liens-morts-detector-jlg'),
             'plural'   => __('Liens morts', 'liens-morts-detector-jlg'),
-            'ajax'     => false
+            'ajax'     => true,
         ]);
         $this->site_url = home_url();
 
@@ -61,6 +96,54 @@ class BLC_Links_List_Table extends WP_List_Table {
             add_filter('removable_query_args', [__CLASS__, 'filter_removable_query_args']);
             self::$bulk_query_args_registered = true;
         }
+    }
+
+    /**
+     * Définit les arguments de requête à utiliser pour ce rendu.
+     *
+     * @param array<string, mixed> $args
+     *
+     * @return void
+     */
+    public function set_request_args(array $args) {
+        $normalized = [];
+
+        foreach ($args as $key => $value) {
+            if (!is_string($key) || $key === '') {
+                continue;
+            }
+
+            if (is_scalar($value) || $value === null) {
+                $normalized[$key] = (string) $value;
+            } elseif (is_array($value)) {
+                $normalized[$key] = $value;
+            }
+        }
+
+        $this->request_args = $normalized;
+        $this->search_term = null;
+        $this->sort_request_cache = null;
+        $this->sortable_columns_cache = null;
+    }
+
+    /**
+     * Retourne une valeur issue de la requête courante (override > superglobale).
+     *
+     * @param string     $key
+     * @param mixed|null $default
+     *
+     * @return mixed
+     */
+    private function get_request_param($key, $default = null) {
+        if (isset($this->request_args[$key])) {
+            return $this->request_args[$key];
+        }
+
+        if (isset($_REQUEST[$key])) {
+            return $_REQUEST[$key];
+        }
+
+        return $default;
     }
 
     /**
@@ -77,6 +160,32 @@ class BLC_Links_List_Table extends WP_List_Table {
             esc_attr($search_term),
             esc_attr__('Rechercher', 'liens-morts-detector-jlg')
         );
+    }
+
+    /**
+     * Retourne le numéro de page courant en tenant compte des requêtes AJAX.
+     *
+     * @return int
+     */
+    public function get_pagenum() {
+        $requested = $this->get_request_param('paged');
+
+        if (is_array($requested)) {
+            $requested = reset($requested);
+        }
+
+        if ($requested !== null) {
+            if (function_exists('wp_unslash') && is_string($requested)) {
+                $requested = wp_unslash($requested);
+            }
+
+            $page = (int) $requested;
+            if ($page >= 1) {
+                return $page;
+            }
+        }
+
+        return parent::get_pagenum();
     }
 
     /**
@@ -138,7 +247,21 @@ class BLC_Links_List_Table extends WP_List_Table {
      */
     protected function get_views() {
         $views = [];
-        $current = (!empty($_GET['link_type'])) ? sanitize_text_field(wp_unslash($_GET['link_type'])) : 'all';
+        $current = 'all';
+        $raw_current = $this->get_request_param('link_type');
+        if (is_array($raw_current)) {
+            $raw_current = reset($raw_current);
+        }
+
+        if (is_string($raw_current) && $raw_current !== '') {
+            if (function_exists('wp_unslash')) {
+                $raw_current = wp_unslash($raw_current);
+            }
+            $current = sanitize_key($raw_current);
+            if ($current === '') {
+                $current = 'all';
+            }
+        }
 
         $counts = $this->get_status_counts();
 
@@ -469,12 +592,16 @@ class BLC_Links_List_Table extends WP_List_Table {
      */
     private function parse_sort_request(array $allowed_columns) {
         $orderby = '';
-        if (isset($_GET['orderby'])) {
-            $raw_orderby = $_GET['orderby'];
-            if (function_exists('wp_unslash')) {
+        $raw_orderby = $this->get_request_param('orderby');
+        if (is_array($raw_orderby)) {
+            $raw_orderby = reset($raw_orderby);
+        }
+
+        if ($raw_orderby !== null) {
+            if (function_exists('wp_unslash') && is_string($raw_orderby)) {
                 $raw_orderby = wp_unslash($raw_orderby);
             }
-            $raw_orderby = sanitize_key($raw_orderby);
+            $raw_orderby = sanitize_key((string) $raw_orderby);
 
             if ($raw_orderby !== '' && in_array($raw_orderby, $allowed_columns, true)) {
                 $orderby = $raw_orderby;
@@ -482,16 +609,22 @@ class BLC_Links_List_Table extends WP_List_Table {
         }
 
         $order = 'desc';
-        if (isset($_GET['order'])) {
-            $raw_order = $_GET['order'];
-            if (function_exists('wp_unslash')) {
+        $raw_order = $this->get_request_param('order');
+        if (is_array($raw_order)) {
+            $raw_order = reset($raw_order);
+        }
+
+        if ($raw_order !== null) {
+            if (function_exists('wp_unslash') && is_string($raw_order)) {
                 $raw_order = wp_unslash($raw_order);
             }
             if (function_exists('sanitize_text_field')) {
-                $raw_order = sanitize_text_field($raw_order);
+                $raw_order = sanitize_text_field((string) $raw_order);
+            } else {
+                $raw_order = (string) $raw_order;
             }
 
-            $raw_order = strtolower((string) $raw_order);
+            $raw_order = strtolower($raw_order);
             if ($raw_order === 'asc' || $raw_order === 'desc') {
                 $order = $raw_order;
             }
@@ -889,17 +1022,43 @@ class BLC_Links_List_Table extends WP_List_Table {
         $this->maybe_prepare_bulk_notice_from_query();
 
         $this->_column_headers = [$this->get_columns(), [], $this->get_sortable_columns(), 'url'];
-        $current_view = (!empty($_GET['link_type'])) ? sanitize_text_field(wp_unslash($_GET['link_type'])) : 'all';
-        $per_page     = 20;
+
+        $current_view = 'all';
+        $raw_view = $this->get_request_param('link_type');
+        if (is_array($raw_view)) {
+            $raw_view = reset($raw_view);
+        }
+        if (is_string($raw_view) && $raw_view !== '') {
+            if (function_exists('wp_unslash')) {
+                $raw_view = wp_unslash($raw_view);
+            }
+            $sanitized_view = sanitize_key($raw_view);
+            if ($sanitized_view !== '') {
+                $current_view = $sanitized_view;
+            }
+        }
+
+        $per_page = (int) apply_filters('blc_links_table_per_page', 20);
+        if ($per_page < 1) {
+            $per_page = 20;
+        }
+
         $current_page = max(1, (int) $this->get_pagenum());
+
+        $this->current_per_page = $per_page;
+        $this->current_page = $current_page;
         $search_term  = $this->get_search_term();
 
         $available_post_types = $this->get_available_post_types();
         $selected_post_type  = $this->get_selected_post_type();
+        $this->current_post_type = $selected_post_type;
 
         if (is_array($data)) {
             $total_items = ($total_items_override !== null) ? (int) $total_items_override : count($data);
-            $this->set_pagination_args(['total_items' => $total_items, 'per_page' => $per_page]);
+            $this->set_pagination_args([
+                'total_items' => $total_items,
+                'per_page'    => $per_page,
+            ]);
             $this->items = array_slice($data, (($current_page - 1) * $per_page), $per_page);
             return;
         }
@@ -917,6 +1076,14 @@ class BLC_Links_List_Table extends WP_List_Table {
         $is_ignored_view = ($current_view === 'ignored');
 
         $link_row_types = $this->get_filterable_link_row_types();
+        $allowed_views = array_merge(
+            ['all', 'internal', 'external', 'ignored', 'status_404_410', 'status_5xx', 'status_redirects', 'needs_recheck'],
+            $link_row_types
+        );
+        if (!in_array($current_view, $allowed_views, true)) {
+            $current_view = 'all';
+        }
+        $this->current_view = $current_view;
         $type_filter = $link_row_types;
         if (in_array($current_view, $link_row_types, true)) {
             $type_filter = [$current_view];
@@ -1146,11 +1313,12 @@ class BLC_Links_List_Table extends WP_List_Table {
     }
 
     private function get_selected_post_type() {
-        if (!isset($_GET['post_type'])) {
-            return '';
+        $raw_value = $this->get_request_param('post_type');
+
+        if (is_array($raw_value)) {
+            $raw_value = reset($raw_value);
         }
 
-        $raw_value = $_GET['post_type'];
         if (!is_string($raw_value)) {
             return '';
         }
@@ -1171,12 +1339,12 @@ class BLC_Links_List_Table extends WP_List_Table {
             return $this->search_term;
         }
 
-        if (!isset($_REQUEST['s'])) {
+        $raw = $this->get_request_param('s');
+        if ($raw === null) {
             $this->search_term = '';
             return $this->search_term;
         }
 
-        $raw = $_REQUEST['s'];
         if (!is_string($raw)) {
             $this->search_term = '';
             return $this->search_term;
@@ -1193,6 +1361,99 @@ class BLC_Links_List_Table extends WP_List_Table {
         $this->search_term = $raw;
 
         return $this->search_term;
+    }
+
+    /**
+     * Retourne la vue actuellement active (filtre link_type).
+     *
+     * @return string
+     */
+    public function get_current_view_slug() {
+        return $this->current_view;
+    }
+
+    /**
+     * Retourne le type de contenu sélectionné.
+     *
+     * @return string
+     */
+    public function get_current_post_type_filter() {
+        return $this->current_post_type;
+    }
+
+    /**
+     * Nombre d'éléments par page utilisés pour ce rendu.
+     *
+     * @return int
+     */
+    public function get_items_per_page_count() {
+        return max(1, (int) $this->current_per_page);
+    }
+
+    /**
+     * Numéro de page courant.
+     *
+     * @return int
+     */
+    public function get_current_page_number() {
+        return max(1, (int) $this->current_page);
+    }
+
+    /**
+     * Retourne le nombre total d'éléments selon la requête.
+     *
+     * @return int
+     */
+    public function get_total_items_count() {
+        if (!is_array($this->_pagination_args)) {
+            return count($this->items);
+        }
+
+        if (isset($this->_pagination_args['total_items'])) {
+            return (int) $this->_pagination_args['total_items'];
+        }
+
+        return count($this->items);
+    }
+
+    /**
+     * Retourne le nombre total de pages.
+     *
+     * @return int
+     */
+    public function get_total_pages_count() {
+        if (is_array($this->_pagination_args) && isset($this->_pagination_args['total_pages'])) {
+            return max(1, (int) $this->_pagination_args['total_pages']);
+        }
+
+        $per_page = $this->get_items_per_page_count();
+        if ($per_page <= 0) {
+            $per_page = 1;
+        }
+
+        return (int) max(1, ceil($this->get_total_items_count() / $per_page));
+    }
+
+    /**
+     * Retourne un instantané des paramètres actifs du tableau.
+     *
+     * @return array<string, mixed>
+     */
+    public function export_state() {
+        $sorting = $this->get_current_sort_request();
+
+        return [
+            'view'       => $this->get_current_view_slug(),
+            'search'     => $this->get_search_term(),
+            'post_type'  => $this->get_current_post_type_filter(),
+            'sorting'    => $sorting,
+            'pagination' => [
+                'current'     => $this->get_current_page_number(),
+                'per_page'    => $this->get_items_per_page_count(),
+                'total_items' => $this->get_total_items_count(),
+                'total_pages' => $this->get_total_pages_count(),
+            ],
+        ];
     }
 
     protected function process_bulk_action() {
@@ -1232,11 +1493,10 @@ class BLC_Links_List_Table extends WP_List_Table {
             return;
         }
 
-        if (!isset($_GET['blc-bulk-message'])) {
+        $raw_message = $this->get_request_param('blc-bulk-message');
+        if ($raw_message === null) {
             return;
         }
-
-        $raw_message = $_GET['blc-bulk-message'];
         if (!is_string($raw_message)) {
             return;
         }
@@ -1253,8 +1513,8 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         $type = 'success';
 
-        if (isset($_GET['blc-bulk-type'])) {
-            $raw_type = $_GET['blc-bulk-type'];
+        $raw_type = $this->get_request_param('blc-bulk-type');
+        if ($raw_type !== null) {
             if (is_string($raw_type)) {
                 if (function_exists('wp_unslash')) {
                     $raw_type = wp_unslash($raw_type);
@@ -1268,8 +1528,8 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         $announcement = '';
 
-        if (isset($_GET['blc-bulk-announcement'])) {
-            $raw_announcement = $_GET['blc-bulk-announcement'];
+        $raw_announcement = $this->get_request_param('blc-bulk-announcement');
+        if ($raw_announcement !== null) {
             if (is_string($raw_announcement)) {
                 if (function_exists('wp_unslash')) {
                     $raw_announcement = wp_unslash($raw_announcement);

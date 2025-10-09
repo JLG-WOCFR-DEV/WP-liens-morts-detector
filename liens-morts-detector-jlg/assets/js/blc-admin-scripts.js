@@ -70,7 +70,11 @@ jQuery(document).ready(function($) {
         massUpdateSummarySuccess: '%1$s contenu(s) mis à jour.',
         massUpdateSummaryPartial: '%1$s contenu(s) mis à jour, %2$s échec(s).',
         massUpdateFailureListTitle: 'Échecs lors de la mise à jour\u00a0:',
-        massUpdateFailureItem: '%1$s (ID %2$s)'
+        massUpdateFailureItem: '%1$s (ID %2$s)',
+        personaApplied: 'Préréglage appliqué.',
+        personaFailed: 'Ce préréglage ne peut pas être appliqué ici.',
+        tableRefreshed: 'Liste des liens mise à jour.',
+        tableFetchError: 'Impossible de rafraîchir la liste pour le moment.'
     };
 
     var messages = $.extend({}, defaultMessages, window.blcAdminMessages || {});
@@ -3373,6 +3377,844 @@ jQuery(document).ready(function($) {
         }
         window.localStorage.setItem(STORAGE_KEY, String(type));
     });
+
+    (function setupDashboardSparklines() {
+        var $sparklines = $('.blc-dashboard-links-page .blc-sparkline');
+
+        if (!$sparklines.length) {
+            return;
+        }
+
+        var SVG_NS = 'http://www.w3.org/2000/svg';
+
+        function parsePoints($el) {
+            var cached = $el.data('sparklinePoints');
+            if (Array.isArray(cached)) {
+                return cached;
+            }
+
+            var raw = $el.attr('data-blc-points');
+            var parsed = [];
+
+            if (typeof raw === 'string' && raw.trim() !== '') {
+                try {
+                    parsed = JSON.parse(raw);
+                } catch (error) {
+                    parsed = [];
+                }
+            } else if (Array.isArray(raw)) {
+                parsed = raw;
+            }
+
+            if (!Array.isArray(parsed)) {
+                parsed = [];
+            }
+
+            parsed = parsed
+                .filter(function(point) {
+                    return point && typeof point.value !== 'undefined';
+                })
+                .map(function(point) {
+                    var value = Number(point.value);
+                    if (!Number.isFinite(value)) {
+                        value = 0;
+                    }
+
+                    return {
+                        value: value,
+                        label: point.label || '',
+                        formatted: point.formatted || String(value)
+                    };
+                });
+
+            $el.data('sparklinePoints', parsed);
+
+            return parsed;
+        }
+
+        function createSvgElement(tagName, attributes) {
+            var element = document.createElementNS(SVG_NS, tagName);
+
+            Object.keys(attributes || {}).forEach(function(key) {
+                element.setAttribute(key, String(attributes[key]));
+            });
+
+            return element;
+        }
+
+        function buildSparklineSvg(points, width, height) {
+            var svg = createSvgElement('svg', {
+                viewBox: '0 0 ' + width + ' ' + height,
+                width: '100%',
+                height: '100%',
+                'aria-hidden': 'true',
+                focusable: 'false'
+            });
+
+            if (!points.length) {
+                return svg;
+            }
+
+            var values = points.map(function(point) {
+                return point.value;
+            });
+
+            var min = Math.min.apply(Math, values);
+            var max = Math.max.apply(Math, values);
+
+            if (!Number.isFinite(min) || !Number.isFinite(max)) {
+                min = 0;
+                max = 0;
+            }
+
+            if (min === max) {
+                var padding = max === 0 ? 1 : Math.abs(max) * 0.15;
+                min -= padding;
+                max += padding;
+            }
+
+            var range = max - min;
+            if (range <= 0) {
+                range = 1;
+            }
+
+            var coords = [];
+            var stepX = points.length > 1 ? width / (points.length - 1) : 0;
+
+            points.forEach(function(point, index) {
+                var x;
+                if (points.length === 1) {
+                    x = width / 2;
+                } else {
+                    x = index * stepX;
+                }
+
+                var ratio = (point.value - min) / range;
+                if (!Number.isFinite(ratio)) {
+                    ratio = 0;
+                }
+                var y = height - (ratio * height);
+
+                coords.push({
+                    x: Number(x.toFixed(2)),
+                    y: Number(y.toFixed(2)),
+                    point: point
+                });
+            });
+
+            if (coords.length > 1) {
+                var areaPath = 'M ' + coords[0].x + ' ' + height + ' ';
+                coords.forEach(function(coord) {
+                    areaPath += 'L ' + coord.x + ' ' + coord.y + ' ';
+                });
+                areaPath += 'L ' + coords[coords.length - 1].x + ' ' + height + ' Z';
+
+                svg.appendChild(createSvgElement('path', {
+                    d: areaPath.trim(),
+                    class: 'blc-sparkline__area'
+                }));
+            }
+
+            var linePath = '';
+            coords.forEach(function(coord, index) {
+                linePath += (index === 0 ? 'M ' : ' L ') + coord.x + ' ' + coord.y;
+            });
+
+            svg.appendChild(createSvgElement('path', {
+                d: linePath.trim(),
+                class: 'blc-sparkline__path'
+            }));
+
+            coords.forEach(function(coord) {
+                var circle = createSvgElement('circle', {
+                    class: 'blc-sparkline__point',
+                    cx: coord.x,
+                    cy: coord.y,
+                    r: 4
+                });
+
+                var labels = [];
+                if (coord.point.label) {
+                    labels.push(String(coord.point.label));
+                }
+                if (coord.point.formatted) {
+                    labels.push(String(coord.point.formatted));
+                }
+
+                if (labels.length) {
+                    var title = createSvgElement('title', {});
+                    title.textContent = labels.join(' · ');
+                    circle.appendChild(title);
+                }
+
+                svg.appendChild(circle);
+            });
+
+            return svg;
+        }
+
+        function renderSparkline($el) {
+            var points = parsePoints($el);
+            if (!points.length) {
+                var emptyMessage = $el.attr('data-empty-message') || (messages && messages.noItemsMessage) || 'Données insuffisantes.';
+                $el.empty().addClass('blc-sparkline--empty').text(emptyMessage);
+                return;
+            }
+
+            var width = Math.max($el.innerWidth(), 220);
+            var height = Math.max($el.innerHeight(), 120);
+
+            var svg = buildSparklineSvg(points, width, height);
+
+            $el.removeClass('blc-sparkline--empty');
+            $el.empty().append(svg);
+        }
+
+        $sparklines.each(function() {
+            renderSparkline($(this));
+        });
+
+        $(window).on('resize', debounce(function() {
+            $sparklines.each(function() {
+                var $el = $(this);
+                if ($el.hasClass('blc-sparkline--empty')) {
+                    return;
+                }
+                // Clear cached width-based rendering to recalculate.
+                $el.empty();
+                renderSparkline($el);
+            });
+        }, 200));
+    })();
+
+    function initFieldHelp() {
+        var $openWrapper = null;
+
+        function closeWrapper($wrapper) {
+            if (!$wrapper || !$wrapper.length) {
+                return;
+            }
+
+            $wrapper.removeClass('is-active');
+            var $button = $wrapper.find('.blc-field-help');
+            if ($button.length) {
+                $button.removeClass('is-active').attr('aria-expanded', 'false');
+            }
+
+            $openWrapper = null;
+        }
+
+        $(document).on('click', '.blc-field-help', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            var $button = $(this);
+            var $wrapper = $button.closest('.blc-field-help-wrapper');
+
+            if (!$wrapper.length) {
+                return;
+            }
+
+            if ($openWrapper && $openWrapper.get(0) !== $wrapper.get(0)) {
+                closeWrapper($openWrapper);
+            }
+
+            var isActive = $wrapper.hasClass('is-active');
+            if (isActive) {
+                closeWrapper($wrapper);
+            } else {
+                $wrapper.addClass('is-active');
+                $button.addClass('is-active').attr('aria-expanded', 'true');
+                $openWrapper = $wrapper;
+            }
+        });
+
+        $(document).on('click', function(event) {
+            if (!$openWrapper || !$openWrapper.length) {
+                return;
+            }
+
+            if ($(event.target).closest('.blc-field-help-wrapper').length) {
+                return;
+            }
+
+            closeWrapper($openWrapper);
+        });
+
+        $(document).on('keydown', function(event) {
+            if (event.key === 'Escape' && $openWrapper) {
+                closeWrapper($openWrapper);
+            }
+        });
+    }
+
+    function applyPersonaSettings(settings, $scope) {
+        if (!settings || typeof settings !== 'object') {
+            return 0;
+        }
+
+        var applied = 0;
+        var $context = $scope && $scope.length ? $scope : $('.blc-settings-form');
+
+        $.each(settings, function(option, value) {
+            if (!option) {
+                return;
+            }
+
+            var selector = '[name="' + option + '"]';
+            var $fields = $context.find(selector);
+            if (!$fields.length) {
+                $fields = $(selector);
+            }
+
+            if (!$fields.length) {
+                return;
+            }
+
+            if ($fields.is(':radio')) {
+                var stringValue = value;
+                if (typeof stringValue !== 'string') {
+                    stringValue = String(stringValue);
+                }
+                var $matched = $fields.filter('[value="' + stringValue + '"]');
+                if ($matched.length) {
+                    $matched.prop('checked', true).trigger('change');
+                    applied++;
+                }
+            } else if ($fields.is(':checkbox')) {
+                var isChecked = !!value;
+                $fields.prop('checked', isChecked).trigger('change');
+                applied++;
+            } else {
+                $fields.val(value).trigger('change');
+                applied++;
+            }
+        });
+
+        return applied;
+    }
+
+    function initAdvancedSettings() {
+        var $containers = $('.blc-settings-advanced');
+        if (!$containers.length) {
+            return;
+        }
+
+        $containers.each(function() {
+            var $container = $(this);
+            var $tabs = $container.find('.blc-settings-advanced__tab');
+            var $panels = $container.find('.blc-settings-advanced__panel');
+            var $personas = $container.find('.blc-persona');
+            var $form = $container.closest('form');
+
+            function activateTab($tab, shouldFocus) {
+                if (!$tab || !$tab.length) {
+                    return;
+                }
+
+                var targetSlug = String($tab.data('blcTarget') || '');
+                var $targetPanel = targetSlug
+                    ? $panels.filter('[data-blc-panel="' + targetSlug + '"]')
+                    : $();
+
+                $tabs.removeClass('is-active').attr({ 'aria-selected': 'false', tabindex: '-1' });
+                $panels.attr('hidden', true).removeClass('is-active');
+
+                $tab.addClass('is-active').attr({ 'aria-selected': 'true', tabindex: '0' });
+                if ($targetPanel.length) {
+                    $targetPanel.removeAttr('hidden').addClass('is-active');
+                }
+
+                if (shouldFocus && typeof $tab[0].focus === 'function') {
+                    $tab[0].focus();
+                }
+            }
+
+            function focusNextTab(currentIndex, delta) {
+                var count = $tabs.length;
+                if (!count) {
+                    return;
+                }
+
+                var nextIndex = (currentIndex + delta + count) % count;
+                var $next = $tabs.eq(nextIndex);
+                activateTab($next, true);
+            }
+
+            var $initial = $tabs.filter('.is-active').first();
+            if (!$initial.length) {
+                $initial = $tabs.first();
+            }
+            activateTab($initial, false);
+
+            $tabs.on('click', function(event) {
+                event.preventDefault();
+                activateTab($(this), true);
+            });
+
+            $tabs.on('keydown', function(event) {
+                var index = $tabs.index(this);
+                if (index < 0) {
+                    return;
+                }
+
+                if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+                    event.preventDefault();
+                    focusNextTab(index, 1);
+                } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    focusNextTab(index, -1);
+                }
+            });
+
+            if ($personas.length) {
+                $personas.each(function() {
+                    var $button = $(this);
+                    if (!$button.attr('aria-pressed')) {
+                        $button.attr('aria-pressed', 'false');
+                    }
+                });
+
+                $personas.on('click', function(event) {
+                    event.preventDefault();
+                    var $button = $(this);
+                    var rawSettings = $button.attr('data-blc-persona-settings');
+                    var settings = {};
+
+                    if (typeof rawSettings === 'string' && rawSettings !== '') {
+                        try {
+                            settings = JSON.parse(rawSettings);
+                        } catch (error) {
+                            settings = {};
+                        }
+                    } else if (typeof rawSettings === 'object' && rawSettings !== null) {
+                        settings = rawSettings;
+                    }
+
+                    var appliedCount = applyPersonaSettings(settings, $form);
+                    if (appliedCount > 0) {
+                        $personas.attr('aria-pressed', 'false').removeClass('is-active');
+                        $button.attr('aria-pressed', 'true').addClass('is-active');
+                        if (toast && typeof toast.show === 'function') {
+                            toast.show(messages.personaApplied || '', 'success');
+                        }
+                        accessibility.speak(messages.personaApplied || '', 'polite');
+                    } else {
+                        if (toast && typeof toast.warning === 'function') {
+                            toast.warning(messages.personaFailed || '');
+                        }
+                        accessibility.speak(messages.personaFailed || '', 'assertive');
+                    }
+                });
+            }
+        });
+    }
+
+    function initLinksTableAjax() {
+        var $forms = $('.blc-links-filter-form[data-blc-ajax-table]');
+        if (!$forms.length) {
+            return;
+        }
+
+        $forms.each(function() {
+            var $form = $(this);
+            var endpoint = $form.data('blcAjaxEndpoint');
+            var nonce = $form.data('blcAjaxNonce');
+
+            if (!endpoint || !nonce) {
+                return;
+            }
+
+            var cacheTtl = parseInt($form.data('blcCacheTtl'), 10);
+            if (!Number.isFinite(cacheTtl) || cacheTtl <= 0) {
+                cacheTtl = 60;
+            }
+
+            var initialState = {};
+            var rawInitialState = $form.data('blcInitialState');
+            if (typeof rawInitialState === 'string' && rawInitialState !== '') {
+                try {
+                    initialState = JSON.parse(rawInitialState);
+                } catch (error) {
+                    initialState = {};
+                }
+            } else if (typeof rawInitialState === 'object' && rawInitialState !== null) {
+                initialState = rawInitialState;
+            }
+
+            var cacheStore = {};
+            var pendingRequests = {};
+            var prefetchTimer = null;
+
+            function normalizeValue(value) {
+                if (typeof value === 'undefined' || value === null) {
+                    return '';
+                }
+
+                return String(value);
+            }
+
+            function buildCacheKey(params) {
+                var normalized = [];
+                Object.keys(params).sort().forEach(function(key) {
+                    if (key === 'action' || key === '_ajax_nonce') {
+                        return;
+                    }
+                    normalized.push(key + '=' + normalizeValue(params[key]));
+                });
+
+                return normalized.join('&');
+            }
+
+            function collectParams() {
+                var params = {};
+                $.each($form.serializeArray(), function(_index, field) {
+                    if (field.name === 'action' || field.name === 'action2') {
+                        return;
+                    }
+                    params[field.name] = field.value;
+                });
+                return params;
+            }
+
+            function syncState(state) {
+                if (!state || typeof state !== 'object') {
+                    return;
+                }
+
+                var view = typeof state.view === 'string' && state.view !== '' ? state.view : 'all';
+                $form.find('input[data-blc-state-field="link_type"]').val(view);
+
+                if (state.sorting && typeof state.sorting === 'object') {
+                    if (typeof state.sorting.orderby !== 'undefined') {
+                        $form.find('input[data-blc-state-field="orderby"]').val(state.sorting.orderby || '');
+                    }
+                    if (typeof state.sorting.order !== 'undefined') {
+                        $form.find('input[data-blc-state-field="order"]').val(state.sorting.order || '');
+                    }
+                }
+
+                if (state.pagination && typeof state.pagination.current !== 'undefined') {
+                    $form.find('input[data-blc-state-field="paged"]').val(state.pagination.current || 1);
+                }
+
+                if (typeof state.search !== 'undefined') {
+                    var $search = $form.find('.search-box input[name="s"]');
+                    if ($search.length) {
+                        $search.val(state.search || '');
+                    }
+                }
+
+                if (typeof state.post_type !== 'undefined') {
+                    var $postType = $form.find('select[name="post_type"]');
+                    if ($postType.length) {
+                        var value = state.post_type || '';
+                        $postType.val(value);
+                    }
+                }
+            }
+
+            function updateActiveCards(view) {
+                if (typeof view !== 'string' || view === '') {
+                    view = 'all';
+                }
+
+                $('.blc-stats-box .blc-stat').each(function() {
+                    var $card = $(this);
+                    var type = $card.data('linkType') || 'all';
+                    var isActive = (view === 'all' && type === 'all') || (view !== 'all' && type === view);
+                    $card.toggleClass('is-active', isActive);
+                    if (isActive) {
+                        $card.attr('aria-current', 'page');
+                    } else {
+                        $card.removeAttr('aria-current');
+                    }
+                });
+            }
+
+            function updateHistory(state) {
+                if (!window.history || !history.replaceState) {
+                    return;
+                }
+
+                var baseParams = {};
+                var pageSlug = $form.find('input[name="page"]').val() || 'blc-dashboard';
+                baseParams.page = pageSlug;
+
+                if (state.view && state.view !== 'all') {
+                    baseParams.link_type = state.view;
+                }
+
+                if (state.post_type) {
+                    baseParams.post_type = state.post_type;
+                }
+
+                if (state.search) {
+                    baseParams.s = state.search;
+                }
+
+                if (state.sorting) {
+                    if (state.sorting.orderby) {
+                        baseParams.orderby = state.sorting.orderby;
+                    }
+                    if (state.sorting.order) {
+                        baseParams.order = state.sorting.order;
+                    }
+                }
+
+                if (state.pagination && state.pagination.current && state.pagination.current > 1) {
+                    baseParams.paged = state.pagination.current;
+                }
+
+                var query = $.param(baseParams);
+                var newUrl = window.location.pathname + (query ? '?' + query : '');
+
+                try {
+                    history.replaceState({ blcLinksState: state }, '', newUrl);
+                } catch (error) {
+                    // Ignore history errors (Safari private mode etc.).
+                }
+            }
+
+            function schedulePrefetch(state) {
+                if (prefetchTimer) {
+                    window.clearTimeout(prefetchTimer);
+                }
+
+                if (!state || !state.pagination) {
+                    return;
+                }
+
+                var current = parseInt(state.pagination.current, 10);
+                var total = parseInt(state.pagination.total_pages, 10);
+                if (!Number.isFinite(current) || current < 1 || !Number.isFinite(total) || total <= current) {
+                    return;
+                }
+
+                prefetchTimer = window.setTimeout(function() {
+                    var params = collectParams();
+                    params.paged = current + 1;
+                    requestTable(params, { prefetch: true });
+                }, 400);
+            }
+
+            function requestTable(params, options) {
+                options = options || {};
+                var cacheKey = buildCacheKey(params);
+                var now = Date.now();
+
+                if (!options.prefetch && cacheStore[cacheKey] && (now - cacheStore[cacheKey].timestamp) < cacheTtl * 1000) {
+                    renderResponse(cacheStore[cacheKey].data);
+                    return $.Deferred().resolve(cacheStore[cacheKey].data).promise();
+                }
+
+                if (pendingRequests[cacheKey]) {
+                    return pendingRequests[cacheKey];
+                }
+
+                var requestData = $.extend({}, params, {
+                    action: 'blc_fetch_links_table',
+                    _ajax_nonce: nonce
+                });
+
+                if (!options.prefetch) {
+                    $form.addClass('is-loading');
+                }
+
+                var request = $.ajax({
+                    url: endpoint,
+                    method: 'POST',
+                    dataType: 'json',
+                    data: requestData
+                }).done(function(response) {
+                    if (!response || !response.success || !response.data) {
+                        throw new Error('invalid_response');
+                    }
+
+                    cacheStore[cacheKey] = {
+                        timestamp: Date.now(),
+                        data: response.data
+                    };
+
+                    if (!options.prefetch) {
+                        renderResponse(response.data);
+                    }
+                }).fail(function() {
+                    if (!options.prefetch) {
+                        if (toast && typeof toast.error === 'function') {
+                            toast.error(messages.tableFetchError || '');
+                        }
+                        accessibility.speak(messages.tableFetchError || '', 'assertive');
+                    }
+                }).always(function() {
+                    if (!options.prefetch) {
+                        $form.removeClass('is-loading');
+                    }
+                    delete pendingRequests[cacheKey];
+                });
+
+                pendingRequests[cacheKey] = request;
+                return request;
+            }
+
+            function renderResponse(data) {
+                if (!data) {
+                    return;
+                }
+
+                if (data.markup) {
+                    $form.find('[data-blc-table-region]').html(data.markup);
+                }
+
+                if (data.state) {
+                    syncState(data.state);
+                    updateActiveCards(data.state.view || 'all');
+                    updateHistory(data.state);
+                    schedulePrefetch(data.state);
+                }
+
+                accessibility.speak(messages.tableRefreshed || '', 'polite');
+            }
+
+            function extractParam(url, key) {
+                if (!url || !key) {
+                    return '';
+                }
+
+                try {
+                    if (typeof window.URL === 'function') {
+                        var parsed = new URL(url, window.location.origin);
+                        return parsed.searchParams.get(key) || '';
+                    }
+                } catch (error) {
+                    // Fallback to manual parsing below.
+                }
+
+                var anchor = document.createElement('a');
+                anchor.href = url;
+
+                if (anchor.search && anchor.search.length > 1) {
+                    var params = anchor.search.substring(1).split('&');
+                    for (var index = 0; index < params.length; index++) {
+                        var pair = params[index].split('=');
+                        if (pair[0] === key) {
+                            try {
+                                return decodeURIComponent(pair[1] || '');
+                            } catch (error) {
+                                return pair[1] || '';
+                            }
+                        }
+                    }
+                }
+
+                return '';
+            }
+
+            if (initialState && typeof initialState === 'object') {
+                syncState(initialState);
+                updateActiveCards(initialState.view || 'all');
+                schedulePrefetch(initialState);
+            }
+
+            $form.on('submit', function(event) {
+                if ($form.data('blcBulkConfirmed')) {
+                    return;
+                }
+
+                var bulkAction = typeof getSelectedBulkAction === 'function'
+                    ? getSelectedBulkAction($form)
+                    : null;
+
+                if (bulkAction) {
+                    return;
+                }
+
+                event.preventDefault();
+                var params = collectParams();
+                params.paged = 1;
+                requestTable(params, { prefetch: false });
+            });
+
+            $form.on('change', 'select[name="post_type"]', function() {
+                var params = collectParams();
+                params.post_type = $(this).val();
+                params.paged = 1;
+                requestTable(params, { prefetch: false });
+            });
+
+            $form.on('click', '.subsubsub a', function(event) {
+                event.preventDefault();
+                var url = $(this).attr('href') || '';
+                var linkType = extractParam(url, 'link_type') || 'all';
+                var params = collectParams();
+                params.link_type = linkType;
+                params.paged = 1;
+                requestTable(params, { prefetch: false });
+            });
+
+            $form.on('click', '.tablenav-pages a', function(event) {
+                event.preventDefault();
+                var url = $(this).attr('href') || '';
+                var paged = parseInt(extractParam(url, 'paged'), 10);
+                if (!Number.isFinite(paged) || paged < 1) {
+                    paged = 1;
+                }
+                var params = collectParams();
+                params.paged = paged;
+                requestTable(params, { prefetch: false });
+            });
+
+            $form.on('keydown', '.tablenav .current-page', function(event) {
+                if (event.key !== 'Enter') {
+                    return;
+                }
+                event.preventDefault();
+                var value = parseInt($(this).val(), 10);
+                if (!Number.isFinite(value) || value < 1) {
+                    value = 1;
+                }
+                var params = collectParams();
+                params.paged = value;
+                requestTable(params, { prefetch: false });
+            });
+
+            $form.on('click', '.tablenav .button', function(event) {
+                var $currentPage = $form.find('.tablenav .current-page');
+                if (!$currentPage.length) {
+                    return;
+                }
+                event.preventDefault();
+                var value = parseInt($currentPage.val(), 10);
+                if (!Number.isFinite(value) || value < 1) {
+                    value = 1;
+                }
+                var params = collectParams();
+                params.paged = value;
+                requestTable(params, { prefetch: false });
+            });
+
+            $form.on('click', '.search-box input[type="submit"]', function(event) {
+                event.preventDefault();
+                var params = collectParams();
+                params.paged = 1;
+                requestTable(params, { prefetch: false });
+            });
+
+            $form.on('keydown', '.search-box input[type="search"]', function(event) {
+                if (event.key !== 'Enter') {
+                    return;
+                }
+                event.preventDefault();
+                var params = collectParams();
+                params.paged = 1;
+                requestTable(params, { prefetch: false });
+            });
+        });
+    }
+
+    initFieldHelp();
+    initAdvancedSettings();
+    initLinksTableAjax();
 
     $(document).on('click', 'a[href*="page=blc-dashboard"]', function() {
         var href = $(this).attr('href');
