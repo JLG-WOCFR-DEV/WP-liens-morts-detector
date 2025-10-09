@@ -449,6 +449,7 @@ function blc_escape_slack_url($url) {
  */
 function blc_trim_slack_plain_text($text, $max = 150) {
     $text = (string) $text;
+    $max  = max(1, (int) $max);
 
     if ($text === '') {
         return '';
@@ -456,9 +457,12 @@ function blc_trim_slack_plain_text($text, $max = 150) {
 
     $text = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/u', '', $text);
 
-    if (mb_strlen($text) <= $max) {
+    $has_multibyte = function_exists('mb_strlen') && function_exists('mb_substr');
+    $length        = $has_multibyte ? mb_strlen($text) : strlen($text);
+
+    if ($length <= $max) {
         return $text;
     }
 
-    return mb_substr($text, 0, $max - 1) . '…';
+    return ($has_multibyte ? mb_substr($text, 0, $max - 1) : substr($text, 0, $max - 1)) . '…';
 }
