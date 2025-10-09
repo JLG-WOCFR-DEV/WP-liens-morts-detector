@@ -1775,15 +1775,8 @@ function blc_dashboard_links_page() {
 
     // Préparation des données et des statistiques pour les liens
     $list_table = new BLC_Links_List_Table();
+    $list_table->set_request_args(blc_normalize_links_table_request($_GET));
     $status_counts = $list_table->get_status_counts();
-
-    $current_link_type = 'all';
-    if (isset($_GET['link_type'])) {
-        $link_type_param = sanitize_key(wp_unslash($_GET['link_type']));
-        if ($link_type_param !== '') {
-            $current_link_type = $link_type_param;
-        }
-    }
 
     $status_counts = is_array($status_counts) ? $status_counts : [];
     $count_keys = [
@@ -1878,6 +1871,29 @@ function blc_dashboard_links_page() {
     $priority_actions   = blc_build_priority_action_queue($top_domains, $dashboard_base_url, $count_keys);
 
     $list_table->prepare_items();
+    $table_state = $list_table->export_state();
+    $current_link_type = isset($table_state['view']) && $table_state['view'] !== ''
+        ? $table_state['view']
+        : 'all';
+    $current_sorting = isset($table_state['sorting']) && is_array($table_state['sorting'])
+        ? $table_state['sorting']
+        : array('orderby' => '', 'order' => 'desc');
+    $current_search = isset($table_state['search']) ? (string) $table_state['search'] : '';
+    $current_post_type_filter = isset($table_state['post_type']) ? (string) $table_state['post_type'] : '';
+    $pagination_state = isset($table_state['pagination']) && is_array($table_state['pagination'])
+        ? $table_state['pagination']
+        : array('current' => 1, 'per_page' => 20, 'total_items' => 0, 'total_pages' => 1);
+    $initial_state_json = wp_json_encode($table_state);
+    if (!is_string($initial_state_json)) {
+        $initial_state_json = '{}';
+    }
+    $ajax_endpoint = function_exists('admin_url') ? admin_url('admin-ajax.php') : 'admin-ajax.php';
+    $ajax_nonce    = wp_create_nonce('blc_links_table');
+    $table_markup  = blc_render_links_table_markup($list_table);
+    $cache_ttl     = (int) apply_filters('blc_links_table_cache_ttl', 60);
+    if ($cache_ttl < 5) {
+        $cache_ttl = 60;
+    }
     blc_render_action_modal();
 
     ?>
@@ -2233,16 +2249,25 @@ function blc_dashboard_links_page() {
                     </li>
                 </ul>
             </div>
-            <form method="get" class="blc-links-filter-form" aria-labelledby="blc-links-filter-heading">
+            <form
+                method="get"
+                class="blc-links-filter-form"
+                aria-labelledby="blc-links-filter-heading"
+                data-blc-ajax-table="true"
+                data-blc-ajax-endpoint="<?php echo esc_url($ajax_endpoint); ?>"
+                data-blc-ajax-nonce="<?php echo esc_attr($ajax_nonce); ?>"
+                data-blc-cache-ttl="<?php echo esc_attr($cache_ttl); ?>"
+                data-blc-initial-state="<?php echo esc_attr($initial_state_json); ?>"
+            >
                 <h2 id="blc-links-filter-heading" class="screen-reader-text"><?php esc_html_e('Filtres de la liste des liens cassés', 'liens-morts-detector-jlg'); ?></h2>
                 <?php
-                $current_get_params = [];
+                $preserved_query_args = [];
                 if (!empty($_GET) && is_array($_GET)) {
-                    $current_get_params = $_GET;
+                    $preserved_query_args = $_GET;
                 }
 
-                foreach ($current_get_params as $key => $value) {
-                    if (in_array($key, ['s', 'post_type', 'paged'], true)) {
+                foreach ($preserved_query_args as $key => $value) {
+                    if (in_array($key, ['s', 'post_type', 'paged', 'link_type', 'orderby', 'order'], true)) {
                         continue;
                     }
 
@@ -2255,20 +2280,24 @@ function blc_dashboard_links_page() {
                     }
                 }
 
-                if (
-                    isset($_REQUEST['page'])
-                    && is_scalar($_REQUEST['page'])
-                    && (!isset($current_get_params['page']) || !is_scalar($current_get_params['page']))
-                ) {
-                    printf(
-                        '<input type="hidden" name="page" value="%s" />',
-                        esc_attr((string) $_REQUEST['page'])
-                    );
+                $page_slug = '';
+                if (isset($preserved_query_args['page']) && is_scalar($preserved_query_args['page'])) {
+                    $page_slug = (string) $preserved_query_args['page'];
+                } elseif (isset($_REQUEST['page']) && is_scalar($_REQUEST['page'])) {
+                    $page_slug = (string) $_REQUEST['page'];
                 }
-
-                $list_table->views();
-                $list_table->display();
+                if ($page_slug === '') {
+                    $page_slug = 'blc-dashboard';
+                }
                 ?>
+                <input type="hidden" name="page" value="<?php echo esc_attr($page_slug); ?>" />
+                <input type="hidden" name="link_type" value="<?php echo esc_attr($current_link_type); ?>" data-blc-state-field="link_type" />
+                <input type="hidden" name="orderby" value="<?php echo esc_attr(isset($current_sorting['orderby']) ? (string) $current_sorting['orderby'] : ''); ?>" data-blc-state-field="orderby" />
+                <input type="hidden" name="order" value="<?php echo esc_attr(isset($current_sorting['order']) ? (string) $current_sorting['order'] : ''); ?>" data-blc-state-field="order" />
+                <input type="hidden" name="paged" value="<?php echo esc_attr(isset($pagination_state['current']) ? (int) $pagination_state['current'] : 1); ?>" data-blc-state-field="paged" />
+                <div class="blc-links-table" data-blc-table-region>
+                    <?php echo $table_markup; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+                </div>
             </form>
         <?php endif; ?>
     </div>
@@ -2622,6 +2651,127 @@ function blc_settings_page() {
  *
  * @return void
  */
+function blc_get_advanced_settings_groups() {
+    return array(
+        'performance' => array(
+            'label'       => __('Performance & débit', 'liens-morts-detector-jlg'),
+            'tab_hint'    => __('Cadence des scans', 'liens-morts-detector-jlg'),
+            'description' => __('Ajustez le rythme des requêtes pour équilibrer vitesse d’analyse et charge serveur.', 'liens-morts-detector-jlg'),
+            'sections'    => array('blc_performance_section'),
+        ),
+        'heuristics'  => array(
+            'label'       => __('Heuristiques & fiabilité', 'liens-morts-detector-jlg'),
+            'tab_hint'    => __('Qualité des détections', 'liens-morts-detector-jlg'),
+            'description' => __('Paramétrez la sensibilité du détecteur et les exclusions pour limiter les faux positifs.', 'liens-morts-detector-jlg'),
+            'sections'    => array('blc_scan_section', 'blc_soft_404_section'),
+        ),
+        'media'       => array(
+            'label'       => __('Images & CDN', 'liens-morts-detector-jlg'),
+            'tab_hint'    => __('Surveillance des médias', 'liens-morts-detector-jlg'),
+            'description' => __('Orchestrez les scans distants pour les images et les bibliothèques externes.', 'liens-morts-detector-jlg'),
+            'sections'    => array('blc_images_section'),
+        ),
+        'diagnostics' => array(
+            'label'       => __('Diagnostics & journalisation', 'liens-morts-detector-jlg'),
+            'tab_hint'    => __('Support & logs', 'liens-morts-detector-jlg'),
+            'description' => __('Activez des options avancées pour investiguer des incidents ponctuels.', 'liens-morts-detector-jlg'),
+            'sections'    => array('blc_debug_section'),
+        ),
+    );
+}
+
+function blc_get_settings_persona_presets() {
+    return array(
+        'balanced' => array(
+            'label'       => __('Mode équilibré', 'liens-morts-detector-jlg'),
+            'description' => __('Compromis recommandé pour la majorité des sites WordPress.', 'liens-morts-detector-jlg'),
+            'settings'    => array(
+                'blc_link_delay'            => 200,
+                'blc_batch_delay'           => 45,
+                'blc_batch_size'            => 25,
+                'blc_scan_method'           => 'precise',
+                'blc_head_request_timeout'  => 5,
+                'blc_get_request_timeout'   => 10,
+            ),
+        ),
+        'velocity' => array(
+            'label'       => __('Mode express', 'liens-morts-detector-jlg'),
+            'description' => __('Priorise la vitesse pour les grandes bases éditoriales (charge serveur accrue).', 'liens-morts-detector-jlg'),
+            'settings'    => array(
+                'blc_link_delay'            => 80,
+                'blc_batch_delay'           => 20,
+                'blc_batch_size'            => 40,
+                'blc_scan_method'           => 'fast',
+                'blc_head_request_timeout'  => 4,
+                'blc_get_request_timeout'   => 8,
+            ),
+        ),
+        'quality'  => array(
+            'label'       => __('Mode qualité', 'liens-morts-detector-jlg'),
+            'description' => __('Renforce les contrôles pour les équipes conformité ou SEO critiques.', 'liens-morts-detector-jlg'),
+            'settings'    => array(
+                'blc_link_delay'               => 300,
+                'blc_batch_delay'              => 75,
+                'blc_batch_size'               => 15,
+                'blc_scan_method'              => 'precise',
+                'blc_head_request_timeout'     => 7.5,
+                'blc_get_request_timeout'      => 12,
+                'blc_soft_404_min_length'      => 640,
+                'blc_soft_404_title_weight'    => 1.4,
+            ),
+        ),
+    );
+}
+
+function blc_normalize_links_table_request($source = null) {
+    if ($source === null) {
+        $source = $_REQUEST;
+    }
+
+    $allowed_keys = array('s', 'post_type', 'link_type', 'orderby', 'order', 'paged', 'page');
+    $normalized   = array();
+
+    if (!is_array($source)) {
+        return $normalized;
+    }
+
+    foreach ($allowed_keys as $key) {
+        if (!isset($source[$key])) {
+            continue;
+        }
+
+        $value = $source[$key];
+
+        if (is_array($value)) {
+            $normalized[$key] = array_map(static function ($item) {
+                return is_scalar($item) ? (string) $item : '';
+            }, $value);
+        } elseif (is_scalar($value) || $value === null) {
+            $normalized[$key] = (string) $value;
+        }
+    }
+
+    if (!isset($normalized['page']) && isset($_REQUEST['page']) && is_scalar($_REQUEST['page'])) {
+        $normalized['page'] = (string) $_REQUEST['page'];
+    }
+
+    return $normalized;
+}
+
+function blc_render_links_table_markup(BLC_Links_List_Table $list_table) {
+    ob_start();
+    ?>
+    <div class="blc-links-table__views">
+        <?php $list_table->views(); ?>
+    </div>
+    <div class="blc-links-table__wrapper">
+        <?php $list_table->display(); ?>
+    </div>
+    <?php
+
+    return (string) ob_get_clean();
+}
+
 function blc_render_settings_sections_grouped($page) {
     global $wp_settings_sections;
 
@@ -2663,17 +2813,131 @@ function blc_render_settings_sections_grouped($page) {
     echo '</section>';
 
     if (!empty($advanced_section_ids)) {
-        echo '<details class="blc-settings-group blc-settings-group--collapsible" open aria-labelledby="blc-settings-advanced-heading">';
-        echo '<summary class="blc-settings-group__summary">';
-        echo '<span id="blc-settings-advanced-heading" class="blc-settings-group__title">' . esc_html__('Réglages avancés', 'liens-morts-detector-jlg') . '</span>';
-        echo '<span class="blc-settings-group__description">' . esc_html__('Optimisez les performances, heuristiques et intégrations externes.', 'liens-morts-detector-jlg') . '</span>';
-        echo '</summary>';
-        echo '<div class="blc-settings-group__content">';
-        foreach ($advanced_section_ids as $section_id) {
-            blc_render_settings_section($page, $section_id);
+        $advanced_groups = blc_get_advanced_settings_groups();
+        $grouped_sections = array();
+        $assigned_sections = array();
+
+        foreach ($advanced_groups as $slug => $definition) {
+            if (empty($definition['sections']) || !is_array($definition['sections'])) {
+                continue;
+            }
+
+            $matched = array_values(array_intersect($definition['sections'], $advanced_section_ids));
+            if (empty($matched)) {
+                continue;
+            }
+
+            $grouped_sections[$slug] = array(
+                'label'       => isset($definition['label']) ? (string) $definition['label'] : $slug,
+                'tab_hint'    => isset($definition['tab_hint']) ? (string) $definition['tab_hint'] : '',
+                'description' => isset($definition['description']) ? (string) $definition['description'] : '',
+                'sections'    => $matched,
+            );
+
+            $assigned_sections = array_merge($assigned_sections, $matched);
         }
-        echo '</div>';
-        echo '</details>';
+
+        $unassigned_sections = array_values(array_diff($advanced_section_ids, $assigned_sections));
+        if (!empty($unassigned_sections)) {
+            $grouped_sections['other'] = array(
+                'label'       => __('Autres optimisations', 'liens-morts-detector-jlg'),
+                'tab_hint'    => __('Réglages divers', 'liens-morts-detector-jlg'),
+                'description' => __('Affinez des options complémentaires rarement modifiées.', 'liens-morts-detector-jlg'),
+                'sections'    => $unassigned_sections,
+            );
+        }
+
+        if (!empty($grouped_sections)) {
+            $default_group = key($grouped_sections);
+            $personas      = blc_get_settings_persona_presets();
+
+            echo '<details class="blc-settings-group blc-settings-group--collapsible" aria-labelledby="blc-settings-advanced-heading">';
+            echo '<summary class="blc-settings-group__summary">';
+            echo '<span id="blc-settings-advanced-heading" class="blc-settings-group__title">' . esc_html__('Réglages avancés', 'liens-morts-detector-jlg') . '</span>';
+            echo '<span class="blc-settings-group__description">' . esc_html__('Optimisez les performances, heuristiques et intégrations externes.', 'liens-morts-detector-jlg') . '</span>';
+            echo '</summary>';
+            echo '<div class="blc-settings-group__content">';
+            echo '<div class="blc-settings-advanced" data-blc-settings-advanced>'; // container
+
+            if (!empty($personas)) {
+                echo '<div class="blc-settings-advanced__personas" role="group" aria-labelledby="blc-settings-personas-heading">';
+                echo '<div class="blc-settings-advanced__personas-header">';
+                echo '<p id="blc-settings-personas-heading" class="blc-settings-advanced__personas-title">' . esc_html__('Préréglages rapides', 'liens-morts-detector-jlg') . '</p>';
+                echo '<p class="blc-settings-advanced__personas-help">' . esc_html__('Appliquez une configuration type puis ajustez les champs si nécessaire.', 'liens-morts-detector-jlg') . '</p>';
+                echo '</div>';
+                echo '<div class="blc-settings-advanced__persona-grid">';
+                foreach ($personas as $persona_slug => $persona) {
+                    if (empty($persona['settings']) || !is_array($persona['settings'])) {
+                        continue;
+                    }
+
+                    $settings_json = wp_json_encode($persona['settings']);
+                    if (!is_string($settings_json)) {
+                        continue;
+                    }
+
+                    $button_classes = 'blc-persona';
+                    $label = isset($persona['label']) ? (string) $persona['label'] : $persona_slug;
+                    $description = isset($persona['description']) ? (string) $persona['description'] : '';
+
+                    echo '<button type="button" class="' . esc_attr($button_classes) . '" data-blc-persona="' . esc_attr($persona_slug) . '" data-blc-persona-settings="' . esc_attr($settings_json) . '" aria-pressed="false">';
+                    echo '<span class="blc-persona__label">' . esc_html($label) . '</span>';
+                    if ($description !== '') {
+                        echo '<span class="blc-persona__description">' . esc_html($description) . '</span>';
+                    }
+                    echo '</button>';
+                }
+                echo '</div>';
+                echo '</div>';
+            }
+
+            echo '<div class="blc-settings-advanced__tabs" role="tablist" aria-label="' . esc_attr__('Catégories des réglages avancés', 'liens-morts-detector-jlg') . '">';
+            foreach ($grouped_sections as $slug => $group) {
+                $is_active = ($slug === $default_group);
+                $tab_id    = 'blc-advanced-tab-' . sanitize_title($slug);
+                $panel_id  = 'blc-advanced-panel-' . sanitize_title($slug);
+                $tab_classes = array('blc-settings-advanced__tab', $is_active ? 'is-active' : '');
+                $tab_hint = isset($group['tab_hint']) ? (string) $group['tab_hint'] : '';
+
+                echo '<button type="button" role="tab" class="' . esc_attr(implode(' ', array_filter(array_map('sanitize_html_class', $tab_classes)))) . '" id="' . esc_attr($tab_id) . '" aria-controls="' . esc_attr($panel_id) . '" aria-selected="' . ($is_active ? 'true' : 'false') . '" tabindex="' . ($is_active ? '0' : '-1') . '" data-blc-target="' . esc_attr($slug) . '">';
+                echo '<span class="blc-settings-advanced__tab-label">' . esc_html($group['label']) . '</span>';
+                if ($tab_hint !== '') {
+                    echo '<span class="blc-settings-advanced__tab-hint">' . esc_html($tab_hint) . '</span>';
+                }
+                echo '</button>';
+            }
+            echo '</div>';
+
+            echo '<div class="blc-settings-advanced__panels">';
+            foreach ($grouped_sections as $slug => $group) {
+                $is_active = ($slug === $default_group);
+                $panel_id  = 'blc-advanced-panel-' . sanitize_title($slug);
+                $tab_id    = 'blc-advanced-tab-' . sanitize_title($slug);
+                $panel_classes = array('blc-settings-advanced__panel', $is_active ? 'is-active' : '');
+                $panel_attributes = $is_active ? '' : ' hidden';
+
+                echo '<section class="' . esc_attr(implode(' ', array_filter(array_map('sanitize_html_class', $panel_classes)))) . '" id="' . esc_attr($panel_id) . '" role="tabpanel" aria-labelledby="' . esc_attr($tab_id) . '" data-blc-panel="' . esc_attr($slug) . '"' . $panel_attributes . '>';
+                echo '<header class="blc-settings-advanced__panel-header">';
+                echo '<h3 class="blc-settings-advanced__panel-title">' . esc_html($group['label']) . '</h3>';
+                if (!empty($group['description'])) {
+                    echo '<p class="blc-settings-advanced__panel-description">' . esc_html($group['description']) . '</p>';
+                }
+                echo '</header>';
+
+                if (!empty($group['sections'])) {
+                    foreach ($group['sections'] as $section_id) {
+                        blc_render_settings_section($page, $section_id);
+                    }
+                }
+
+                echo '</section>';
+            }
+            echo '</div>';
+
+            echo '</div>'; // .blc-settings-advanced
+            echo '</div>';
+            echo '</details>';
+        }
     }
 
     echo '</div>';
@@ -2772,6 +3036,7 @@ add_action('wp_ajax_blc_reschedule_cron', 'blc_ajax_reschedule_cron');
 add_action('wp_ajax_blc_start_manual_image_scan', 'blc_ajax_start_manual_image_scan');
 add_action('wp_ajax_blc_cancel_manual_image_scan', 'blc_ajax_cancel_manual_image_scan');
 add_action('wp_ajax_blc_get_image_scan_status', 'blc_ajax_get_image_scan_status');
+add_action('wp_ajax_blc_fetch_links_table', 'blc_ajax_fetch_links_table');
 
 /**
  * AJAX handler to start a manual scan via admin-ajax.
@@ -3061,6 +3326,37 @@ function blc_ajax_get_image_scan_status() {
     wp_send_json_success(
         array(
             'status' => blc_get_image_scan_status_payload(),
+        )
+    );
+}
+
+/**
+ * AJAX handler to retrieve the links list table markup via admin-ajax.
+ *
+ * @return void
+ */
+function blc_ajax_fetch_links_table() {
+    check_ajax_referer('blc_links_table');
+
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(
+            array(
+                'message' => __('Permissions insuffisantes pour consulter ce rapport.', 'liens-morts-detector-jlg'),
+            ),
+            defined('BLC_HTTP_FORBIDDEN') ? (int) BLC_HTTP_FORBIDDEN : 403
+        );
+    }
+
+    $request_args = blc_normalize_links_table_request($_REQUEST);
+
+    $list_table = new BLC_Links_List_Table();
+    $list_table->set_request_args($request_args);
+    $list_table->prepare_items();
+
+    wp_send_json_success(
+        array(
+            'markup' => blc_render_links_table_markup($list_table),
+            'state'  => $list_table->export_state(),
         )
     );
 }
