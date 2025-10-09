@@ -38,6 +38,44 @@
     --blc-admin-accent-muted: #e8e4ff;
 }
 
+.wp-admin.blc-accessibility--high-contrast {
+    --blc-admin-surface: #ffffff;
+    --blc-admin-surface-subtle: #f1f5f9;
+    --blc-admin-surface-muted: #e2e8f0;
+    --blc-admin-border: #0f172a;
+    --blc-admin-border-subtle: #1e293b;
+    --blc-admin-text: #0b1120;
+    --blc-admin-text-subtle: #1f2937;
+    --blc-admin-accent: #0047ff;
+    --blc-admin-accent-strong: #0027a3;
+    --blc-admin-accent-soft: #dce7ff;
+    --blc-admin-accent-muted: #b3c7ff;
+    --blc-admin-success-bg: #bbf7d0;
+    --blc-admin-success-text: #166534;
+    --blc-admin-danger-bg: #fecaca;
+    --blc-admin-danger-text: #b91c1c;
+    --blc-admin-warning-bg: #fde68a;
+    --blc-admin-warning-text: #92400e;
+    --blc-admin-info-bg: #bfdbfe;
+    --blc-admin-info-text: #1d4ed8;
+}
+
+.wp-admin.blc-accessibility--reduce-motion {
+    --blc-admin-transition: 0s linear;
+    scroll-behavior: auto;
+}
+
+.wp-admin.blc-accessibility--reduce-motion * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+}
+
+.wp-admin.blc-accessibility--large-font {
+    font-size: 16px;
+}
+
 @supports (color: color-mix(in srgb, white 50%, black)) {
     :root {
         --blc-admin-accent-soft: color-mix(in srgb, var(--blc-admin-accent) 15%, #f6f1ff);
@@ -74,6 +112,28 @@
         --blc-admin-info-text: #89a2ff;
         --blc-admin-shadow-sm: 0 10px 30px rgba(0, 0, 0, 0.35);
         --blc-admin-shadow-md: 0 25px 50px -12px rgba(0, 0, 0, 0.45);
+    }
+
+    .wp-admin.blc-accessibility--high-contrast {
+        --blc-admin-surface: #020617;
+        --blc-admin-surface-subtle: #0f172a;
+        --blc-admin-surface-muted: #1e293b;
+        --blc-admin-border: #cbd5f5;
+        --blc-admin-border-subtle: #94a3d8;
+        --blc-admin-text: #f8fafc;
+        --blc-admin-text-subtle: #e2e8f0;
+        --blc-admin-accent: #8eaaff;
+        --blc-admin-accent-strong: #c7d2fe;
+        --blc-admin-accent-soft: rgba(148, 163, 255, 0.4);
+        --blc-admin-accent-muted: rgba(148, 163, 255, 0.6);
+        --blc-admin-success-bg: rgba(34, 197, 94, 0.35);
+        --blc-admin-success-text: #bbf7d0;
+        --blc-admin-danger-bg: rgba(248, 113, 113, 0.35);
+        --blc-admin-danger-text: #fecaca;
+        --blc-admin-warning-bg: rgba(250, 204, 21, 0.35);
+        --blc-admin-warning-text: #fde68a;
+        --blc-admin-info-bg: rgba(96, 165, 250, 0.35);
+        --blc-admin-info-text: #bfdbfe;
     }
 }
 
@@ -312,6 +372,50 @@
 }
 .form-table th label {
     font-size: 1.1em;
+}
+
+.blc-accessibility-options {
+    border: 0;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 16px;
+}
+
+.blc-accessibility-option {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 16px 18px;
+    border: 1px solid var(--blc-admin-border-subtle);
+    border-radius: var(--blc-admin-radius-sm);
+    background: var(--blc-admin-surface-subtle);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.blc-accessibility-option .description {
+    margin: 0;
+    color: var(--blc-admin-text-subtle);
+    line-height: 1.45;
+}
+
+.blc-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.blc-toggle input[type="checkbox"],
+.blc-toggle input[type="radio"] {
+    margin: 0;
+}
+
+.blc-toggle__label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
 }
 
 /* Styles pour l'encadré des statistiques */

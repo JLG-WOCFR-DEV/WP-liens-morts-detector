@@ -79,6 +79,10 @@ jQuery(document).ready(function($) {
 
     var messages = $.extend({}, defaultMessages, window.blcAdminMessages || {});
 
+    var uiConfig = window.blcAdminUi || {};
+    var accessibilityPreferences = uiConfig.accessibility || {};
+    var reduceMotionPreference = !!accessibilityPreferences.reduceMotion;
+
     function formatTemplate(template, value) {
         if (typeof template !== 'string') {
             return '';
@@ -178,10 +182,18 @@ jQuery(document).ready(function($) {
                 return;
             }
 
+            var exitDuration = reduceMotionPreference ? 0 : 200;
+
+            if (exitDuration === 0) {
+                $toast.removeClass('is-leaving');
+                $toast.remove();
+                return;
+            }
+
             $toast.addClass('is-leaving');
             window.setTimeout(function() {
                 $toast.remove();
-            }, 200);
+            }, exitDuration);
         }
 
         function show(message, variant) {
@@ -1481,9 +1493,9 @@ jQuery(document).ready(function($) {
 
     function handleSuccessfulResponse(response, row, helpers) {
         var $row = row && row.jquery ? row : $(row);
-        var prefersReducedMotion = false;
+        var prefersReducedMotion = reduceMotionPreference;
 
-        if (typeof window.matchMedia === 'function') {
+        if (!reduceMotionPreference && typeof window.matchMedia === 'function') {
             var mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
             prefersReducedMotion = !!(mediaQuery && mediaQuery.matches);
         }

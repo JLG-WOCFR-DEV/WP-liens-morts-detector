@@ -135,6 +135,9 @@ class AdminAssets
         $uiPreset = function_exists('blc_get_active_ui_preset') ? blc_get_active_ui_preset() : 'default';
         $uiPresetKey = sanitize_key($uiPreset);
         $presetClass = 'blc-preset--' . (function_exists('sanitize_html_class') ? sanitize_html_class($uiPresetKey) : $uiPresetKey);
+        $accessibilityPreferences = function_exists('blc_get_accessibility_preferences')
+            ? blc_get_accessibility_preferences()
+            : array();
 
         $restUrl = function_exists('rest_url') ? rest_url('blc/v1/scan-status') : '';
         $scanStatus = function_exists('blc_get_link_scan_status_payload') ? blc_get_link_scan_status_payload() : array();
@@ -162,6 +165,7 @@ class AdminAssets
             'imageScanStatus'    => $imageScanStatus,
             'imagePollInterval'  => max(2000, $imagePollInterval),
             'soft404Config'      => $soft404Config,
+            'accessibilityPreferences' => $accessibilityPreferences,
         );
     }
 

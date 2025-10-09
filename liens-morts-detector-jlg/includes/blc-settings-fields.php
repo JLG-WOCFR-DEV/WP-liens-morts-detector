@@ -189,6 +189,36 @@ function blc_register_settings() {
 
     register_setting(
         $option_group,
+        'blc_accessibility_high_contrast',
+        array(
+            'type'              => 'boolean',
+            'sanitize_callback' => 'blc_sanitize_accessibility_flag_option',
+            'default'           => false,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_accessibility_reduce_motion',
+        array(
+            'type'              => 'boolean',
+            'sanitize_callback' => 'blc_sanitize_accessibility_flag_option',
+            'default'           => false,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_accessibility_large_font',
+        array(
+            'type'              => 'boolean',
+            'sanitize_callback' => 'blc_sanitize_accessibility_flag_option',
+            'default'           => false,
+        )
+    );
+
+    register_setting(
+        $option_group,
         'blc_soft_404_min_length',
         array(
             'type'              => 'integer',
@@ -749,6 +779,24 @@ function blc_register_settings_sections() {
         'blc_ui_section',
         array(
             'label_for' => 'blc_ui_preset',
+        )
+    );
+
+    add_settings_section(
+        'blc_accessibility_section',
+        __('Accessibilité & confort visuel', 'liens-morts-detector-jlg'),
+        '__return_false',
+        $page
+    );
+
+    add_settings_field(
+        'blc_accessibility_preferences',
+        __('Préférences d’accessibilité', 'liens-morts-detector-jlg'),
+        'blc_render_accessibility_preferences_field',
+        $page,
+        'blc_accessibility_section',
+        array(
+            'label_for' => 'blc_accessibility_high_contrast',
         )
     );
 
@@ -1897,6 +1945,62 @@ function blc_render_ui_preset_field() {
 }
 
 /**
+ * Render the accessibility preferences fieldset with toggle controls.
+ *
+ * @return void
+ */
+function blc_render_accessibility_preferences_field() {
+    $preferences = blc_get_accessibility_preferences();
+
+    $options = array(
+        'high_contrast' => array(
+            'option'      => 'blc_accessibility_high_contrast',
+            'label'       => __('Activer le contraste renforcé', 'liens-morts-detector-jlg'),
+            'description' => __('Augmente les contrastes des cartes, tableaux et alertes pour une meilleure lisibilité.', 'liens-morts-detector-jlg'),
+        ),
+        'reduce_motion' => array(
+            'option'      => 'blc_accessibility_reduce_motion',
+            'label'       => __('Limiter les animations', 'liens-morts-detector-jlg'),
+            'description' => __('Désactive les transitions non essentielles et les effets de fade pour un affichage plus stable.', 'liens-morts-detector-jlg'),
+        ),
+        'large_font'    => array(
+            'option'      => 'blc_accessibility_large_font',
+            'label'       => __('Augmenter la taille de police', 'liens-morts-detector-jlg'),
+            'description' => __('Applique une taille de texte supérieure sur les écrans du plugin pour limiter la fatigue visuelle.', 'liens-morts-detector-jlg'),
+        ),
+    );
+
+    echo '<fieldset id="blc_accessibility_preferences" class="blc-accessibility-options">';
+    echo '<legend class="screen-reader-text">' . esc_html__('Configurer les aides d’accessibilité', 'liens-morts-detector-jlg') . '</legend>';
+
+    foreach ($options as $key => $definition) {
+        $option_name = isset($definition['option']) ? (string) $definition['option'] : '';
+        if ($option_name === '') {
+            continue;
+        }
+
+        $input_id = $option_name;
+        $is_enabled = !empty($preferences[$key]);
+        $label = isset($definition['label']) ? (string) $definition['label'] : '';
+        $description = isset($definition['description']) ? (string) $definition['description'] : '';
+
+        echo '<div class="blc-accessibility-option">';
+        echo '<label for="' . esc_attr($input_id) . '" class="blc-toggle">';
+        echo '<input type="checkbox" name="' . esc_attr($option_name) . '" id="' . esc_attr($input_id) . '" value="1"' . checked($is_enabled, true, false) . '>';
+        echo '<span class="blc-toggle__label">' . esc_html($label) . '</span>';
+        echo '</label>';
+
+        if ($description !== '') {
+            echo '<p class="description">' . esc_html($description) . '</p>';
+        }
+
+        echo '</div>';
+    }
+
+    echo '</fieldset>';
+}
+
+/**
  * Return the available UI presets definitions.
  *
  * @return array<string,array<string,mixed>>
@@ -1987,6 +2091,46 @@ function blc_get_active_ui_preset() {
 }
 
 /**
+ * Retrieve all accessibility preferences enabled for the admin experience.
+ *
+ * @return array{high_contrast:bool,reduce_motion:bool,large_font:bool}
+ */
+function blc_get_accessibility_preferences() {
+    return array(
+        'high_contrast' => blc_is_accessibility_high_contrast_enabled(),
+        'reduce_motion' => blc_is_accessibility_reduce_motion_enabled(),
+        'large_font'    => blc_is_accessibility_large_font_enabled(),
+    );
+}
+
+/**
+ * Determine whether the high contrast mode is enabled.
+ *
+ * @return bool
+ */
+function blc_is_accessibility_high_contrast_enabled() {
+    return (bool) get_option('blc_accessibility_high_contrast', false);
+}
+
+/**
+ * Determine whether the reduced motion mode is enabled.
+ *
+ * @return bool
+ */
+function blc_is_accessibility_reduce_motion_enabled() {
+    return (bool) get_option('blc_accessibility_reduce_motion', false);
+}
+
+/**
+ * Determine whether the large font mode is enabled.
+ *
+ * @return bool
+ */
+function blc_is_accessibility_large_font_enabled() {
+    return (bool) get_option('blc_accessibility_large_font', false);
+}
+
+/**
  * Sanitize the preset option before persisting it.
  *
  * @param mixed $value Submitted value.
@@ -2006,6 +2150,17 @@ function blc_sanitize_ui_preset_option($value) {
     }
 
     return blc_get_ui_preset_default();
+}
+
+/**
+ * Sanitize accessibility boolean toggles submitted from the settings page.
+ *
+ * @param mixed $value Raw value.
+ *
+ * @return bool
+ */
+function blc_sanitize_accessibility_flag_option($value) {
+    return (bool) $value;
 }
 
 /**
