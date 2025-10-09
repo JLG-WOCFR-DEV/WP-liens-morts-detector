@@ -58,6 +58,7 @@ require_once BLC_PLUGIN_PATH . 'includes/blc-activation.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-cron.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-scanner.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-reporting.php';
+require_once BLC_PLUGIN_PATH . 'includes/blc-notification-payloads.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-utils.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-settings-fields.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-admin-pages.php';
@@ -284,24 +285,7 @@ function blc_send_scan_summary_webhook($dataset_type, array $summary, array $set
         $message = isset($summary['subject']) ? (string) $summary['subject'] : '';
     }
 
-    $payload = array();
-    switch ($channel) {
-        case 'slack':
-        case 'teams':
-            $payload = array('text' => $message);
-            break;
-        case 'generic':
-        default:
-            $payload = array(
-                'message'      => $message,
-                'subject'      => isset($summary['subject']) ? (string) $summary['subject'] : '',
-                'dataset_type' => isset($summary['dataset_type']) ? (string) $summary['dataset_type'] : '',
-                'broken_count' => isset($summary['broken_count']) ? (int) $summary['broken_count'] : 0,
-                'report_url'   => isset($summary['report_url']) ? (string) $summary['report_url'] : '',
-                'site_name'    => isset($summary['site_name']) ? (string) $summary['site_name'] : '',
-            );
-            break;
-    }
+    $payload = blc_build_notification_webhook_payload($channel, $message, $summary, $settings);
 
     /**
      * Permet de personnaliser le contenu envoyé au webhook.
@@ -311,6 +295,7 @@ function blc_send_scan_summary_webhook($dataset_type, array $summary, array $set
      * @param array<string, mixed> $summary       Résumé d'analyse.
      * @param array<string, mixed> $settings      Configuration du webhook.
      * @param string               $channel       Canal sélectionné.
+     * @param string               $message       Message textuel envoyé aux canaux.
      */
     $payload = apply_filters('blc_notification_webhook_payload', $payload, $dataset_type, $summary, $settings, $channel, $message);
 
