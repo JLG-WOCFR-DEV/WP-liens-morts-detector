@@ -403,7 +403,7 @@ function blc_register_settings_sections() {
 
     add_settings_field(
         'blc_rest_period',
-        __('😴 Plage horaire de repos', 'liens-morts-detector-jlg'),
+        __('Plage horaire de repos', 'liens-morts-detector-jlg'),
         'blc_render_rest_period_field',
         $page,
         'blc_planification_section',
@@ -414,7 +414,7 @@ function blc_register_settings_sections() {
 
     add_settings_field(
         'blc_recheck_interval_days',
-        __('🔁 Délai avant re-contrôle', 'liens-morts-detector-jlg'),
+        __('Délai avant re-contrôle', 'liens-morts-detector-jlg'),
         'blc_render_recheck_interval_field',
         $page,
         'blc_planification_section',
@@ -432,7 +432,7 @@ function blc_register_settings_sections() {
 
     add_settings_field(
         'blc_link_delay',
-        __('⚙️ Délai entre chaque lien', 'liens-morts-detector-jlg'),
+        __('Délai entre chaque lien', 'liens-morts-detector-jlg'),
         'blc_render_number_field',
         $page,
         'blc_performance_section',
@@ -448,7 +448,7 @@ function blc_register_settings_sections() {
 
     add_settings_field(
         'blc_batch_delay',
-        __('⚙️ Délai entre chaque lot', 'liens-morts-detector-jlg'),
+        __('Délai entre chaque lot', 'liens-morts-detector-jlg'),
         'blc_render_number_field',
         $page,
         'blc_performance_section',
@@ -464,7 +464,7 @@ function blc_register_settings_sections() {
 
     add_settings_field(
         'blc_batch_size',
-        __('⚙️ Taille des lots', 'liens-morts-detector-jlg'),
+        __('Taille des lots', 'liens-morts-detector-jlg'),
         'blc_render_number_field',
         $page,
         'blc_performance_section',
@@ -481,7 +481,7 @@ function blc_register_settings_sections() {
 
     add_settings_field(
         'blc_head_request_timeout',
-        __('⏱️ Timeout requêtes HEAD', 'liens-morts-detector-jlg'),
+        __('Timeout des requêtes HEAD', 'liens-morts-detector-jlg'),
         'blc_render_timeout_field',
         $page,
         'blc_performance_section',
@@ -495,7 +495,7 @@ function blc_register_settings_sections() {
 
     add_settings_field(
         'blc_get_request_timeout',
-        __('⏱️ Timeout requêtes GET', 'liens-morts-detector-jlg'),
+        __('Timeout des requêtes GET', 'liens-morts-detector-jlg'),
         'blc_render_timeout_field',
         $page,
         'blc_performance_section',
@@ -516,7 +516,7 @@ function blc_register_settings_sections() {
 
     add_settings_field(
         'blc_soft_404_min_length',
-        __('📏 Longueur minimale du contenu', 'liens-morts-detector-jlg'),
+        __('Longueur minimale du contenu', 'liens-morts-detector-jlg'),
         'blc_render_number_field',
         $page,
         'blc_soft_404_section',
@@ -532,7 +532,7 @@ function blc_register_settings_sections() {
 
     add_settings_field(
         'blc_soft_404_title_weight',
-        __('⚖️ Pondération du titre', 'liens-morts-detector-jlg'),
+        __('Pondération du titre', 'liens-morts-detector-jlg'),
         'blc_render_number_field',
         $page,
         'blc_soft_404_section',
@@ -547,7 +547,7 @@ function blc_register_settings_sections() {
 
     add_settings_field(
         'blc_soft_404_title_indicators',
-        __('🔍 Titres suspects', 'liens-morts-detector-jlg'),
+        __('Titres suspects', 'liens-morts-detector-jlg'),
         'blc_render_multiline_text_field',
         $page,
         'blc_soft_404_section',
@@ -562,7 +562,7 @@ function blc_register_settings_sections() {
 
     add_settings_field(
         'blc_soft_404_body_indicators',
-        __('🧩 Gabarits de contenu', 'liens-morts-detector-jlg'),
+        __('Gabarits de contenu', 'liens-morts-detector-jlg'),
         'blc_render_multiline_text_field',
         $page,
         'blc_soft_404_section',
@@ -577,7 +577,7 @@ function blc_register_settings_sections() {
 
     add_settings_field(
         'blc_soft_404_ignore_patterns',
-        __('🚫 Motifs à ignorer', 'liens-morts-detector-jlg'),
+        __('Motifs à ignorer', 'liens-morts-detector-jlg'),
         'blc_render_multiline_text_field',
         $page,
         'blc_soft_404_section',

@@ -133,9 +133,15 @@ if (!function_exists('blc_get_link_scan_status')) {
     /**
      * Return the current link scan status from the database.
      *
+     * @param bool $force_refresh Whether to bypass the in-memory cache.
+     *
      * @return array<string, mixed>
      */
-    function blc_get_link_scan_status() {
+    function blc_get_link_scan_status($force_refresh = false) {
+        if ($force_refresh) {
+            blc_link_scan_status_cache(null, true);
+        }
+
         $cached = blc_link_scan_status_cache();
         if (is_array($cached)) {
             return $cached;
@@ -172,6 +178,319 @@ if (!function_exists('blc_get_link_scan_status')) {
         blc_link_scan_status_cache($status);
 
         return $status;
+    }
+}
+
+if (!function_exists('blc_get_manual_scan_queue')) {
+    /**
+     * Retrieve the stored manual scan queue.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    function blc_get_manual_scan_queue() {
+        $queue = get_option('blc_manual_scan_queue', []);
+
+        if (!is_array($queue)) {
+            return [];
+        }
+
+        $normalized = [];
+
+        foreach ($queue as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            $normalized[] = [
+                'id'            => isset($entry['id']) ? (string) $entry['id'] : uniqid('blc_queue_', true),
+                'is_full_scan'  => !empty($entry['is_full_scan']),
+                'requested_at'  => isset($entry['requested_at']) ? (int) $entry['requested_at'] : time(),
+                'requested_by'  => isset($entry['requested_by']) ? (int) $entry['requested_by'] : 0,
+                'context'       => isset($entry['context']) && is_string($entry['context']) ? $entry['context'] : '',
+            ];
+        }
+
+        return $normalized;
+    }
+}
+
+if (!function_exists('blc_save_manual_scan_queue')) {
+    /**
+     * Persist the provided manual scan queue payload.
+     *
+     * @param array<int, array<string, mixed>> $queue
+     *
+     * @return void
+     */
+    function blc_save_manual_scan_queue(array $queue) {
+        update_option('blc_manual_scan_queue', array_values($queue), false);
+    }
+}
+
+if (!function_exists('blc_clear_manual_scan_queue')) {
+    /**
+     * Remove all entries from the manual scan queue.
+     *
+     * @return void
+     */
+    function blc_clear_manual_scan_queue() {
+        blc_save_manual_scan_queue(array());
+    }
+}
+
+if (!function_exists('blc_manual_scan_queue_length')) {
+    /**
+     * Retrieve the amount of queued manual scans.
+     *
+     * @return int
+     */
+    function blc_manual_scan_queue_length() {
+        return count(blc_get_manual_scan_queue());
+    }
+}
+
+if (!function_exists('blc_prepend_manual_scan_queue')) {
+    /**
+     * Prepend an entry to the manual scan queue.
+     *
+     * @param array<string, mixed> $entry
+     *
+     * @return void
+     */
+    function blc_prepend_manual_scan_queue(array $entry) {
+        $queue = blc_get_manual_scan_queue();
+        array_unshift($queue, $entry);
+
+        blc_save_manual_scan_queue($queue);
+    }
+}
+
+if (!function_exists('blc_enqueue_manual_scan_request')) {
+    /**
+     * Append a manual scan request to the queue.
+     *
+     * @param array<string, mixed> $args
+     *
+     * @return array<string, mixed>
+     */
+    function blc_enqueue_manual_scan_request(array $args) {
+        $queue = blc_get_manual_scan_queue();
+
+        $entry = [
+            'id'            => uniqid('blc_queue_', true),
+            'is_full_scan'  => !empty($args['is_full_scan']),
+            'requested_at'  => time(),
+            'requested_by'  => isset($args['requested_by']) ? (int) $args['requested_by'] : 0,
+            'context'       => isset($args['context']) && is_string($args['context']) ? $args['context'] : 'manual_dashboard',
+        ];
+
+        $queue[] = $entry;
+        blc_save_manual_scan_queue($queue);
+
+        return $entry;
+    }
+}
+
+if (!function_exists('blc_shift_manual_scan_queue')) {
+    /**
+     * Shift the next manual scan request off the queue.
+     *
+     * @return array<string, mixed>|null
+     */
+    function blc_shift_manual_scan_queue() {
+        $queue = blc_get_manual_scan_queue();
+
+        if ($queue === []) {
+            return null;
+        }
+
+        $entry = array_shift($queue);
+        blc_save_manual_scan_queue($queue);
+
+        return $entry;
+    }
+}
+
+if (!function_exists('blc_get_manual_scan_queue_preview')) {
+    /**
+     * Return a sanitized preview of the queued manual scans for UI consumption.
+     *
+     * @param int $limit
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    function blc_get_manual_scan_queue_preview($limit = 5) {
+        $limit = max(1, (int) $limit);
+        $queue = array_slice(blc_get_manual_scan_queue(), 0, $limit);
+        $preview = [];
+
+        foreach ($queue as $entry) {
+            $user_name = '';
+            $user_id = isset($entry['requested_by']) ? (int) $entry['requested_by'] : 0;
+
+            if ($user_id > 0 && function_exists('get_userdata')) {
+                $user = get_userdata($user_id);
+                if ($user && isset($user->display_name) && is_string($user->display_name)) {
+                    $user_name = $user->display_name;
+                }
+            }
+
+            $preview[] = [
+                'id'            => isset($entry['id']) ? (string) $entry['id'] : '',
+                'is_full_scan'  => !empty($entry['is_full_scan']),
+                'requested_at'  => isset($entry['requested_at']) ? (int) $entry['requested_at'] : 0,
+                'requested_by'  => $user_id,
+                'requested_by_name' => $user_name,
+            ];
+        }
+
+        return $preview;
+    }
+}
+
+if (!function_exists('blc_format_manual_queue_entry_for_response')) {
+    /**
+     * Normalize a manual queue entry for AJAX responses.
+     *
+     * @param array<string, mixed> $entry
+     *
+     * @return array<string, mixed>
+     */
+    function blc_format_manual_queue_entry_for_response(array $entry) {
+        return [
+            'id'            => isset($entry['id']) ? (string) $entry['id'] : '',
+            'is_full_scan'  => !empty($entry['is_full_scan']),
+            'requested_at'  => isset($entry['requested_at']) ? (int) $entry['requested_at'] : 0,
+            'requested_by'  => isset($entry['requested_by']) ? (int) $entry['requested_by'] : 0,
+        ];
+    }
+}
+
+if (!function_exists('blc_get_manual_scan_error_log')) {
+    /**
+     * Retrieve the stored manual scan error log.
+     *
+     * @param int $limit
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    function blc_get_manual_scan_error_log($limit = 10) {
+        $limit = max(1, (int) $limit);
+        $log = get_option('blc_manual_scan_errors', []);
+
+        if (!is_array($log)) {
+            return [];
+        }
+
+        $log = array_slice($log, 0, $limit);
+
+        return array_map(static function ($entry) {
+            if (!is_array($entry)) {
+                return [
+                    'message'   => '',
+                    'timestamp' => 0,
+                    'context'   => '',
+                ];
+            }
+
+            return [
+                'message'   => isset($entry['message']) && is_string($entry['message']) ? $entry['message'] : '',
+                'timestamp' => isset($entry['timestamp']) ? (int) $entry['timestamp'] : 0,
+                'context'   => isset($entry['context']) && is_string($entry['context']) ? $entry['context'] : '',
+            ];
+        }, $log);
+    }
+}
+
+if (!function_exists('blc_record_manual_scan_error')) {
+    /**
+     * Append a new entry to the manual scan error log.
+     *
+     * @param string               $message
+     * @param array<string, mixed> $context
+     *
+     * @return void
+     */
+    function blc_record_manual_scan_error($message, array $context = []) {
+        $log = get_option('blc_manual_scan_errors', []);
+        if (!is_array($log)) {
+            $log = [];
+        }
+
+        $log_entry = [
+            'message'   => (string) $message,
+            'timestamp' => time(),
+            'context'   => isset($context['context']) && is_string($context['context']) ? $context['context'] : '',
+        ];
+
+        array_unshift($log, $log_entry);
+
+        if (count($log) > 20) {
+            $log = array_slice($log, 0, 20);
+        }
+
+        update_option('blc_manual_scan_errors', $log, false);
+    }
+}
+
+if (!function_exists('blc_maybe_dispatch_manual_scan_queue')) {
+    /**
+     * Attempt to dispatch the next queued manual scan when the current one completes.
+     *
+     * @param string               $previous_state
+     * @param array<string, mixed> $current_status
+     *
+     * @return void
+     */
+    function blc_maybe_dispatch_manual_scan_queue($previous_state, array $current_status) {
+        static $is_dispatching = false;
+
+        if ($is_dispatching) {
+            return;
+        }
+
+        $queue_length = blc_manual_scan_queue_length();
+        if ($queue_length === 0) {
+            return;
+        }
+
+        $current_state = isset($current_status['state']) ? (string) $current_status['state'] : 'idle';
+        $terminal_states = ['completed', 'failed', 'cancelled', 'idle'];
+        $was_active = in_array($previous_state, ['running', 'queued'], true);
+
+        if (!$was_active && $previous_state !== 'failed' && $previous_state !== 'cancelled') {
+            return;
+        }
+
+        if (!in_array($current_state, $terminal_states, true)) {
+            return;
+        }
+
+        $next_entry = blc_shift_manual_scan_queue();
+        if (!$next_entry) {
+            return;
+        }
+
+        $is_dispatching = true;
+
+        $result = blc_schedule_manual_link_scan(
+            !empty($next_entry['is_full_scan']),
+            false,
+            false,
+            [
+                'from_queue'  => true,
+                'queue_entry' => $next_entry,
+            ]
+        );
+
+        if (empty($result['success'])) {
+            blc_prepend_manual_scan_queue($next_entry);
+            if (!empty($result['message'])) {
+                blc_record_manual_scan_error($result['message'], ['context' => 'queue_dispatch_failed']);
+            }
+        }
+
+        $is_dispatching = false;
     }
 }
 
@@ -675,6 +994,8 @@ if (!function_exists('blc_update_link_scan_status')) {
             'is_full_scan'      => $status['is_full_scan'],
         ]);
 
+        blc_maybe_dispatch_manual_scan_queue($previous_state, $status);
+
         return $status;
     }
 }
@@ -751,6 +1072,10 @@ if (!function_exists('blc_get_link_scan_status_payload')) {
         if (!isset($status['lock_active'])) {
             $status['lock_active'] = false;
         }
+
+        $status['manual_queue_length'] = blc_manual_scan_queue_length();
+        $status['manual_queue_preview'] = blc_get_manual_scan_queue_preview();
+        $status['manual_error_log'] = blc_get_manual_scan_error_log(5);
 
         return $status;
     }

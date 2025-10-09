@@ -149,6 +149,91 @@ jQuery(document).ready(function($) {
 
     window.blcAdmin = window.blcAdmin || {};
 
+    var toast = (function() {
+        var $container = null;
+        var TOAST_DURATION = 7000;
+
+        function ensureContainer() {
+            if ($container && $container.length && document.body.contains($container[0])) {
+                return $container;
+            }
+
+            $container = $('<div>', {
+                class: 'blc-toast-container',
+                'aria-live': 'polite',
+                'aria-atomic': 'false'
+            });
+
+            $('body').append($container);
+
+            return $container;
+        }
+
+        function closeToast($toast) {
+            if (!$toast || !$toast.length) {
+                return;
+            }
+
+            $toast.addClass('is-leaving');
+            window.setTimeout(function() {
+                $toast.remove();
+            }, 200);
+        }
+
+        function show(message, variant) {
+            if (!message) {
+                return;
+            }
+
+            var type = variant || 'info';
+            var $wrapper = ensureContainer();
+
+            var $toast = $('<div>', {
+                class: 'blc-toast blc-toast--' + type,
+                role: type === 'error' ? 'alert' : 'status'
+            });
+
+            $('<span>', {
+                class: 'blc-toast__message',
+                text: message
+            }).appendTo($toast);
+
+            $('<button>', {
+                type: 'button',
+                class: 'blc-toast__close',
+                'aria-label': messages.closeLabel || messages.closeButton || 'Fermer'
+            }).append($('<span>', { 'aria-hidden': 'true', text: '×' })).on('click', function() {
+                closeToast($toast);
+            }).appendTo($toast);
+
+            $wrapper.append($toast);
+
+            accessibility.speak(message, type === 'error' ? 'assertive' : 'polite');
+
+            window.setTimeout(function() {
+                closeToast($toast);
+            }, TOAST_DURATION);
+        }
+
+        return {
+            show: show,
+            success: function(message) {
+                show(message, 'success');
+            },
+            error: function(message) {
+                show(message, 'error');
+            },
+            warning: function(message) {
+                show(message, 'warning');
+            },
+            info: function(message) {
+                show(message, 'info');
+            }
+        };
+    })();
+
+    window.blcAdmin.toast = toast;
+
     var soft404Module = (function() {
         function normalizeList(value) {
             if (Array.isArray(value)) {
@@ -660,6 +745,7 @@ jQuery(document).ready(function($) {
 
     var modal = (function() {
         var $modal = $('#blc-modal');
+        var backgroundElements = [];
 
         if (!$modal.length) {
             var fallbackHelpers = {
@@ -681,6 +767,61 @@ jQuery(document).ready(function($) {
                 },
                 helpers: fallbackHelpers
             };
+        }
+
+        function toggleBackgroundInert(activate) {
+            if (!document.body) {
+                return;
+            }
+
+            if (activate) {
+                backgroundElements = [];
+
+                if (!$modal.parent().is('body')) {
+                    $modal.appendTo('body');
+                }
+
+                $('body > *').each(function() {
+                    if (this === $modal[0]) {
+                        return;
+                    }
+
+                    var $element = $(this);
+
+                    backgroundElements.push({
+                        element: this,
+                        ariaHidden: $element.attr('aria-hidden'),
+                        inert: $element.attr('inert')
+                    });
+
+                    $element.attr('aria-hidden', 'true');
+                    $element.attr('inert', '');
+                });
+
+                return;
+            }
+
+            if (!backgroundElements.length) {
+                return;
+            }
+
+            backgroundElements.forEach(function(entry) {
+                var $element = $(entry.element);
+
+                if (typeof entry.ariaHidden === 'string') {
+                    $element.attr('aria-hidden', entry.ariaHidden);
+                } else {
+                    $element.removeAttr('aria-hidden');
+                }
+
+                if (typeof entry.inert === 'string') {
+                    $element.attr('inert', entry.inert);
+                } else {
+                    $element.removeAttr('inert');
+                }
+            });
+
+            backgroundElements = [];
         }
 
         if (!$modal.attr('tabindex')) {
@@ -922,6 +1063,7 @@ jQuery(document).ready(function($) {
 
             $modal.removeClass('is-open').attr('aria-hidden', 'true');
             $('body').removeClass('blc-modal-open');
+            toggleBackgroundInert(false);
 
             setSubmitting(false);
             clearError();
@@ -1024,6 +1166,7 @@ jQuery(document).ready(function($) {
             setPreviewContent(options.previewContent);
             setSubmitting(false);
 
+            toggleBackgroundInert(true);
             $modal.addClass('is-open').attr('aria-hidden', 'false');
             $('body').addClass('blc-modal-open');
             state.isOpen = true;
@@ -2438,7 +2581,10 @@ jQuery(document).ready(function($) {
         }
 
         var $form = selectors.form ? $(selectors.form) : $();
-        var $submit = $form.length ? $form.find('input[type="submit"]') : $();
+        var $submit = $form.length ? $form.find('input[type="submit"], button[type="submit"]') : $();
+        if (!$submit.length && $form.length) {
+            $submit = $form.find('.button-primary');
+        }
         var fullScanSelector = selectors.fullScan || '';
         var $fullScan = fullScanSelector ? $form.find(fullScanSelector) : $();
         var supportsFullScan = $fullScan.length > 0;
@@ -2450,11 +2596,25 @@ jQuery(document).ready(function($) {
         var $message = $panel.find('.blc-scan-status__message');
         var $cancel = selectors.cancel ? $(selectors.cancel) : $();
         var $restart = selectors.restart ? $(selectors.restart) : $();
+        var $reschedule = selectors.reschedule ? $(selectors.reschedule) : $();
+        var $refresh = $('#blc-refresh-scan-status');
+        var $queueIndicator = $panel.find('#blc-manual-queue-indicator');
+        var $queueList = $queueIndicator.find('.blc-scan-status__queue-list');
+        var $queueWarning = $panel.find('#blc-queue-warning');
+        var $support = $panel.find('#blc-scan-support');
+        var $supportMessage = $support.find('.blc-scan-status__assist-message');
+        var $supportCopy = $support.find('.blc-scan-status__assist-copy');
+        var $log = $panel.find('#blc-scan-error-log');
+        var $logList = $log.find('.blc-scan-status__log-list');
+        var $logEmpty = $log.find('.blc-scan-status__log-empty');
 
         var pollInterval = parseInt(config.pollInterval, 10);
         if (isNaN(pollInterval) || pollInterval < 2000) {
             pollInterval = 5000;
         }
+
+        var maxIdleCycles = typeof config.maxIdleCycles === 'number' ? config.maxIdleCycles : 2;
+        var supportConfig = config.support || {};
 
         var defaults = {
             state: 'idle',
@@ -2475,6 +2635,9 @@ jQuery(document).ready(function($) {
         var pollTimer = null;
         var isFetching = false;
         var lastRequestedFullScan = supportsFullScan ? !!currentStatus.is_full_scan : true;
+        var rescheduleNonce = config.rescheduleNonce || '';
+        var idleCycles = 0;
+        var pollingPaused = false;
 
         function canUseRest() {
             return typeof config.restUrl === 'string' && config.restUrl.length > 0;
@@ -2581,6 +2744,279 @@ jQuery(document).ready(function($) {
             }
         }
 
+        function formatQueueLabel(count) {
+            var label = '';
+
+            if (config.i18n) {
+                if (count === 0 && config.i18n.queueEmpty) {
+                    label = config.i18n.queueEmpty;
+                } else if (count === 1 && config.i18n.queueSingle) {
+                    label = config.i18n.queueSingle.replace('%d', '1');
+                } else if (count > 1 && config.i18n.queuePlural) {
+                    label = config.i18n.queuePlural.replace('%d', String(count));
+                }
+            }
+
+            if (!label && count > 0) {
+                label = String(count);
+            }
+
+            return label;
+        }
+
+        function renderQueue(status) {
+            if (!$queueIndicator.length) {
+                return 0;
+            }
+
+            var queueLength = safeInt(status.manual_queue_length);
+            var preview = Array.isArray(status.manual_queue_preview) ? status.manual_queue_preview : [];
+
+            if (queueLength <= 0 && preview.length === 0) {
+                $queueIndicator.attr('hidden', 'hidden').prop('hidden', true);
+                $queueList.empty();
+
+                return 0;
+            }
+
+            var label = formatQueueLabel(queueLength);
+            if (label) {
+                $queueIndicator.attr('data-queue-label', label);
+            } else {
+                $queueIndicator.removeAttr('data-queue-label');
+            }
+
+            $queueList.empty();
+
+            preview.forEach(function(entry) {
+                var parts = [];
+
+                if (config.i18n) {
+                    if (entry.is_full_scan && config.i18n.queueFullScan) {
+                        parts.push(config.i18n.queueFullScan);
+                    } else if (!entry.is_full_scan && config.i18n.queuePartialScan) {
+                        parts.push(config.i18n.queuePartialScan);
+                    }
+                }
+
+                if (entry.requested_at) {
+                    var dateText = new Date(entry.requested_at * 1000).toLocaleString();
+                    if (config.i18n && config.i18n.queueRequestedAt) {
+                        parts.push(config.i18n.queueRequestedAt.replace('%s', dateText));
+                    } else {
+                        parts.push(dateText);
+                    }
+                }
+
+                if (entry.requested_by_name && config.i18n && config.i18n.queueRequestedBy) {
+                    parts.push(config.i18n.queueRequestedBy.replace('%s', entry.requested_by_name));
+                }
+
+                var itemText = parts.join(' · ');
+                $('<li>', { class: 'blc-scan-status__queue-item' }).text(itemText).appendTo($queueList);
+            });
+
+            if ($queueList.children().length === 0 && queueLength > 0 && config.i18n && config.i18n.queueEmpty) {
+                $('<li>', { class: 'blc-scan-status__queue-item blc-scan-status__queue-item--placeholder' })
+                    .text(config.i18n.queueEmpty)
+                    .appendTo($queueList);
+            }
+
+            $queueIndicator.removeAttr('hidden').prop('hidden', false);
+
+            return queueLength;
+        }
+
+        function renderQueueWarning(queueLength) {
+            if (!$queueWarning.length) {
+                return;
+            }
+
+            if (queueLength > 0) {
+                $queueWarning.removeAttr('hidden').prop('hidden', false);
+            } else {
+                $queueWarning.attr('hidden', 'hidden').prop('hidden', true);
+            }
+        }
+
+        function renderLog(status) {
+            if (!$log.length) {
+                return;
+            }
+
+            var entries = Array.isArray(status.manual_error_log) ? status.manual_error_log : [];
+
+            $logList.empty();
+
+            if (entries.length === 0) {
+                if ($logEmpty.length) {
+                    var emptyMessage = config.i18n && config.i18n.logEmpty ? config.i18n.logEmpty : $logEmpty.text();
+                    $logEmpty.text(emptyMessage).removeAttr('hidden').prop('hidden', false);
+                }
+
+                return;
+            }
+
+            if ($logEmpty.length) {
+                $logEmpty.attr('hidden', 'hidden').prop('hidden', true);
+            }
+
+            entries.forEach(function(entry) {
+                var $item = $('<li>', { class: 'blc-scan-status__log-item' });
+
+                if (entry.timestamp) {
+                    var timestamp = new Date(entry.timestamp * 1000).toLocaleString();
+                    $('<span>', { class: 'blc-scan-status__log-time' }).text(timestamp).appendTo($item);
+                }
+
+                if (entry.message) {
+                    $('<p>', { class: 'blc-scan-status__log-text' }).text(entry.message).appendTo($item);
+                }
+
+                if (entry.context) {
+                    $('<span>', { class: 'blc-scan-status__log-context' }).text(entry.context).appendTo($item);
+                }
+
+                $logList.append($item);
+            });
+        }
+
+        function hideSupportAssist() {
+            if ($support.length) {
+                $support.attr('hidden', 'hidden').prop('hidden', true);
+            }
+        }
+
+        function showSupportAssist(message) {
+            if (!$support.length) {
+                return;
+            }
+
+            var assistMessage = message;
+            if (!assistMessage && config.i18n && config.i18n.supportAssistMessage) {
+                assistMessage = config.i18n.supportAssistMessage;
+            }
+
+            if ($supportMessage.length) {
+                $supportMessage.text(assistMessage || '');
+            }
+
+            $support.removeAttr('hidden').prop('hidden', false);
+        }
+
+        function bindSupportCopy() {
+            if (!$supportCopy.length || $supportCopy.data('blcCopyBound')) {
+                return;
+            }
+
+            $supportCopy.data('blcCopyBound', true).on('click', function(event) {
+                event.preventDefault();
+                var command = $(this).data('command') || supportConfig.wpCliCommand || '';
+                if (!command) {
+                    return;
+                }
+
+                var successMessage = config.i18n && config.i18n.supportCopySuccess ? config.i18n.supportCopySuccess : '';
+                var errorMessage = config.i18n && config.i18n.supportCopyError ? config.i18n.supportCopyError : '';
+
+                var copyPromise;
+
+                if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                    copyPromise = navigator.clipboard.writeText(command);
+                } else {
+                    copyPromise = new Promise(function(resolve, reject) {
+                        var $temp = $('<textarea>').val(command).appendTo('body').css({ position: 'fixed', top: '-1000px' });
+                        try {
+                            $temp[0].select();
+                            var succeeded = document.execCommand('copy');
+                            $temp.remove();
+                            if (succeeded) {
+                                resolve();
+                            } else {
+                                reject();
+                            }
+                        } catch (error) {
+                            $temp.remove();
+                            reject(error);
+                        }
+                    });
+                }
+
+                copyPromise.then(function() {
+                    if (successMessage) {
+                        toast.success(successMessage);
+                    }
+                }).catch(function() {
+                    if (errorMessage) {
+                        toast.error(errorMessage);
+                    }
+                });
+            });
+        }
+
+        function showQueueDecisionModal(isFullScan, failureMessage, data) {
+            if (!modal || typeof modal.open !== 'function') {
+                if (failureMessage && window.confirm(failureMessage)) {
+                    sendStartRequest(isFullScan, { forceCancel: true });
+                }
+                return;
+            }
+
+            var queueLength = safeInt(data && data.queue_length);
+            var queueLabel = (config.i18n && config.i18n.queueAddLabel) || 'Ajouter à la file d’attente';
+            var replaceLabel = (config.i18n && config.i18n.forceStartConfirm) || messages.editModalConfirm || 'Confirmer';
+            var modalTitle = (config.i18n && config.i18n.queueDecisionTitle) || '';
+            var noteText = (config.i18n && config.i18n.queueDecisionNote) || '';
+
+            modal.open({
+                title: modalTitle,
+                message: failureMessage || '',
+                showInput: false,
+                showCancel: true,
+                confirmText: replaceLabel,
+                cancelText: messages.cancelButton || 'Annuler',
+                optionsContent: function() {
+                    var $wrapper = $('<div>', { class: 'blc-queue-modal__options' });
+                    var $queueButton = $('<button>', {
+                        type: 'button',
+                        class: 'button button-primary blc-queue-modal__queue'
+                    }).text(queueLabel).on('click', function(event) {
+                        event.preventDefault();
+                        var helpers = modal.helpers;
+                        if (helpers && typeof helpers.setSubmitting === 'function') {
+                            helpers.setSubmitting(true);
+                        }
+                        sendStartRequest(isFullScan, {
+                            queueOnBusy: true,
+                            confirmationHelpers: helpers
+                        });
+                    });
+
+                    $wrapper.append($queueButton);
+
+                    if (noteText) {
+                        $('<p>', { class: 'blc-queue-modal__note' }).text(noteText).appendTo($wrapper);
+                    }
+
+                    if (queueLength > 0) {
+                        var existingLabel = formatQueueLabel(queueLength);
+                        if (existingLabel) {
+                            $('<p>', { class: 'blc-queue-modal__note' }).text(existingLabel).appendTo($wrapper);
+                        }
+                    }
+
+                    return $wrapper;
+                },
+                onConfirm: function(helpers) {
+                    helpers.setSubmitting(true);
+                    sendStartRequest(isFullScan, {
+                        forceCancel: true,
+                        confirmationHelpers: helpers
+                    });
+                }
+            });
+        }
+
         function updatePanel(status) {
             if (!status || typeof status !== 'object') {
                 return;
@@ -2628,14 +3064,40 @@ jQuery(document).ready(function($) {
                 accessibility.speak(messageText, 'polite');
             }
 
+            var queueLength = renderQueue(currentStatus);
+            renderQueueWarning(queueLength);
+            renderLog(currentStatus);
+
             lastState = state;
             lastMessage = messageText;
             lastRequestedFullScan = supportsFullScan ? !!currentStatus.is_full_scan : true;
             updateButtonsState(currentStatus);
+
+            if (state === 'idle') {
+                idleCycles += 1;
+                if (idleCycles >= maxIdleCycles && !pollingPaused) {
+                    pausePolling();
+                    var pauseMessageParts = [];
+                    if (config.i18n && config.i18n.idlePollingPaused) {
+                        pauseMessageParts.push(config.i18n.idlePollingPaused);
+                    }
+                    if (config.i18n && config.i18n.idlePollingResume) {
+                        pauseMessageParts.push(config.i18n.idlePollingResume);
+                    }
+                    if (pauseMessageParts.length) {
+                        toast.info(pauseMessageParts.join(' '));
+                    }
+                }
+            } else {
+                idleCycles = 0;
+                if (pollingPaused) {
+                    resumePolling(false);
+                }
+            }
         }
 
         function fetchStatus() {
-            if (isFetching) {
+            if (isFetching || pollingPaused) {
                 return;
             }
 
@@ -2705,20 +3167,48 @@ jQuery(document).ready(function($) {
             pollTimer = window.setTimeout(fetchStatus, delay);
         }
 
-        function refreshPolling(immediate) {
-            schedulePoll(immediate);
-        }
+        function refreshPolling(immediate, options) {
+            options = options || {};
 
-        function setFormBusy(state) {
-            if (!$submit.length) {
+            if (pollingPaused && !options.force) {
                 return;
             }
 
-            $submit.prop('disabled', state);
-            if (state) {
-                $submit.attr('aria-busy', 'true');
-            } else {
-                $submit.removeAttr('aria-busy');
+            schedulePoll(immediate);
+        }
+
+        function pausePolling() {
+            pollingPaused = true;
+            if (pollTimer) {
+                window.clearTimeout(pollTimer);
+                pollTimer = null;
+            }
+            $panel.attr('data-polling-paused', '1');
+        }
+
+        function resumePolling(immediate) {
+            pollingPaused = false;
+            idleCycles = 0;
+            $panel.removeAttr('data-polling-paused');
+            refreshPolling(immediate, { force: true });
+        }
+
+        function setFormBusy(state) {
+            if ($submit.length) {
+                $submit.prop('disabled', state);
+                if (state) {
+                    $submit.attr('aria-busy', 'true');
+                } else {
+                    $submit.removeAttr('aria-busy');
+                }
+            }
+
+            if ($form.length) {
+                if (state) {
+                    $form.attr('aria-busy', 'true');
+                } else {
+                    $form.removeAttr('aria-busy');
+                }
             }
         }
 
@@ -2760,8 +3250,15 @@ jQuery(document).ready(function($) {
             });
         }
 
-        function startScan(isFullScan) {
+        function sendStartRequest(isFullScan, options) {
+            options = options || {};
+
             if (!config.startScanNonce || !window.wp || !wp.ajax || typeof wp.ajax.post !== 'function') {
+                if (options.confirmationHelpers) {
+                    options.confirmationHelpers.setSubmitting(false);
+                    options.confirmationHelpers.close();
+                }
+
                 return;
             }
 
@@ -2776,6 +3273,14 @@ jQuery(document).ready(function($) {
                 requestData.full_scan = isFullScan ? 1 : 0;
             }
 
+            if (options.forceCancel) {
+                requestData.force_cancel = 1;
+            }
+
+            if (options.queueOnBusy) {
+                requestData.queue_on_busy = 1;
+            }
+
             wp.ajax.post(startAction, requestData).done(function(response) {
                 lastRequestedFullScan = supportsFullScan ? !!isFullScan : true;
 
@@ -2783,29 +3288,86 @@ jQuery(document).ready(function($) {
                     updatePanel(response.status);
                 }
 
-                if (response && response.message) {
-                    accessibility.speak(response.message, 'polite');
+                var successMessage = (response && response.message) || (config.i18n && config.i18n.manualScanQueued) || '';
+                if (successMessage) {
+                    $message.text(successMessage);
+                    toast.success(successMessage);
                 }
 
                 if (response && response.warning) {
-                    accessibility.speak(response.warning, 'assertive');
+                    toast.warning(response.warning);
                 }
 
-                refreshPolling(false);
+                if (response && response.manual_trigger_failed && config.i18n && config.i18n.queueMessage) {
+                    toast.info(config.i18n.queueMessage);
+                }
+
+                if (response && response.queue_cleared && config.i18n && config.i18n.queueCleared) {
+                    toast.warning(config.i18n.queueCleared);
+                }
+
+                if (options.confirmationHelpers) {
+                    options.confirmationHelpers.setSubmitting(false);
+                    options.confirmationHelpers.close();
+                }
+
+                hideSupportAssist();
+                resumePolling(true);
             }).fail(function(error) {
-                var message = config.i18n && config.i18n.startError ? config.i18n.startError : (messages.genericError || '');
-                if (error && error.responseJSON && error.responseJSON.data && error.responseJSON.data.message) {
-                    message = error.responseJSON.data.message;
+                var data = error && error.responseJSON && error.responseJSON.data ? error.responseJSON.data : {};
+                var failureMessage = data && data.message
+                    ? data.message
+                    : (config.i18n && config.i18n.startError ? config.i18n.startError : (messages.genericError || ''));
+
+                if (data && data.requires_confirmation && !options.forceCancel) {
+                    if (options.confirmationHelpers) {
+                        options.confirmationHelpers.setSubmitting(false);
+                        options.confirmationHelpers.close();
+                    }
+
+                    if (data.queue_available) {
+                        showQueueDecisionModal(isFullScan, failureMessage, data);
+                    } else {
+                        showConfirmation({
+                            title: (config.i18n && config.i18n.restartTitle) || '',
+                            message: failureMessage || '',
+                            confirmText: (config.i18n && config.i18n.forceStartConfirm) || messages.editModalConfirm || 'Confirmer',
+                            onConfirm: function(helpers) {
+                                helpers.setSubmitting(true);
+                                sendStartRequest(isFullScan, {
+                                    forceCancel: true,
+                                    confirmationHelpers: helpers
+                                });
+                            }
+                        });
+                    }
+
+                    return;
                 }
 
-                $message.text(message);
-                if (message) {
-                    accessibility.speak(message, 'assertive');
+                if (options.confirmationHelpers) {
+                    options.confirmationHelpers.setSubmitting(false);
+                    options.confirmationHelpers.close();
                 }
+
+                $message.text(failureMessage);
+                if (failureMessage) {
+                    toast.error(failureMessage);
+                }
+
+                if (data && data.resolution_hint) {
+                    toast.info(data.resolution_hint);
+                }
+
+                showSupportAssist(failureMessage);
             }).always(function() {
                 setFormBusy(false);
-                refreshPolling(false);
+                refreshPolling(false, { force: true });
             });
+        }
+
+        function startScan(isFullScan) {
+            sendStartRequest(isFullScan, {});
         }
 
         function cancelScan() {
@@ -2836,10 +3398,10 @@ jQuery(document).ready(function($) {
                         var message = (response && response.message) || (config.i18n && config.i18n.cancelSuccess) || '';
                         if (message) {
                             $message.text(message);
-                            accessibility.speak(message, 'polite');
+                            toast.success(message);
                         }
 
-                        refreshPolling(false);
+                        resumePolling(true);
                     }).fail(function(error) {
                         var message = (config.i18n && config.i18n.cancelError) || messages.genericError || '';
                         if (error && error.responseJSON && error.responseJSON.data && error.responseJSON.data.message) {
@@ -2848,13 +3410,13 @@ jQuery(document).ready(function($) {
 
                         $message.text(message);
                         if (message) {
-                            accessibility.speak(message, 'assertive');
+                            toast.error(message);
                         }
                     }).always(function() {
                         helpers.setSubmitting(false);
                         helpers.close();
                         $cancel.prop('disabled', false).removeAttr('aria-busy');
-                        refreshPolling(false);
+                        refreshPolling(false, { force: true });
                     });
                 }
             });
@@ -2870,8 +3432,10 @@ jQuery(document).ready(function($) {
                 message: confirmMessage || '',
                 confirmText: confirmLabel || messages.editModalConfirm || 'Confirmer',
                 onConfirm: function(helpers) {
-                    helpers.close();
-                    startScan(lastRequestedFullScan);
+                    sendStartRequest(lastRequestedFullScan, {
+                        forceCancel: true,
+                        confirmationHelpers: helpers
+                    });
                 }
             });
         }
@@ -2902,10 +3466,79 @@ jQuery(document).ready(function($) {
             });
         }
 
+        if ($reschedule.length && rescheduleNonce && window.wp && wp.ajax && typeof wp.ajax.post === 'function') {
+            $reschedule.on('submit', function(event) {
+                event.preventDefault();
+
+                var $rescheduleButton = $reschedule.find('button[type="submit"], input[type="submit"]');
+                if ($rescheduleButton.length) {
+                    $rescheduleButton.prop('disabled', true).attr('aria-busy', 'true');
+                }
+
+                var rescheduleAction = (config.ajax && config.ajax.reschedule) ? config.ajax.reschedule : 'blc_reschedule_cron';
+
+                wp.ajax.post(rescheduleAction, {
+                    _ajax_nonce: rescheduleNonce
+                }).done(function(response) {
+                    var successMessage = (response && response.message) || (config.i18n && config.i18n.rescheduleSuccess) || '';
+                    if (successMessage) {
+                        $message.text(successMessage);
+                        toast.success(successMessage);
+                    }
+
+                    if (response && Array.isArray(response.warnings)) {
+                        response.warnings.forEach(function(warning) {
+                            toast.warning(warning);
+                        });
+                    }
+
+                    if (response && response.resolution_hint) {
+                        toast.info(response.resolution_hint);
+                    }
+
+                    if (response && response.status) {
+                        updatePanel(response.status);
+                    }
+                }).fail(function(error) {
+                    var data = error && error.responseJSON && error.responseJSON.data ? error.responseJSON.data : {};
+                    var failureMessage = data && data.message
+                        ? data.message
+                        : (config.i18n && config.i18n.rescheduleError ? config.i18n.rescheduleError : messages.genericError || '');
+
+                    $message.text(failureMessage);
+                    toast.error(failureMessage);
+
+                    if (data && data.resolution_hint) {
+                        toast.info(data.resolution_hint);
+                    }
+
+                    if (data && data.warnings) {
+                        [].concat(data.warnings).forEach(function(warning) {
+                            toast.warning(warning);
+                        });
+                    }
+                }).always(function() {
+                    if ($rescheduleButton.length) {
+                        $rescheduleButton.prop('disabled', false).removeAttr('aria-busy');
+                    }
+                });
+            });
+        }
+
+        if ($refresh.length && !$refresh.data('blcRefreshBound')) {
+            $refresh.data('blcRefreshBound', true).on('click', function(event) {
+                event.preventDefault();
+                resumePolling(true);
+            });
+        }
+
+        bindSupportCopy();
+        hideSupportAssist();
+
         lastState = currentStatus.state || 'idle';
         lastMessage = typeof currentStatus.message === 'string' ? currentStatus.message : '';
         updatePanel(currentStatus);
-        refreshPolling(false);
+        refreshPolling(false, { force: true });
     }
 
     if (window.blcAdminScanConfig) {

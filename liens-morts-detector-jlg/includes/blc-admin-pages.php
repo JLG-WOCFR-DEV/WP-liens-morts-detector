@@ -238,14 +238,78 @@ function blc_render_action_modal() {
  *
  * @param bool $is_full_scan Whether to launch a full scan.
  *
- * @return array{success:bool,message:string,manual_trigger_failed:bool}
+ * @return array<string, mixed>
  */
-function blc_schedule_manual_link_scan($is_full_scan = false) {
+function blc_schedule_manual_link_scan($is_full_scan = false, $force_cancel = false, $queue_on_busy = false, array $options = array()) {
     $is_full_scan = (bool) $is_full_scan;
+    $force_cancel = (bool) $force_cancel;
+    $queue_on_busy = (bool) $queue_on_busy;
+    if (!is_array($options)) {
+        $options = array();
+    }
+
     $bypass_rest_window = $is_full_scan;
     $job_id = function_exists('blc_generate_link_scan_job_id') ? blc_generate_link_scan_job_id() : uniqid('blc_', true);
     $attempt = 1;
     $scheduled_at = time();
+
+    $current_status = blc_get_link_scan_status(true);
+    $current_state = isset($current_status['state']) ? (string) $current_status['state'] : 'idle';
+    $active_states = array('running', 'queued');
+    $has_remaining_batches = !empty($current_status['remaining_batches']);
+    $scan_is_active = in_array($current_state, $active_states, true) || $has_remaining_batches;
+
+    $from_queue = !empty($options['from_queue']);
+    $queue_entry = (isset($options['queue_entry']) && is_array($options['queue_entry'])) ? $options['queue_entry'] : null;
+    $requested_by = isset($options['requested_by']) ? (int) $options['requested_by'] : (function_exists('get_current_user_id') ? (int) get_current_user_id() : 0);
+    $queue_context = isset($options['enqueue_context']) && is_string($options['enqueue_context']) ? $options['enqueue_context'] : 'manual_dashboard';
+
+    if ($scan_is_active && !$force_cancel) {
+        if ($queue_on_busy) {
+            $queued_entry = blc_enqueue_manual_scan_request(
+                array(
+                    'is_full_scan' => $is_full_scan,
+                    'requested_by' => $requested_by,
+                    'context'      => $queue_context,
+                )
+            );
+
+            $queue_message = __("Un scan est déjà en cours. La nouvelle demande a été ajoutée à la file d’attente.", 'liens-morts-detector-jlg');
+
+            return array(
+                'success'               => true,
+                'message'               => $queue_message,
+                'manual_trigger_failed' => false,
+                'queued'                => true,
+                'queue_length'          => blc_manual_scan_queue_length(),
+                'queue_entry'           => blc_format_manual_queue_entry_for_response($queued_entry),
+            );
+        }
+
+        if ($from_queue && $queue_entry) {
+            blc_prepend_manual_scan_queue($queue_entry);
+        }
+
+        $message = __("Une analyse est déjà en cours. Ajoutez la demande à la file d’attente ou remplacez l’exécution en cours.", 'liens-morts-detector-jlg');
+
+        return array(
+            'success'               => false,
+            'message'               => $message,
+            'manual_trigger_failed' => false,
+            'requires_confirmation' => true,
+            'current_state'         => $current_state,
+            'resolution_hint'       => __("Vous pouvez laisser la file d’attente démarrer automatiquement après l’analyse en cours ou confirmer le remplacement immédiat.", 'liens-morts-detector-jlg'),
+            'queue_available'       => true,
+            'queue_length'          => blc_manual_scan_queue_length(),
+        );
+    }
+
+    $queue_was_cleared = false;
+
+    if ($force_cancel) {
+        $queue_was_cleared = (blc_manual_scan_queue_length() > 0);
+        blc_clear_manual_scan_queue();
+    }
 
     if (function_exists('wp_clear_scheduled_hook')) {
         wp_clear_scheduled_hook('blc_manual_check_batch');
@@ -302,11 +366,14 @@ function blc_schedule_manual_link_scan($is_full_scan = false) {
             'bypass_rest_window' => $bypass_rest_window,
         ]);
 
-        return [
+        blc_record_manual_scan_error($failure_message, array('context' => 'schedule_failed'));
+
+        return array(
             'success'               => false,
             'message'               => $failure_message,
             'manual_trigger_failed' => false,
-        ];
+            'queue_length'          => blc_manual_scan_queue_length(),
+        );
     }
 
     $manual_trigger_failed = false;
@@ -332,6 +399,10 @@ function blc_schedule_manual_link_scan($is_full_scan = false) {
             if ($is_error) {
                 $manual_trigger_failed = true;
                 error_log('BLC: Manual cron trigger failed for link check.');
+                blc_record_manual_scan_error(
+                    __('Le déclenchement immédiat de WP-Cron a échoué. WordPress réessaiera automatiquement.', 'liens-morts-detector-jlg'),
+                    array('context' => 'manual_trigger_failed')
+                );
             }
         }
     }
@@ -352,6 +423,7 @@ function blc_schedule_manual_link_scan($is_full_scan = false) {
         'bypass_rest_window'  => $bypass_rest_window,
         'manual_trigger_failed' => $manual_trigger_failed,
         'manual_trigger_error'  => $manual_trigger_error,
+        'queued_via'            => $from_queue ? 'queue' : 'manual',
     ]);
 
     blc_update_link_scan_status([
@@ -371,15 +443,26 @@ function blc_schedule_manual_link_scan($is_full_scan = false) {
         'attempt'           => $attempt,
     ]);
 
-    return [
+    $return_message = sprintf(
+        /* translators: %s: unique job identifier. */
+        __("La vérification des liens a été programmée et s'exécute en arrière-plan. (Job : %s)", 'liens-morts-detector-jlg'),
+        esc_html($job_id)
+    );
+
+    if ($queue_was_cleared) {
+        $return_message .= ' ' . __("La file d’attente précédente a été vidée avant de relancer l’analyse.", 'liens-morts-detector-jlg');
+    } elseif ($scan_is_active && $force_cancel) {
+        $return_message .= ' ' . __("Le scan en cours a été remplacé par cette nouvelle exécution.", 'liens-morts-detector-jlg');
+    }
+
+    return array(
         'success'               => true,
-        'message'               => sprintf(
-            /* translators: %s: unique job identifier. */
-            __("La vérification des liens a été programmée et s'exécute en arrière-plan. (Job : %s)", 'liens-morts-detector-jlg'),
-            esc_html($job_id)
-        ),
+        'message'               => $return_message,
         'manual_trigger_failed' => $manual_trigger_failed,
-    ];
+        'queue_length'          => blc_manual_scan_queue_length(),
+        'queue_cleared'         => $queue_was_cleared,
+        'dispatched_from_queue' => $from_queue,
+    );
 }
 
 /**
@@ -1132,37 +1215,27 @@ function blc_dashboard_links_page() {
             wp_die(esc_html__('Permissions insuffisantes pour reprogrammer la vérification automatique.', 'liens-morts-detector-jlg'));
         }
 
-        $reschedule_result = blc_reset_link_check_schedule(
-            array(
-                'context' => 'dashboard',
-            )
-        );
+        $reschedule_payload = blc_reschedule_link_scan_event('dashboard');
 
-        if (!$reschedule_result['success']) {
-            $error_message = esc_html__(
-                "La reprogrammation de l'analyse automatique a échoué. Vérifiez la configuration de WP-Cron.",
-                'liens-morts-detector-jlg'
-            );
-
+        if (!$reschedule_payload['success']) {
             printf(
                 '<div class="notice notice-error is-dismissible"><p>%s</p></div>',
-                $error_message
+                esc_html($reschedule_payload['message'])
             );
-
-            if ($reschedule_result['restore_attempted'] && !$reschedule_result['restored']) {
-                printf(
-                    '<div class="notice notice-warning is-dismissible"><p>%s</p></div>',
-                    esc_html__(
-                        "La planification précédente n'a pas pu être restaurée. Une intervention manuelle est nécessaire.",
-                        'liens-morts-detector-jlg'
-                    )
-                );
-            }
         } else {
             printf(
                 '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
-                esc_html__("La vérification automatique a été reprogrammée avec succès.", 'liens-morts-detector-jlg')
+                esc_html($reschedule_payload['message'])
             );
+        }
+
+        if (!empty($reschedule_payload['warnings'])) {
+            foreach ($reschedule_payload['warnings'] as $warning_message) {
+                printf(
+                    '<div class="notice notice-warning is-dismissible"><p>%s</p></div>',
+                    esc_html($warning_message)
+                );
+            }
         }
     }
 
@@ -1535,41 +1608,94 @@ function blc_dashboard_links_page() {
                 </button>
             </div>
             <p class="blc-scan-status__message" aria-live="polite"><?php echo esc_html($scan_status['message']); ?></p>
+            <div
+                class="blc-scan-status__queue"
+                id="blc-manual-queue-indicator"
+                role="status"
+                aria-live="polite"
+                hidden
+            >
+                <h3 class="screen-reader-text"><?php esc_html_e('File d’attente des analyses manuelles', 'liens-morts-detector-jlg'); ?></h3>
+                <ul class="blc-scan-status__queue-list"></ul>
+            </div>
+            <p class="blc-scan-status__queue-warning" id="blc-queue-warning" hidden>
+                <?php esc_html_e('Remplacer ou reprogrammer un scan effacera la file d’attente actuelle.', 'liens-morts-detector-jlg'); ?>
+            </p>
+            <div class="blc-scan-status__assist" id="blc-scan-support" hidden>
+                <p class="blc-scan-status__assist-message"></p>
+                <div class="blc-scan-status__assist-actions">
+                    <a
+                        class="button button-link"
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        href="<?php echo esc_url(apply_filters('blc_wp_cron_checklist_url', 'https://wordpress.org/documentation/article/cron/')); ?>"
+                    >
+                        <?php esc_html_e('Consulter la checklist WP-Cron', 'liens-morts-detector-jlg'); ?>
+                    </a>
+                    <button
+                        type="button"
+                        class="button button-secondary blc-scan-status__assist-copy"
+                        data-command="wp cron event run blc_manual_check_batch"
+                    >
+                        <?php esc_html_e('Copier la commande WP-CLI', 'liens-morts-detector-jlg'); ?>
+                    </button>
+                </div>
+            </div>
+            <details class="blc-scan-status__log" id="blc-scan-error-log">
+                <summary class="blc-scan-status__log-summary">
+                    <?php esc_html_e('Journal des erreurs récentes', 'liens-morts-detector-jlg'); ?>
+                </summary>
+                <p class="blc-scan-status__log-empty"><?php esc_html_e('Aucun incident récent à signaler.', 'liens-morts-detector-jlg'); ?></p>
+                <ul class="blc-scan-status__log-list" aria-live="polite"></ul>
+            </details>
+            <button type="button" class="button-link blc-scan-status__refresh" id="blc-refresh-scan-status">
+                <?php esc_html_e('Actualiser le statut', 'liens-morts-detector-jlg'); ?>
+            </button>
         </div>
-        <form id="blc-manual-scan-form" method="post" class="blc-manual-scan-form blc-admin-card blc-admin-card--subtle">
-            <?php wp_nonce_field('blc_manual_check_nonce'); ?>
-            <input type="hidden" name="blc_manual_check" value="1">
-            <p>
-                <label>
-                    <input type="checkbox" name="blc_full_scan">
-                    <?php
-                    echo wp_kses(
-                        sprintf(
-                            /* translators: 1: opening strong tag, 2: closing strong tag. */
-                            __('Lancer une %1$sanalyse complète%2$s de tous les articles (plus lent)', 'liens-morts-detector-jlg'),
-                            '<strong>',
-                            '</strong>'
-                        ),
-                        array(
-                            'strong' => array(),
-                        )
-                    );
-                    ?>
-                </label><br>
-                <small><?php esc_html_e('Si non cochée, l\'analyse ne portera que sur les articles modifiés depuis la dernière exécution.', 'liens-morts-detector-jlg'); ?></small>
-            </p>
-            <input type="submit" class="button button-primary" value="<?php echo esc_attr__('Lancer la vérification des liens', 'liens-morts-detector-jlg'); ?>">
-        </form>
-        <form method="post" class="blc-reschedule-cron-form blc-admin-card blc-admin-card--subtle">
-            <?php wp_nonce_field('blc_reschedule_cron_nonce'); ?>
-            <input type="hidden" name="blc_reschedule_cron" value="1">
-            <p>
-                <button type="submit" class="button button-secondary">
-                    <?php esc_html_e('Reprogrammer la vérification automatique', 'liens-morts-detector-jlg'); ?>
-                </button>
-                <span class="description"><?php esc_html_e('Force la création d\'un nouvel événement selon la cadence configurée.', 'liens-morts-detector-jlg'); ?></span>
-            </p>
-        </form>
+        <section class="blc-manual-actions blc-admin-card blc-admin-card--subtle" aria-labelledby="blc-manual-actions-heading">
+            <div class="blc-manual-actions__header">
+                <h2 id="blc-manual-actions-heading" class="blc-manual-actions__title"><?php esc_html_e('Commandes rapides', 'liens-morts-detector-jlg'); ?></h2>
+                <p class="blc-manual-actions__intro"><?php esc_html_e('Lancez, suspendez ou reprogrammez vos scans sans quitter cette page.', 'liens-morts-detector-jlg'); ?></p>
+            </div>
+            <div class="blc-manual-actions__grid">
+                <form id="blc-manual-scan-form" method="post" class="blc-manual-actions__form" data-blc-action="start">
+                    <?php wp_nonce_field('blc_manual_check_nonce'); ?>
+                    <input type="hidden" name="blc_manual_check" value="1">
+                    <div class="blc-manual-actions__primary">
+                        <button type="submit" class="button button-primary blc-manual-actions__submit">
+                            <?php esc_html_e('Lancer une analyse maintenant', 'liens-morts-detector-jlg'); ?>
+                        </button>
+                        <span class="blc-manual-actions__hint"><?php esc_html_e('Déclenche immédiatement une analyse manuelle.', 'liens-morts-detector-jlg'); ?></span>
+                    </div>
+                    <details class="blc-manual-actions__advanced">
+                        <summary class="blc-manual-actions__advanced-toggle"><?php esc_html_e('Options avancées', 'liens-morts-detector-jlg'); ?></summary>
+                        <div class="blc-manual-actions__advanced-content">
+                            <label class="blc-manual-actions__checkbox">
+                                <input type="checkbox" name="blc_full_scan">
+                                <span><?php esc_html_e('Analyser l’ensemble du contenu (plus long)', 'liens-morts-detector-jlg'); ?></span>
+                            </label>
+                            <p class="description"><?php esc_html_e('Par défaut, seuls les contenus modifiés depuis la dernière exécution sont inspectés.', 'liens-morts-detector-jlg'); ?></p>
+                        </div>
+                    </details>
+                </form>
+                <form method="post" class="blc-manual-actions__form blc-manual-actions__form--secondary" data-blc-action="reschedule">
+                    <?php wp_nonce_field('blc_reschedule_cron_nonce'); ?>
+                    <input type="hidden" name="blc_reschedule_cron" value="1">
+                    <div class="blc-manual-actions__primary">
+                        <button type="submit" class="button button-secondary">
+                            <?php esc_html_e('Reprogrammer l’analyse automatique', 'liens-morts-detector-jlg'); ?>
+                        </button>
+                        <span class="blc-manual-actions__hint"><?php esc_html_e('Recrée l’évènement WP-Cron selon la fréquence définie.', 'liens-morts-detector-jlg'); ?></span>
+                    </div>
+                </form>
+            </div>
+            <div class="blc-manual-actions__footer" role="note">
+                <p class="blc-manual-actions__support">
+                    <?php esc_html_e('Besoin d’aide ? Consultez la checklist WP-Cron dans la documentation ou exécutez la commande WP-CLI affichée ci-dessous.', 'liens-morts-detector-jlg'); ?>
+                </p>
+                <code class="blc-manual-actions__command">wp cron event run blc_manual_check_batch</code>
+            </div>
+        </section>
         <?php if ($broken_links_count === 0): ?>
              <p><?php esc_html_e('✅ Aucun lien mort trouvé. Bravo !', 'liens-morts-detector-jlg'); ?></p>
         <?php else: ?>
@@ -1969,10 +2095,10 @@ function blc_settings_page() {
         <?php blc_render_dashboard_tabs('settings'); ?>
         <h1><?php esc_html_e('Réglages', 'liens-morts-detector-jlg'); ?></h1>
         <?php settings_errors(); ?>
-        <form method="post" action="options.php">
+        <form method="post" action="options.php" class="blc-settings-form">
             <?php
             settings_fields('blc_settings');
-            do_settings_sections('blc-settings');
+            blc_render_settings_sections_grouped('blc-settings');
             submit_button(__('Enregistrer les modifications', 'liens-morts-detector-jlg'));
             ?>
         </form>
@@ -1980,9 +2106,160 @@ function blc_settings_page() {
     <?php
 }
 
+/**
+ * Render settings sections grouped by expertise level.
+ *
+ * @param string $page Settings page slug.
+ *
+ * @return void
+ */
+function blc_render_settings_sections_grouped($page) {
+    global $wp_settings_sections;
+
+    if (!isset($wp_settings_sections[$page]) || !is_array($wp_settings_sections[$page])) {
+        do_settings_sections($page);
+
+        return;
+    }
+
+    $sections = $wp_settings_sections[$page];
+
+    $essential_section_ids = array(
+        'blc_planification_section',
+        'blc_notifications_section',
+        'blc_post_types_section',
+        'blc_post_statuses_section',
+        'blc_ui_section',
+    );
+
+    $advanced_section_ids = array();
+    foreach ($sections as $section_id => $section) {
+        if (in_array($section_id, $essential_section_ids, true)) {
+            continue;
+        }
+
+        $advanced_section_ids[] = $section_id;
+    }
+
+    echo '<div class="blc-settings-groups">';
+
+    echo '<section class="blc-settings-group" aria-labelledby="blc-settings-essential-heading">';
+    echo '<header class="blc-settings-group__header">';
+    echo '<h2 id="blc-settings-essential-heading" class="blc-settings-group__title">' . esc_html__('Réglages essentiels', 'liens-morts-detector-jlg') . '</h2>';
+    echo '<p class="blc-settings-group__description">' . esc_html__('Configurez les paramètres indispensables pour que la surveillance reste active.', 'liens-morts-detector-jlg') . '</p>';
+    echo '</header>';
+    foreach ($essential_section_ids as $section_id) {
+        blc_render_settings_section($page, $section_id);
+    }
+    echo '</section>';
+
+    if (!empty($advanced_section_ids)) {
+        echo '<details class="blc-settings-group blc-settings-group--collapsible" open aria-labelledby="blc-settings-advanced-heading">';
+        echo '<summary class="blc-settings-group__summary">';
+        echo '<span id="blc-settings-advanced-heading" class="blc-settings-group__title">' . esc_html__('Réglages avancés', 'liens-morts-detector-jlg') . '</span>';
+        echo '<span class="blc-settings-group__description">' . esc_html__('Optimisez les performances, heuristiques et intégrations externes.', 'liens-morts-detector-jlg') . '</span>';
+        echo '</summary>';
+        echo '<div class="blc-settings-group__content">';
+        foreach ($advanced_section_ids as $section_id) {
+            blc_render_settings_section($page, $section_id);
+        }
+        echo '</div>';
+        echo '</details>';
+    }
+
+    echo '</div>';
+}
+
+/**
+ * Output a single settings section with its fields.
+ *
+ * @param string $page       Settings page slug.
+ * @param string $section_id Section identifier.
+ *
+ * @return void
+ */
+function blc_render_settings_section($page, $section_id) {
+    global $wp_settings_sections, $wp_settings_fields;
+
+    if (!isset($wp_settings_sections[$page][$section_id])) {
+        return;
+    }
+
+    $section = $wp_settings_sections[$page][$section_id];
+
+    echo '<section class="blc-settings-section" id="' . esc_attr($section_id) . '">';
+    if (!empty($section['title'])) {
+        echo '<h3 class="blc-settings-section__title">' . esc_html($section['title']) . '</h3>';
+    }
+
+    if (isset($section['callback']) && is_callable($section['callback'])) {
+        call_user_func($section['callback'], $section);
+    }
+
+    if (!empty($wp_settings_fields[$page][$section_id])) {
+        echo '<table class="form-table blc-settings-table" role="presentation">';
+        do_settings_fields($page, $section_id);
+        echo '</table>';
+    }
+
+    echo '</section>';
+}
+
+/**
+ * Attempt to reschedule the automatic link scan event and return a structured payload.
+ *
+ * @param string $context Execution context label.
+ *
+ * @return array<string, mixed>
+ */
+function blc_reschedule_link_scan_event($context = 'dashboard') {
+    $result = blc_reset_link_check_schedule(
+        array(
+            'context' => $context,
+        )
+    );
+
+    $payload = array(
+        'success'  => (bool) $result['success'],
+        'warnings' => array(),
+    );
+
+    if (!$payload['success']) {
+        $payload['message'] = __("La reprogrammation de l'analyse automatique a échoué. Vérifiez la configuration de WP-Cron.", 'liens-morts-detector-jlg');
+
+        if (!empty($result['restore_attempted']) && empty($result['restored'])) {
+            $payload['warnings'][] = __("La planification précédente n'a pas pu être restaurée. Une intervention manuelle est nécessaire.", 'liens-morts-detector-jlg');
+        }
+
+        $payload['resolution_hint'] = __("Assurez-vous que WP-Cron est actif (`DISABLE_WP_CRON` à false) ou exécutez `wp cron event run blc_check_batch`.", 'liens-morts-detector-jlg');
+
+        $payload['status'] = blc_get_link_scan_status_payload();
+
+        return $payload;
+    }
+
+    $payload['message'] = __("La vérification automatique a été reprogrammée avec succès.", 'liens-morts-detector-jlg');
+
+    if (!empty($result['restore_attempted']) && !empty($result['restored'])) {
+        $payload['warnings'][] = __("La planification précédente a été restaurée automatiquement.", 'liens-morts-detector-jlg');
+    }
+
+    if (function_exists('wp_next_scheduled')) {
+        $next_scheduled = wp_next_scheduled('blc_check_batch');
+        if ($next_scheduled) {
+            $payload['next_run'] = (int) $next_scheduled;
+        }
+    }
+
+    $payload['status'] = blc_get_link_scan_status_payload();
+
+    return $payload;
+}
+
 add_action('wp_ajax_blc_start_manual_scan', 'blc_ajax_start_manual_scan');
 add_action('wp_ajax_blc_cancel_manual_scan', 'blc_ajax_cancel_manual_scan');
 add_action('wp_ajax_blc_get_scan_status', 'blc_ajax_get_scan_status');
+add_action('wp_ajax_blc_reschedule_cron', 'blc_ajax_reschedule_cron');
 add_action('wp_ajax_blc_start_manual_image_scan', 'blc_ajax_start_manual_image_scan');
 add_action('wp_ajax_blc_cancel_manual_image_scan', 'blc_ajax_cancel_manual_image_scan');
 add_action('wp_ajax_blc_get_image_scan_status', 'blc_ajax_get_image_scan_status');
@@ -2005,21 +2282,52 @@ function blc_ajax_start_manual_scan() {
     }
 
     $is_full_scan = isset($_POST['full_scan']) && (int) $_POST['full_scan'] === 1;
-    $result = blc_schedule_manual_link_scan($is_full_scan);
+    $force_cancel = isset($_POST['force_cancel']) && (int) $_POST['force_cancel'] === 1;
+    $queue_on_busy = isset($_POST['queue_on_busy']) && (int) $_POST['queue_on_busy'] === 1;
+
+    $options = array(
+        'requested_by'    => function_exists('get_current_user_id') ? get_current_user_id() : 0,
+        'enqueue_context' => 'manual_dashboard_ajax',
+    );
+
+    $result = blc_schedule_manual_link_scan($is_full_scan, $force_cancel, $queue_on_busy, $options);
 
     if (!$result['success']) {
-        wp_send_json_error(
-            array(
-                'message' => $result['message'],
-                'status'  => blc_get_link_scan_status_payload(),
-            ),
-            500
+        $error_data = array(
+            'message' => $result['message'],
+            'status'  => blc_get_link_scan_status_payload(),
         );
+
+        if (isset($result['queue_length'])) {
+            $error_data['queue_length'] = (int) $result['queue_length'];
+        }
+
+        if (!empty($result['requires_confirmation'])) {
+            $error_data['requires_confirmation'] = true;
+            if (!empty($result['current_state'])) {
+                $error_data['current_state'] = $result['current_state'];
+            }
+            if (!empty($result['resolution_hint'])) {
+                $error_data['resolution_hint'] = $result['resolution_hint'];
+            }
+            if (!empty($result['queue_available'])) {
+                $error_data['queue_available'] = true;
+            }
+            wp_send_json_error($error_data, 409);
+        }
+
+        if (!empty($result['resolution_hint'])) {
+            $error_data['resolution_hint'] = $result['resolution_hint'];
+        }
+
+        wp_send_json_error($error_data, 500);
     }
+
+    $status_payload = blc_get_link_scan_status_payload();
 
     $response = array(
         'message'               => $result['message'],
-        'status'                => blc_get_link_scan_status_payload(),
+        'status'                => $status_payload,
         'manual_trigger_failed' => !empty($result['manual_trigger_failed']),
     );
 
@@ -2027,7 +2335,49 @@ function blc_ajax_start_manual_scan() {
         $response['warning'] = __("Le déclenchement immédiat du cron a échoué. Le système WordPress essaiera de l'exécuter automatiquement.", 'liens-morts-detector-jlg');
     }
 
+    if (!empty($result['queued'])) {
+        $response['queued'] = true;
+    }
+
+    if (isset($result['queue_length'])) {
+        $response['queue_length'] = (int) $result['queue_length'];
+    }
+
+    if (!empty($result['queue_entry'])) {
+        $response['queue_entry'] = $result['queue_entry'];
+    }
+
+    if (!empty($result['queue_cleared'])) {
+        $response['queue_cleared'] = true;
+    }
+
     wp_send_json_success($response);
+}
+
+/**
+ * AJAX handler to reschedule the automatic link scan event.
+ *
+ * @return void
+ */
+function blc_ajax_reschedule_cron() {
+    check_ajax_referer('blc_reschedule_cron_nonce');
+
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(
+            array(
+                'message' => __('Permissions insuffisantes pour reprogrammer la vérification automatique.', 'liens-morts-detector-jlg'),
+            ),
+            defined('BLC_HTTP_FORBIDDEN') ? (int) BLC_HTTP_FORBIDDEN : 403
+        );
+    }
+
+    $payload = blc_reschedule_link_scan_event('dashboard_ajax');
+
+    if (!$payload['success']) {
+        wp_send_json_error($payload, 500);
+    }
+
+    wp_send_json_success($payload);
 }
 
 /**
