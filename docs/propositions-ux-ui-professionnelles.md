@@ -105,3 +105,23 @@
   5. **Support tablette** :
      - Layout en split-view : liste des liens à gauche, détail/modale à droite, pour réduire les allers-retours.
      - Adaptation des tailles de tap targets (>48 px) et espacement suffisant pour l’usage tactile.
+
+## 6. Mode simple vs mode expert pour les réglages
+- **Constat** : le formulaire de configuration affiche simultanément les sections essentielles et avancées, avec un seul flux de saisie qui expose immédiatement les paramètres techniques (timeouts, heuristiques, webhooks), même pour les utilisateurs qui n’ont besoin que des réglages de base.【F:liens-morts-detector-jlg/includes/blc-admin-pages.php†L2669-L2999】【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L27-L498】 Les solutions professionnelles segmentent souvent la configuration en un mode « Essentiel » très guidé et un mode « Expert » riche en options.
+- **Inspiration pro** : plateformes comme Screaming Frog ou ContentKing proposent un premier écran simplifié, des explications pédagogiques et un basculement clair vers les options avancées, assorti d’un résumé des conséquences.
+- **Améliorations détaillées** :
+  1. **Toggle persistant** :
+     - Ajout d’un switch « Mode expert » au-dessus du formulaire qui masque par défaut les sections avancées et n’affiche que les réglages critiques (fréquence, notifications, préférences d’accessibilité).
+     - Stockage du choix par utilisateur (`user_meta`) pour conserver le mode sélectionné sur l’ensemble de l’admin.
+  2. **Checklist en mode simple** :
+     - Présenter trois cartes récapitulatives (« Planifier les scans », « Recevoir des alertes », « Adapter l’interface ») contenant chacune 1 à 3 options maximum.
+     - Inclure des messages ARIA et `wp.a11y.speak` lors de l’activation pour renforcer l’accessibilité et guider les profils non techniques.【F:liens-morts-detector-jlg/assets/js/blc-admin-scripts.js†L6-L220】
+  3. **Regroupement thématique en mode expert** :
+     - Réorganiser les tabs actuels en blocs orientés objectifs (« Performance & quotas », « Fiabilité réseau », « Intégrations & webhooks », « Automatisation »), chacun avec un résumé en tête et un CTA contextuel.
+     - Ajouter une barre latérale d’ancrage permettant de naviguer rapidement entre les sections, inspirée des consoles professionnelles.
+  4. **Prévisualisation des impacts** :
+     - Afficher un panneau droit « Conséquences » qui récapitule en temps réel les paramètres modifiés (ex. « Timeout HTTP : 5 s → 10 s », « Webhooks actifs : 2 canaux ») et signale les risques éventuels.
+     - En mode expert, proposer un bouton « Générer un profil partageable » qui exporte la configuration courante (JSON ou preset) pour reproduire l’environnement sur d’autres sites.
+  5. **Guides et fiabilité** :
+     - Intégrer des messages de diagnostic issus de la file d’analyse et du client HTTP (taux d’erreurs récentes, temps moyen de réponse) pour rendre tangible la fiabilité de la plateforme, à l’image des dashboards pro.【F:liens-morts-detector-jlg/includes/Scanner/ScanQueue.php†L600-L799】【F:liens-morts-detector-jlg/includes/Scanner/RemoteRequestClient.php†L37-L166】
+     - Ajouter un bouton « Tester la configuration » qui exécute une requête de validation légère et présente les résultats dans un toast accessible (icônes, contraste, lecture vocale).
