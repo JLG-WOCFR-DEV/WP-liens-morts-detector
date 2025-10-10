@@ -508,6 +508,35 @@ if (!function_exists('blc_record_report_export_result')) {
         $stored[$dataset_type] = $entry;
 
         update_option('blc_report_export_status', $stored, false);
+
+        if ($skipped) {
+            if (function_exists('do_action')) {
+                /**
+                 * Fires when an automated report export was skipped.
+                 *
+                 * @since 1.0.0
+                 *
+                 * @param string              $dataset_type Dataset identifier.
+                 * @param array<string,mixed> $status       Latest scan status data.
+                 */
+                do_action('blc_report_export_skipped', $dataset_type, $status);
+            }
+
+            return;
+        }
+
+        if (is_array($metadata) && function_exists('do_action')) {
+            /**
+             * Fires after an automated report export has been generated.
+             *
+             * @since 1.0.0
+             *
+             * @param string                    $dataset_type Dataset identifier.
+             * @param array<string,mixed>       $metadata     Export metadata (file path, row count, checksum…).
+             * @param array<string,mixed>       $status       Latest scan status data.
+             */
+            do_action('blc_report_export_generated', $dataset_type, $metadata, $status);
+        }
     }
 }
 
