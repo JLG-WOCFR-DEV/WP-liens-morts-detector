@@ -133,6 +133,52 @@ class BlcWebhookNotificationsTest extends TestCase
         $this->assertStringContainsString('occurrences : 5', $payload['sections'][1]['text']);
     }
 
+    public function test_build_mattermost_payload_includes_attachments_and_actions(): void
+    {
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-notification-payloads.php';
+
+        $summary = array(
+            'subject'        => 'Synthèse scan liens',
+            'site_name'      => 'Site Mattermost',
+            'dataset_label'  => 'Analyse globale',
+            'dataset_type'   => 'link',
+            'broken_count'   => 12,
+            'report_url'     => 'https://example.test/report.csv',
+            'difference'     => 4,
+            'previous_count' => 8,
+            'status_filters' => array('status_404_410'),
+            'top_issues'     => array(
+                array(
+                    'url'              => 'https://example.test/500',
+                    'http_status'      => 500,
+                    'occurrence_count' => 6,
+                    'post_title'       => 'Page 500',
+                ),
+            ),
+        );
+
+        $payload = blc_build_notification_webhook_payload('mattermost', 'fallback message', $summary);
+
+        $this->assertArrayHasKey('attachments', $payload);
+        $this->assertNotEmpty($payload['attachments']);
+
+        $attachment = $payload['attachments'][0];
+        $this->assertSame('fallback message', $attachment['fallback']);
+        $this->assertArrayHasKey('fields', $attachment);
+        $this->assertGreaterThanOrEqual(4, count($attachment['fields']));
+
+        $field_titles = array_column($attachment['fields'], 'title');
+        $this->assertContains(__('Éléments cassés', 'liens-morts-detector-jlg'), $field_titles);
+        $this->assertContains(__('Tendance', 'liens-morts-detector-jlg'), $field_titles);
+
+        $this->assertArrayHasKey('actions', $attachment);
+        $this->assertSame('button', $attachment['actions'][0]['type']);
+        $this->assertSame('https://example.test/report.csv', $attachment['actions'][0]['url']);
+
+        $this->assertStringContainsString('https://example.test/500', $attachment['text']);
+        $this->assertStringContainsString('occurrences : 6', $attachment['text']);
+    }
+
     public function test_unknown_channel_falls_back_to_generic_payload(): void
     {
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-notification-payloads.php';
