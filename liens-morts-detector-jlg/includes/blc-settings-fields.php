@@ -2920,9 +2920,10 @@ function blc_sanitize_notification_recipients_option($value) {
 function blc_get_notification_webhook_channel_choices() {
     return array(
         'disabled' => __('Désactivé', 'liens-morts-detector-jlg'),
-        'generic'  => __('Webhook générique (JSON)', 'liens-morts-detector-jlg'),
-        'slack'    => __('Slack', 'liens-morts-detector-jlg'),
-        'teams'    => __('Microsoft Teams', 'liens-morts-detector-jlg'),
+        'generic'    => __('Webhook générique (JSON)', 'liens-morts-detector-jlg'),
+        'slack'      => __('Slack', 'liens-morts-detector-jlg'),
+        'teams'      => __('Microsoft Teams', 'liens-morts-detector-jlg'),
+        'mattermost' => __('Mattermost', 'liens-morts-detector-jlg'),
     );
 }
 

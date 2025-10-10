@@ -22,6 +22,8 @@ function blc_build_notification_webhook_payload($channel, $message, array $summa
             return blc_build_slack_notification_payload($message, $summary, $settings);
         case 'teams':
             return blc_build_teams_notification_payload($message, $summary, $settings);
+        case 'mattermost':
+            return blc_build_mattermost_notification_payload($message, $summary, $settings);
         case 'generic':
         default:
             return blc_build_generic_notification_payload($message, $summary);
@@ -340,6 +342,135 @@ function blc_build_teams_notification_payload($message, array $summary, array $s
         'text'            => $message,
         'sections'        => $sections,
         'potentialAction' => $actions,
+    );
+}
+
+/**
+ * Build an attachment based payload for Mattermost.
+ *
+ * Mattermost est compatible avec le format Slack des pièces jointes. On
+ * capitalise sur ce support pour proposer un rendu riche sans multiplier les
+ * formats de sortie tout en conservant une structure adaptée au canal.
+ *
+ * @param string               $message  Summary message used as fallback text.
+ * @param array<string, mixed> $summary  Structured summary metadata.
+ * @param array<string, mixed> $settings Webhook settings.
+ *
+ * @return array<string, mixed>
+ */
+function blc_build_mattermost_notification_payload($message, array $summary, array $settings = array()) {
+    $subject       = isset($summary['subject']) ? blc_trim_slack_plain_text((string) $summary['subject']) : '';
+    $site_name     = isset($summary['site_name']) ? blc_trim_slack_plain_text((string) $summary['site_name']) : '';
+    $dataset_label = isset($summary['dataset_label']) ? blc_trim_slack_plain_text((string) $summary['dataset_label']) : '';
+    $dataset_type  = isset($summary['dataset_type']) ? (string) $summary['dataset_type'] : '';
+    $broken_count  = isset($summary['broken_count']) ? (int) $summary['broken_count'] : 0;
+    $report_url    = isset($summary['report_url']) ? (string) $summary['report_url'] : '';
+    $difference    = array_key_exists('difference', $summary) ? $summary['difference'] : null;
+    $previous      = array_key_exists('previous_count', $summary) ? $summary['previous_count'] : null;
+    $top_issues    = isset($summary['top_issues']) && is_array($summary['top_issues']) ? $summary['top_issues'] : array();
+    $filters       = isset($summary['status_filters']) && is_array($summary['status_filters']) ? $summary['status_filters'] : array();
+    $filter_labels = blc_translate_notification_status_filters($filters);
+
+    if ($dataset_label === '' && $dataset_type !== '') {
+        $dataset_label = $dataset_type;
+    }
+
+    $trend_label = blc_format_notification_trend($difference, $previous);
+
+    $fields = array(
+        array(
+            'short' => true,
+            'title' => __('Site', 'liens-morts-detector-jlg'),
+            'value' => $site_name !== '' ? blc_escape_slack_text($site_name) : __('Inconnu', 'liens-morts-detector-jlg'),
+        ),
+        array(
+            'short' => true,
+            'title' => __('Analyse', 'liens-morts-detector-jlg'),
+            'value' => $dataset_label !== '' ? blc_escape_slack_text($dataset_label) : __('N/A', 'liens-morts-detector-jlg'),
+        ),
+        array(
+            'short' => true,
+            'title' => __('Éléments cassés', 'liens-morts-detector-jlg'),
+            'value' => blc_escape_slack_text((string) $broken_count),
+        ),
+        array(
+            'short' => true,
+            'title' => __('Tendance', 'liens-morts-detector-jlg'),
+            'value' => blc_escape_slack_text($trend_label),
+        ),
+    );
+
+    if ($filter_labels !== array()) {
+        $fields[] = array(
+            'short' => false,
+            'title' => __('Filtres actifs', 'liens-morts-detector-jlg'),
+            'value' => blc_escape_slack_text(implode(' • ', $filter_labels)),
+        );
+    }
+
+    $issue_lines = array();
+    if ($top_issues !== array()) {
+        foreach ($top_issues as $issue) {
+            if (!is_array($issue)) {
+                continue;
+            }
+
+            $url         = isset($issue['url']) ? (string) $issue['url'] : '';
+            $http_status = isset($issue['http_status']) ? $issue['http_status'] : null;
+            $occurrences = isset($issue['occurrence_count']) ? (int) $issue['occurrence_count'] : null;
+            $title       = isset($issue['post_title']) ? (string) $issue['post_title'] : '';
+
+            $details = array();
+            if ($http_status !== null && $http_status !== '') {
+                $details[] = sprintf(__('statut : %s', 'liens-morts-detector-jlg'), $http_status);
+            }
+            if ($occurrences !== null) {
+                $details[] = sprintf(__('occurrences : %d', 'liens-morts-detector-jlg'), $occurrences);
+            }
+            if ($title !== '') {
+                $details[] = sprintf(__('contenu : %s', 'liens-morts-detector-jlg'), blc_escape_slack_text($title));
+            }
+
+            $issue_label = $url !== ''
+                ? sprintf('<%1$s|%1$s>', blc_escape_slack_url($url))
+                : __('URL inconnue', 'liens-morts-detector-jlg');
+
+            $issue_lines[] = sprintf('• %s — %s', $issue_label, blc_escape_slack_text(implode(' — ', $details)));
+        }
+    }
+
+    $color = $broken_count > 0 ? '#D0382D' : '#2E8540';
+    $title = $subject !== '' ? $subject : __('Résumé de scan Liens Morts Detector', 'liens-morts-detector-jlg');
+
+    $attachment = array(
+        'fallback'   => $message,
+        'color'      => $color,
+        'title'      => $title,
+        'text'       => $message,
+        'fields'     => $fields,
+        'mrkdwn_in'  => array('text', 'fields'),
+    );
+
+    if ($issue_lines !== array()) {
+        $attachment['text'] .= sprintf("\n\n*%s*\n%s",
+            __('Problèmes principaux', 'liens-morts-detector-jlg'),
+            implode("\n", $issue_lines)
+        );
+    }
+
+    if ($report_url !== '') {
+        $attachment['actions'] = array(
+            array(
+                'name' => __('Ouvrir le rapport', 'liens-morts-detector-jlg'),
+                'type' => 'button',
+                'url'  => $report_url,
+            ),
+        );
+    }
+
+    return array(
+        'text'        => $message,
+        'attachments' => array($attachment),
     );
 }
 
