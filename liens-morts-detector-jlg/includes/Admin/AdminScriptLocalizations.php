@@ -199,6 +199,44 @@ class AdminScriptLocalizations
                 'supportCopySuccess' => __('Commande copiée dans le presse-papiers.', 'liens-morts-detector-jlg'),
                 'supportCopyError'   => __('Impossible de copier la commande. Copiez-la manuellement.', 'liens-morts-detector-jlg'),
                 'logEmpty'           => __('Aucun incident récent à signaler.', 'liens-morts-detector-jlg'),
+                'summary'            => array(
+                    'lastActivityRelative'   => __('Actualisé : %s', 'liens-morts-detector-jlg'),
+                    'lastActivityJustNow'    => __('Actualisé à l’instant', 'liens-morts-detector-jlg'),
+                    'lastActivityUnknown'    => __('Dernière actualisation inconnue', 'liens-morts-detector-jlg'),
+                    'queueSingle'            => __('%s analyse en file', 'liens-morts-detector-jlg'),
+                    'queuePlural'            => __('%s analyses en file', 'liens-morts-detector-jlg'),
+                    'progressWithTotal'      => __('%1$s sur %2$s URL analysées', 'liens-morts-detector-jlg'),
+                    'progressWithoutTotal'   => __('%s URL analysées', 'liens-morts-detector-jlg'),
+                    'progressIdle'           => __('Analyse en attente de démarrage.', 'liens-morts-detector-jlg'),
+                    'throughputValue'        => __('%s URL/min', 'liens-morts-detector-jlg'),
+                    'throughputUnavailable'  => __('Débit en attente de calcul', 'liens-morts-detector-jlg'),
+                    'durationLabel'          => __('Durée écoulée : %s', 'liens-morts-detector-jlg'),
+                    'durationUnavailable'    => __('Durée écoulée : en attente de calcul.', 'liens-morts-detector-jlg'),
+                    'placeholder'            => __('—', 'liens-morts-detector-jlg'),
+                    'relativePast'           => __('il y a %s', 'liens-morts-detector-jlg'),
+                    'relativeFuture'         => __('dans %s', 'liens-morts-detector-jlg'),
+                    'relativeJustNow'        => __('à l’instant', 'liens-morts-detector-jlg'),
+                    'relativeSoon'           => __('dans un instant', 'liens-morts-detector-jlg'),
+                    'stateDetailsFallback'   => __('Suivi en attente de données.', 'liens-morts-detector-jlg'),
+                    'units'                  => array(
+                        'second' => array(
+                            'singular' => __('%s seconde', 'liens-morts-detector-jlg'),
+                            'plural'   => __('%s secondes', 'liens-morts-detector-jlg'),
+                        ),
+                        'minute' => array(
+                            'singular' => __('%s minute', 'liens-morts-detector-jlg'),
+                            'plural'   => __('%s minutes', 'liens-morts-detector-jlg'),
+                        ),
+                        'hour' => array(
+                            'singular' => __('%s heure', 'liens-morts-detector-jlg'),
+                            'plural'   => __('%s heures', 'liens-morts-detector-jlg'),
+                        ),
+                        'day' => array(
+                            'singular' => __('%s jour', 'liens-morts-detector-jlg'),
+                            'plural'   => __('%s jours', 'liens-morts-detector-jlg'),
+                        ),
+                    ),
+                ),
             ),
         );
     }

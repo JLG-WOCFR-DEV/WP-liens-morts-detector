@@ -198,6 +198,156 @@
     }
 }
 
+.blc-dashboard-summary {
+    margin-bottom: 24px;
+}
+
+.blc-dashboard-summary__header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px 16px;
+    margin-bottom: 18px;
+}
+
+.blc-dashboard-summary__title {
+    margin: 0;
+    font-size: 1.35rem;
+    letter-spacing: -0.01em;
+}
+
+.blc-dashboard-summary__subtitle {
+    margin: 0;
+    font-size: 0.95rem;
+    color: var(--blc-admin-text-subtle);
+}
+
+.blc-dashboard-summary__grid {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 18px;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.blc-dashboard-summary__item {
+    position: relative;
+    border: 1px solid var(--blc-admin-border-subtle);
+    border-radius: var(--blc-admin-radius-md);
+    padding: 18px 20px;
+    background: var(--blc-admin-surface-subtle);
+    box-shadow: 0 14px 32px -24px rgba(15, 23, 42, 0.42);
+    transition:
+        box-shadow var(--blc-admin-transition),
+        transform var(--blc-admin-transition),
+        border-color var(--blc-admin-transition),
+        background var(--blc-admin-transition);
+    min-height: 150px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.blc-dashboard-summary__item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 20px 40px -28px rgba(15, 23, 42, 0.45);
+}
+
+.blc-dashboard-summary__label {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    color: var(--blc-admin-text-subtle);
+}
+
+.blc-dashboard-summary__value {
+    font-size: 1.85rem;
+    line-height: 1.1;
+    font-weight: 700;
+    color: var(--blc-admin-text);
+}
+
+.blc-dashboard-summary__description {
+    margin: 0;
+    font-size: 0.98rem;
+    line-height: 1.5;
+    color: var(--blc-admin-text-subtle);
+    flex-grow: 1;
+}
+
+.blc-dashboard-summary__item--success {
+    background: var(--blc-admin-success-bg);
+    border-color: color-mix(in srgb, var(--blc-admin-success-text) 40%, transparent);
+}
+
+.blc-dashboard-summary__item--success .blc-dashboard-summary__value,
+.blc-dashboard-summary__item--success .blc-dashboard-summary__label,
+.blc-dashboard-summary__item--success .blc-dashboard-summary__description {
+    color: var(--blc-admin-success-text);
+}
+
+.blc-dashboard-summary__item--info {
+    background: var(--blc-admin-info-bg);
+    border-color: color-mix(in srgb, var(--blc-admin-info-text) 35%, transparent);
+}
+
+.blc-dashboard-summary__item--info .blc-dashboard-summary__value,
+.blc-dashboard-summary__item--info .blc-dashboard-summary__label,
+.blc-dashboard-summary__item--info .blc-dashboard-summary__description {
+    color: var(--blc-admin-info-text);
+}
+
+.blc-dashboard-summary__item--warning {
+    background: var(--blc-admin-warning-bg);
+    border-color: color-mix(in srgb, var(--blc-admin-warning-text) 35%, transparent);
+}
+
+.blc-dashboard-summary__item--warning .blc-dashboard-summary__value,
+.blc-dashboard-summary__item--warning .blc-dashboard-summary__label,
+.blc-dashboard-summary__item--warning .blc-dashboard-summary__description {
+    color: var(--blc-admin-warning-text);
+}
+
+.blc-dashboard-summary__item--danger {
+    background: var(--blc-admin-danger-bg);
+    border-color: color-mix(in srgb, var(--blc-admin-danger-text) 35%, transparent);
+}
+
+.blc-dashboard-summary__item--danger .blc-dashboard-summary__value,
+.blc-dashboard-summary__item--danger .blc-dashboard-summary__label,
+.blc-dashboard-summary__item--danger .blc-dashboard-summary__description {
+    color: var(--blc-admin-danger-text);
+}
+
+.blc-dashboard-summary__item--neutral {
+    background: var(--blc-admin-surface-subtle);
+    border-color: var(--blc-admin-border-subtle);
+}
+
+.blc-dashboard-summary__item--neutral .blc-dashboard-summary__label,
+.blc-dashboard-summary__item--neutral .blc-dashboard-summary__description {
+    color: var(--blc-admin-text-subtle);
+}
+
+@media (max-width: 782px) {
+    .blc-dashboard-summary__header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .blc-dashboard-summary__title {
+        font-size: 1.25rem;
+    }
+
+    .blc-dashboard-summary__grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* Amélioration de la lisibilité des descriptions dans les formulaires */
 .blc-admin-tabs {
     margin: 0 0 24px;

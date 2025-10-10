@@ -316,6 +316,109 @@ class LinkScanStatusTest extends TestCase
         $this->assertFalse($this->options['blc_image_scan_status']['is_full_scan']);
     }
 
+    public function test_update_image_scan_status_records_transition_log(): void
+    {
+        $now = 100;
+        Functions\when('time')->alias(static function () use (&$now) {
+            return $now;
+        });
+
+        \blc_update_image_scan_status([
+            'state'    => 'queued',
+            'job_id'   => 'img-job',
+            'attempt'  => 1,
+        ]);
+
+        $now = 140;
+
+        $status = \blc_update_image_scan_status([
+            'state' => 'running',
+        ]);
+
+        $this->assertSame('running', $status['state']);
+
+        $log = \blc_get_image_scan_transition_log();
+        $this->assertNotEmpty($log);
+        $entry = $log[0];
+
+        $this->assertTrue($entry['valid']);
+        $this->assertSame('queued', $entry['from']);
+        $this->assertSame('running', $entry['to']);
+        $this->assertSame('img-job', $entry['job_id']);
+        $this->assertSame(140, $entry['timestamp']);
+    }
+
+    public function test_update_image_scan_status_rejects_invalid_transition(): void
+    {
+        $now = 50;
+        Functions\when('time')->alias(static function () use (&$now) {
+            return $now;
+        });
+
+        \blc_update_image_scan_status([
+            'state'  => 'running',
+            'job_id' => 'img-123',
+        ]);
+
+        $now = 90;
+        \blc_update_image_scan_status([
+            'state' => 'failed',
+        ]);
+
+        $now = 120;
+        $status = \blc_update_image_scan_status([
+            'state' => 'running',
+        ]);
+
+        $this->assertSame('failed', $status['state']);
+        $this->assertStringContainsString('Transition d\'état invalide', $status['last_error']);
+
+        $log = \blc_get_image_scan_transition_log();
+        $this->assertNotEmpty($log);
+        $entry = $log[0];
+
+        $this->assertFalse($entry['valid']);
+        $this->assertSame('failed', $entry['from']);
+        $this->assertSame('running', $entry['to']);
+        $this->assertSame('img-123', $entry['job_id']);
+        $this->assertSame(120, $entry['timestamp']);
+    }
+
+    public function test_update_image_scan_status_updates_history_entry(): void
+    {
+        $now = 200;
+        Functions\when('time')->alias(static function () use (&$now) {
+            return $now;
+        });
+
+        \blc_append_image_scan_history_entry([
+            'job_id' => 'img-queue',
+            'state'  => 'queued',
+        ]);
+
+        $now = 240;
+        $status = \blc_update_image_scan_status([
+            'state'           => 'running',
+            'job_id'          => 'img-queue',
+            'attempt'         => 3,
+            'processed_items' => 5,
+            'total_items'     => 10,
+        ]);
+
+        $this->assertSame('running', $status['state']);
+
+        $history = \blc_get_image_scan_history();
+        $this->assertNotEmpty($history);
+        $entry = $history[0];
+
+        $this->assertSame('img-queue', $entry['job_id']);
+        $this->assertSame('running', $entry['state']);
+        $this->assertSame(3, $entry['attempt']);
+        $this->assertSame(5, $entry['processed_items']);
+        $this->assertSame(10, $entry['total_items']);
+        $this->assertSame($status['updated_at'], $entry['updated_at']);
+    }
+
     public function test_get_link_scan_status_payload_includes_metrics(): void
     {
         $now = 200;
