@@ -35,13 +35,34 @@
 - **Alerting avancé à construire** : aucun seuil dynamique ou canal dédié (Slack, PagerDuty) n’est branché sur les métriques pour escalader automatiquement en cas de dégradation prolongée.【F:liens-morts-detector-jlg/includes/blc-scanner.php†L3214-L3250】
 
 ## Pistes d'amélioration prioritaires
-1. **Surface l’historique dans l’admin** : créer un écran dédié (tableau, exports) exploitant les options `blc_link_scan_history` et `blc_link_scan_metrics_history` pour un suivi sans accès base.【F:liens-morts-detector-jlg/includes/blc-scanner.php†L25-L148】【F:liens-morts-detector-jlg/includes/blc-scanner.php†L297-L307】
-2. **Envisager une file distribuée** : permettre le pilotage via une queue externe (Redis, SQS) ou des workers multiples pour absorber de gros catalogues multi-sites au-delà de WP‑Cron.【F:liens-morts-detector-jlg/includes/blc-admin-pages.php†L149-L236】【F:liens-morts-detector-jlg/includes/Scanner/ScanQueue.php†L63-L120】【F:liens-morts-detector-jlg/includes/blc-cron.php†L496-L630】
-3. **Ajouter la gestion de proxys** : exposer un pool d’adresses IP/proxys rotatifs configurable afin de contourner les limitations par origine sur certaines cibles.【F:liens-morts-detector-jlg/includes/Scanner/RemoteRequestClient.php†L24-L118】【F:liens-morts-detector-jlg/includes/Scanner/RemoteRequestClient.php†L150-L190】
-4. **Brancher un alerting temps-réel** : connecter les métriques (`do_action('blc_link_scan_metrics')`) à des intégrations Slack/PagerDuty avec seuils dynamiques pour prévenir automatiquement les incidents prolongés.【F:liens-morts-detector-jlg/includes/blc-scanner.php†L3558-L3565】
-5. **Tracer les actions éditoriales** : capitaliser sur les capacités `blc_view_reports`/`blc_fix_links` pour suivre les corrections (logs, exports) et offrir des niveaux de validation multiples sans retomber sur `manage_options`。【F:liens-morts-detector-jlg/includes/blc-capabilities.php†L9-L113】【F:liens-morts-detector-jlg/includes/class-blc-links-list-table.php†L1864-L2122】
-6. **Publier des presets de configuration** : exposer des profils de scan (hébergement partagé, e-commerce, intranet) et des politiques de notifications multi-canaux pour réduire le temps d'onboarding face aux solutions packagées.【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L27-L520】
-7. **Outiller la validation continue** : compléter la suite de tests actuelle par des parcours bout-en-bout (UI + REST) exécutés en CI et communiquer les rapports de stabilité aux clients premium.【F:tests/BlcManualScanSchedulingTest.php†L150-L224】【F:tests/BlcDashboardLinksPageTest.php†L200-L340】
+1. **Duo « Mode simple / Mode expert » centré sur la fiabilité perçue** :
+   - **Objectif** : sécuriser la prise en main des profils non techniques tout en offrant aux administrateurs une profondeur de réglage équivalente aux consoles pro.
+   - **Livrables** : switch persistant (stocké dans `user_meta`) avec notices vocales, restructuration du formulaire en trois cartes « essentiels » en mode simple, sections repliables « Performance », « Réseau » et « Automatisation » en mode expert, bandeau de santé synthétisant dernier scan, incidents réseau et statut de file.【F:liens-morts-detector-jlg/includes/blc-admin-pages.php†L2669-L2999】【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L27-L520】【F:liens-morts-detector-jlg/includes/Scanner/ScanQueue.php†L600-L799】
+   - **Indicateurs** : taux de configuration terminée en moins de 5 minutes, baisse des abandons lors de la première visite des réglages, note de confiance perçue dans les tests utilisateurs.
+2. **Surface l’historique et les diagnostics dans l’admin** :
+   - **Objectif** : apporter une observabilité native en alignement avec les dashboards pro.
+   - **Livrables** : écran « Supervision » affichant timeline de scans, KPI de réussite, exports CSV/JSON, panneau de tests rapides exécutant un ping réseau et reportant latence/erreurs dans une notification accessible.【F:liens-morts-detector-jlg/includes/blc-scanner.php†L25-L148】【F:liens-morts-detector-jlg/includes/blc-scanner.php†L297-L307】【F:liens-morts-detector-jlg/includes/blc-scanner.php†L3558-L3565】
+   - **Indicateurs** : temps moyen de diagnostic réduit, adoption des exports, diminution des tickets support sur la planification.
+3. **Envisager une file distribuée** :
+   - **Objectif** : rendre le moteur extensible aux volumes gérés par les plateformes SaaS.
+   - **Livrables** : connecteur queue externe (Redis/SQS) configurable depuis l’UI, workers parallèles basés sur `ScanQueue`, documentation d’intégration DevOps, stratégie de fallback automatique vers WP‑Cron en cas d’incident.【F:liens-morts-detector-jlg/includes/blc-admin-pages.php†L149-L236】【F:liens-morts-detector-jlg/includes/Scanner/ScanQueue.php†L63-L120】【F:liens-morts-detector-jlg/includes/blc-cron.php†L496-L630】
+   - **Indicateurs** : volume de liens traités/heure, stabilité des scans massifs, taux de reprise après incident.
+4. **Durcir la couche réseau** :
+   - **Objectif** : égaler la résilience multi-régions des solutions professionnelles.
+   - **Livrables** : gestion de pools de proxys chiffrés, routage géographique, stratégie d’escalade (retry HEAD → GET → proxy alternatif), journalisation détaillée des erreurs réseau exposée dans la supervision.【F:liens-morts-detector-jlg/includes/Scanner/RemoteRequestClient.php†L24-L118】【F:liens-morts-detector-jlg/includes/Scanner/RemoteRequestClient.php†L150-L190】
+   - **Indicateurs** : réduction des faux positifs réseau, pourcentage de scans réussis lors de pics de blocage.
+5. **Tracer les actions éditoriales et collaboratives** :
+   - **Objectif** : approcher les workflows multi-profils proposés par les agences.
+   - **Livrables** : journal des actions (assignations, corrections, ignorés) stocké dans une table dédiée, exports filtrables, notifications ciblées et permissions affinées via `blc_view_reports`, `blc_fix_links` et nouvelles capacités d’assignation.【F:liens-morts-detector-jlg/includes/blc-capabilities.php†L9-L113】【F:liens-morts-detector-jlg/includes/class-blc-links-list-table.php†L1864-L2122】
+   - **Indicateurs** : temps de résolution moyen, nombre de liens assignés, satisfaction des équipes éditoriales.
+6. **Publier des presets de configuration** :
+   - **Objectif** : raccourcir l’onboarding et harmoniser les bonnes pratiques.
+   - **Livrables** : profils pré-configurés (hébergement partagé, e-commerce, intranet) appliquant automatiquement fréquence, timeouts et notifications, documentation contextualisée et wizard de sélection initiale.【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L27-L520】
+   - **Indicateurs** : taux d’utilisation des presets, réduction des erreurs de configuration, satisfaction lors des tests d’accueil.
+7. **Outiller la validation continue** :
+   - **Objectif** : fournir un niveau d’assurance qualité comparable aux éditeurs pro.
+   - **Livrables** : scénarios e2e Playwright/Cypress couvrant UI + REST, pipeline CI avec rapports de couverture, publication d’un score de stabilité accessible aux clients premium.【F:tests/BlcManualScanSchedulingTest.php†L150-L224】【F:tests/BlcDashboardLinksPageTest.php†L200-L340】
+   - **Indicateurs** : couverture de tests mesurée, nombre de régressions détectées avant release, temps moyen de correction.
 
 ## Stratégie d'alignement progressif sur les standards pro
 
