@@ -33,7 +33,7 @@ class BLC_Scan_CLI_Command extends WP_CLI_Command
     public function links($args, $assoc_args)
     {
         $is_full_scan = (bool) \WP_CLI\Utils\get_flag_value($assoc_args, 'full', false);
-        $bypass_rest_window = (bool) \WP_CLI\Utils\get_flag_value($assoc_args, 'bypass-rest-window', true);
+        $bypass_rest_window = (bool) \WP_CLI\Utils\get_flag_value($assoc_args, 'bypass-rest-window', false);
 
         $this->run_link_scan($is_full_scan, $bypass_rest_window);
     }
@@ -157,7 +157,14 @@ class BLC_Scan_CLI_Command extends WP_CLI_Command
                 return $pre;
             }
 
-            $scheduled_events[] = $event;
+            $timestamp = isset($event['timestamp']) ? (int) $event['timestamp'] : time();
+            $args = isset($event['args']) && is_array($event['args']) ? $event['args'] : [];
+
+            $scheduled_events[] = [
+                'hook'      => (string) $event['hook'],
+                'timestamp' => $timestamp,
+                'args'      => $args,
+            ];
 
             return true;
         };
@@ -200,25 +207,55 @@ class BLC_Scan_CLI_Command extends WP_CLI_Command
                     break;
                 }
 
+                $handoff_events = [];
+
                 foreach ($scheduled_events as $event) {
-                    $event_args = isset($event['args']) && is_array($event['args']) ? $event['args'] : [];
-                    $queue[] = [
-                        'hook'  => (string) $event['hook'],
-                        'args'  => $event_args,
-                        'delay' => max(0, (int) $event['timestamp'] - time()),
-                    ];
+                    $event_args = $event['args'];
+
+                    $scheduled_batch = isset($event_args[0]) ? (int) $event_args[0] : null;
+                    $current_batch = isset($task['args'][0]) ? (int) $task['args'][0] : null;
+
+                    $should_process_sync = true;
+                    if ($current_batch !== null && $scheduled_batch === $current_batch) {
+                        $should_process_sync = false;
+                    }
+
+                    if ($should_process_sync) {
+                        $queue[] = [
+                            'hook'  => $event['hook'],
+                            'args'  => $event_args,
+                            'delay' => max(0, $event['timestamp'] - time()),
+                        ];
+                        continue;
+                    }
+
+                    $handoff_events[] = $event;
                 }
 
                 $scheduled_events = [];
+
+                if ($handoff_events !== []) {
+                    foreach ($handoff_events as $event) {
+                        $timestamp = $event['timestamp'];
+                        if ($timestamp <= time()) {
+                            $timestamp = time() + 1;
+                        }
+
+                        $rescheduled = wp_schedule_single_event($timestamp, $event['hook'], $event['args']);
+                        if (false === $rescheduled) {
+                            \WP_CLI::warning(sprintf(
+                                "Impossible de reprogrammer le lot différé \"%s\". Il devra être lancé manuellement.",
+                                $event['hook']
+                            ));
+                        }
+                    }
+
+                    \WP_CLI::log("Des lots ont été différés et seront repris automatiquement par WP-Cron.");
+                    break;
+                }
             }
         } finally {
             remove_filter('pre_schedule_event', $filter, 10);
-
-            if (function_exists('wp_clear_scheduled_hook')) {
-                foreach ($allowed_hooks as $hook) {
-                    wp_clear_scheduled_hook($hook);
-                }
-            }
         }
     }
 
