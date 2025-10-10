@@ -82,18 +82,23 @@ if (!function_exists('blc_normalize_report_context')) {
      *
      * @param string               $dataset_type Dataset type.
      * @param array<string, mixed> $context      Context payload.
+     * @param array<string, mixed> $options      Normalization options.
      *
      * @return array<string, mixed>
      */
-    function blc_normalize_report_context($dataset_type, array $context)
+    function blc_normalize_report_context($dataset_type, array $context, array $options = [])
     {
+        $options = array_merge([
+            'stabilize_completed_at' => false,
+        ], $options);
+
         $now = time();
 
         $defaults = [
             'job_id'          => '',
             'started_at'      => 0,
             'ended_at'        => 0,
-            'completed_at'    => $now,
+            'completed_at'    => 0,
             'include_ignored' => false,
             'format'          => 'csv',
             'source'          => 'scan',
@@ -109,7 +114,11 @@ if (!function_exists('blc_normalize_report_context')) {
         }
 
         if ($normalized['completed_at'] === 0) {
-            $normalized['completed_at'] = $normalized['ended_at'] > 0 ? $normalized['ended_at'] : $now;
+            if (!empty($options['stabilize_completed_at'])) {
+                $normalized['completed_at'] = $normalized['ended_at'] > 0 ? $normalized['ended_at'] : 0;
+            } else {
+                $normalized['completed_at'] = $normalized['ended_at'] > 0 ? $normalized['ended_at'] : $now;
+            }
         }
 
         $normalized['include_ignored'] = !empty($normalized['include_ignored']);
@@ -146,7 +155,9 @@ if (!function_exists('blc_schedule_automated_report_generation')) {
             return false;
         }
 
-        $context = blc_normalize_report_context($normalized_type, $context);
+        $context = blc_normalize_report_context($normalized_type, $context, [
+            'stabilize_completed_at' => true,
+        ]);
 
         $delay = 30;
         if (function_exists('apply_filters')) {
