@@ -245,7 +245,28 @@ class BlcDashboardLinksPageTest extends TestCase
                 'total_batches'     => 0,
                 'remaining_batches' => 0,
                 'is_full_scan'      => false,
+                'processed_items'   => 0,
+                'total_items'       => 0,
+                'progress_percentage' => 0,
+                'items_per_minute'  => 0,
+                'duration_seconds'  => 0,
+                'manual_queue_length' => 0,
+                'last_activity_delta' => 0,
+                'updated_at'        => 0,
             ];
+        });
+        Functions\when('blc_get_link_scan_status')->alias(static function () {
+            return [
+                'state'             => 'idle',
+                'processed_batches' => 0,
+                'total_batches'     => 0,
+                'remaining_batches' => 0,
+                'processed_items'   => 0,
+                'total_items'       => 0,
+            ];
+        });
+        Functions\when('wp_create_nonce')->alias(static function ($action = '') {
+            return 'nonce-' . (string) $action;
         });
         Functions\when('blc_update_link_scan_status')->justReturn([]);
         Functions\when('blc_append_link_scan_history_entry')->justReturn(true);
@@ -639,6 +660,56 @@ class BlcDashboardLinksPageTest extends TestCase
         $this->assertStringContainsString('4xx : 7', $output);
         $this->assertStringContainsString('5xx : 3', $output);
         $this->assertStringContainsString('Autres : 1', $output);
+    }
+
+    public function test_dashboard_summary_renders_metrics(): void
+    {
+        Functions\when('blc_get_link_scan_status_payload')->alias(static function () {
+            return [
+                'state'             => 'running',
+                'message'           => '',
+                'processed_batches' => 2,
+                'total_batches'     => 5,
+                'remaining_batches' => 3,
+                'is_full_scan'      => true,
+                'processed_items'   => 120,
+                'total_items'       => 400,
+                'progress_percentage' => 30,
+                'items_per_minute'  => 42.5,
+                'duration_seconds'  => 300,
+                'manual_queue_length' => 2,
+                'last_activity_delta' => 90,
+                'updated_at'        => time() - 90,
+            ];
+        });
+
+        ob_start();
+        blc_dashboard_links_page();
+        $output = (string) ob_get_clean();
+
+        $this->assertStringContainsString('Synthèse opérationnelle', $output);
+        $this->assertStringContainsString('Analyse en cours', $output);
+        $this->assertStringContainsString("30\u{A0}%", $output);
+        $this->assertStringContainsString('43 URL/min', $output);
+
+        Functions\when('blc_get_link_scan_status_payload')->alias(static function () {
+            return [
+                'state'             => 'idle',
+                'message'           => '',
+                'processed_batches' => 0,
+                'total_batches'     => 0,
+                'remaining_batches' => 0,
+                'is_full_scan'      => false,
+                'processed_items'   => 0,
+                'total_items'       => 0,
+                'progress_percentage' => 0,
+                'items_per_minute'  => 0,
+                'duration_seconds'  => 0,
+                'manual_queue_length' => 0,
+                'last_activity_delta' => 0,
+                'updated_at'        => 0,
+            ];
+        });
     }
 
     /**

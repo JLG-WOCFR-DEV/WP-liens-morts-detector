@@ -515,6 +515,31 @@ if (!function_exists('blc_generate_link_scan_job_id')) {
     }
 }
 
+if (!function_exists('blc_generate_image_scan_job_id')) {
+    /**
+     * Generate a unique identifier for an image scan job.
+     *
+     * @return string
+     */
+    function blc_generate_image_scan_job_id() {
+        if (function_exists('blc_generate_link_scan_job_id')) {
+            return blc_generate_link_scan_job_id();
+        }
+
+        if (function_exists('wp_generate_uuid4')) {
+            return wp_generate_uuid4();
+        }
+
+        try {
+            return bin2hex(random_bytes(16));
+        } catch (\Exception $e) { // phpcs:ignore Generic.CodeAnalysis.EmptyStatement.DetectedCatch
+            // Fallback handled below.
+        }
+
+        return uniqid('blc_img_', true);
+    }
+}
+
 if (!function_exists('blc_get_link_scan_history')) {
     /**
      * Retrieve the persisted history of manual link scan jobs.
@@ -1102,7 +1127,183 @@ if (!function_exists('blc_get_default_image_scan_status')) {
             'updated_at'        => 0,
             'total_items'       => 0,
             'processed_items'   => 0,
+            'job_id'            => '',
+            'attempt'           => 0,
+            'scheduled_at'      => 0,
         ];
+    }
+}
+
+if (!function_exists('blc_get_image_scan_history')) {
+    /**
+     * Retrieve the persisted history of manual image scan jobs.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    function blc_get_image_scan_history() {
+        $history = get_option('blc_image_scan_history', []);
+
+        return is_array($history) ? $history : [];
+    }
+}
+
+if (!function_exists('blc_save_image_scan_history')) {
+    /**
+     * Persist the provided image scan history payload.
+     *
+     * @param array<int, array<string, mixed>> $history
+     *
+     * @return void
+     */
+    function blc_save_image_scan_history(array $history) {
+        update_option('blc_image_scan_history', array_values($history), false);
+    }
+}
+
+if (!function_exists('blc_append_image_scan_history_entry')) {
+    /**
+     * Add a new image scan entry to the persisted history.
+     *
+     * @param array<string, mixed> $entry
+     *
+     * @return void
+     */
+    function blc_append_image_scan_history_entry(array $entry) {
+        $history = blc_get_image_scan_history();
+        array_unshift($history, $entry);
+
+        if (count($history) > 25) {
+            $history = array_slice($history, 0, 25);
+        }
+
+        blc_save_image_scan_history($history);
+    }
+}
+
+if (!function_exists('blc_update_image_scan_history_entry')) {
+    /**
+     * Merge additional data into a stored image scan history entry.
+     *
+     * @param string               $job_id
+     * @param array<string, mixed> $changes
+     *
+     * @return void
+     */
+    function blc_update_image_scan_history_entry($job_id, array $changes) {
+        $job_id = is_string($job_id) ? trim($job_id) : '';
+        if ($job_id === '') {
+            return;
+        }
+
+        $history = blc_get_image_scan_history();
+        $updated = false;
+
+        foreach ($history as &$entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            $entry_id = isset($entry['job_id']) ? (string) $entry['job_id'] : '';
+            if ($entry_id !== $job_id) {
+                continue;
+            }
+
+            $entry = array_merge($entry, $changes);
+            $updated = true;
+            break;
+        }
+        unset($entry);
+
+        if ($updated) {
+            blc_save_image_scan_history($history);
+
+            return;
+        }
+
+        $changes['job_id'] = $job_id;
+        blc_append_image_scan_history_entry($changes);
+    }
+}
+
+if (!function_exists('blc_get_image_scan_transition_rules')) {
+    /**
+     * Describe the allowed state transitions for image scans.
+     *
+     * @return array<string, array<int, string>>
+     */
+    function blc_get_image_scan_transition_rules() {
+        return [
+            'idle'      => ['idle', 'queued', 'running', 'failed'],
+            'queued'    => ['queued', 'running', 'cancelled', 'failed', 'idle'],
+            'running'   => ['running', 'completed', 'failed', 'cancelled', 'idle'],
+            'completed' => ['completed', 'idle', 'queued'],
+            'failed'    => ['failed', 'idle', 'queued'],
+            'cancelled' => ['cancelled', 'idle', 'queued'],
+        ];
+    }
+}
+
+if (!function_exists('blc_is_valid_image_scan_transition')) {
+    /**
+     * Determine whether an image scan state transition is allowed.
+     *
+     * @param string $from
+     * @param string $to
+     *
+     * @return bool
+     */
+    function blc_is_valid_image_scan_transition($from, $to) {
+        $from = sanitize_key((string) $from);
+        $to   = sanitize_key((string) $to);
+
+        $rules = blc_get_image_scan_transition_rules();
+
+        if (!isset($rules[$from])) {
+            return false;
+        }
+
+        return in_array($to, $rules[$from], true);
+    }
+}
+
+if (!function_exists('blc_get_image_scan_transition_log')) {
+    /**
+     * Retrieve the image scan transition audit log.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    function blc_get_image_scan_transition_log() {
+        $log = get_option('blc_image_scan_transition_log', []);
+
+        return is_array($log) ? $log : [];
+    }
+}
+
+if (!function_exists('blc_record_image_scan_transition')) {
+    /**
+     * Persist an image scan transition audit entry.
+     *
+     * @param string              $job_id
+     * @param array<string,mixed> $entry
+     *
+     * @return void
+     */
+    function blc_record_image_scan_transition($job_id, array $entry) {
+        $job_id = is_string($job_id) ? trim($job_id) : '';
+        $entry['job_id'] = $job_id;
+
+        if (!isset($entry['timestamp'])) {
+            $entry['timestamp'] = time();
+        }
+
+        $log = blc_get_image_scan_transition_log();
+        array_unshift($log, $entry);
+
+        if (count($log) > 50) {
+            $log = array_slice($log, 0, 50);
+        }
+
+        update_option('blc_image_scan_transition_log', $log, false);
     }
 }
 
@@ -1161,7 +1362,7 @@ if (!function_exists('blc_get_image_scan_status')) {
         }
         $status['state'] = $state;
 
-        foreach (['current_batch', 'processed_batches', 'total_batches', 'remaining_batches', 'started_at', 'ended_at', 'updated_at', 'total_items', 'processed_items'] as $numeric_key) {
+        foreach (['current_batch', 'processed_batches', 'total_batches', 'remaining_batches', 'started_at', 'ended_at', 'updated_at', 'total_items', 'processed_items', 'attempt', 'scheduled_at'] as $numeric_key) {
             $status[$numeric_key] = isset($status[$numeric_key]) ? max(0, (int) $status[$numeric_key]) : 0;
         }
 
@@ -1170,6 +1371,7 @@ if (!function_exists('blc_get_image_scan_status')) {
             : true;
         $status['message'] = isset($status['message']) && is_string($status['message']) ? $status['message'] : '';
         $status['last_error'] = isset($status['last_error']) && is_string($status['last_error']) ? $status['last_error'] : '';
+        $status['job_id'] = isset($status['job_id']) && is_string($status['job_id']) ? trim($status['job_id']) : '';
 
         if ($status['state'] === 'completed' && $status['ended_at'] === 0 && $status['updated_at'] > 0) {
             $status['ended_at'] = $status['updated_at'];
@@ -1192,16 +1394,52 @@ if (!function_exists('blc_update_image_scan_status')) {
     function blc_update_image_scan_status(array $changes) {
         $status = blc_get_image_scan_status();
         $previous_state = $status['state'];
+        $transition_log = null;
+        $requested_state = null;
+
+        if (array_key_exists('state', $changes)) {
+            $requested_state = sanitize_key((string) $changes['state']);
+            if ($requested_state === '' || !in_array($requested_state, ['idle', 'queued', 'running', 'completed', 'failed', 'cancelled'], true)) {
+                $requested_state = 'idle';
+            }
+
+            if (!blc_is_valid_image_scan_transition($previous_state, $requested_state)) {
+                $error_message = sprintf(
+                    /* translators: 1: previous state, 2: requested state. */
+                    __('Transition d\'état invalide de « %s » vers « %s ». Réinitialisez le statut avant de relancer une analyse.', 'liens-morts-detector-jlg'),
+                    $previous_state,
+                    $requested_state
+                );
+
+                $transition_log = [
+                    'from'   => $previous_state,
+                    'to'     => $requested_state,
+                    'valid'  => false,
+                    'reason' => $error_message,
+                ];
+
+                if (!isset($changes['last_error']) || !is_string($changes['last_error']) || $changes['last_error'] === '') {
+                    $changes['last_error'] = $error_message;
+                }
+                if (!isset($changes['message']) || !is_string($changes['message']) || $changes['message'] === '') {
+                    $changes['message'] = $error_message;
+                }
+
+                unset($changes['state']);
+            } else {
+                $status['state'] = $requested_state;
+                $transition_log = [
+                    'from'  => $previous_state,
+                    'to'    => $requested_state,
+                    'valid' => true,
+                ];
+
+                unset($changes['state']);
+            }
+        }
 
         foreach ($changes as $key => $value) {
             switch ($key) {
-                case 'state':
-                    $new_state = sanitize_key((string) $value);
-                    if ($new_state === '' || !in_array($new_state, ['idle', 'queued', 'running', 'completed', 'failed', 'cancelled'], true)) {
-                        $new_state = 'idle';
-                    }
-                    $status['state'] = $new_state;
-                    break;
                 case 'message':
                     $status['message'] = is_string($value) ? $value : '';
                     break;
@@ -1217,10 +1455,15 @@ if (!function_exists('blc_update_image_scan_status')) {
                 case 'updated_at':
                 case 'total_items':
                 case 'processed_items':
+                case 'attempt':
+                case 'scheduled_at':
                     $status[$key] = max(0, (int) $value);
                     break;
                 case 'is_full_scan':
                     $status['is_full_scan'] = (bool) $value;
+                    break;
+                case 'job_id':
+                    $status['job_id'] = is_string($value) ? trim($value) : '';
                     break;
                 default:
                     $status[$key] = $value;
@@ -1252,6 +1495,30 @@ if (!function_exists('blc_update_image_scan_status')) {
         update_option('blc_image_scan_status', $status, false);
 
         blc_image_scan_status_cache($status);
+
+        if (is_array($transition_log)) {
+            $transition_log['timestamp'] = $now;
+            $transition_log['job_id']    = isset($status['job_id']) ? (string) $status['job_id'] : '';
+
+            blc_record_image_scan_transition($transition_log['job_id'], $transition_log);
+        }
+
+        if (!empty($status['job_id'])) {
+            blc_update_image_scan_history_entry($status['job_id'], [
+                'state'             => $status['state'],
+                'message'           => $status['message'],
+                'last_error'        => $status['last_error'],
+                'started_at'        => $status['started_at'],
+                'ended_at'          => $status['ended_at'],
+                'updated_at'        => $status['updated_at'],
+                'processed_batches' => $status['processed_batches'],
+                'total_batches'     => $status['total_batches'],
+                'processed_items'   => $status['processed_items'],
+                'total_items'       => $status['total_items'],
+                'attempt'           => $status['attempt'],
+                'is_full_scan'      => $status['is_full_scan'],
+            ]);
+        }
 
         return $status;
     }

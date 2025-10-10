@@ -88,10 +88,33 @@ jQuery(document).ready(function($) {
             return '';
         }
 
-        var replacement = (typeof value === 'undefined' || value === null) ? '' : String(value);
-        var result = template.replace(/%1\$s/g, replacement);
+        var replacements;
 
-        return result.replace(/%s/g, replacement);
+        if (Array.isArray(value)) {
+            replacements = value.map(function(item) {
+                return (typeof item === 'undefined' || item === null) ? '' : String(item);
+            });
+        } else {
+            replacements = [(typeof value === 'undefined' || value === null) ? '' : String(value)];
+        }
+
+        var replacementIndex = 0;
+
+        return template.replace(/%([0-9]+\$)?s/g, function(match, position) {
+            if (position) {
+                var numericPosition = parseInt(position, 10) - 1;
+                if (!Number.isNaN(numericPosition) && numericPosition >= 0 && numericPosition < replacements.length) {
+                    return replacements[numericPosition];
+                }
+
+                return '';
+            }
+
+            var replacement = replacements[replacementIndex];
+            replacementIndex += 1;
+
+            return (typeof replacement === 'undefined') ? '' : replacement;
+        });
     }
 
     function debounce(fn, delay) {
@@ -2654,6 +2677,9 @@ jQuery(document).ready(function($) {
         var rescheduleNonce = config.rescheduleNonce || '';
         var idleCycles = 0;
         var pollingPaused = false;
+        var summaryConfig = (config.i18n && config.i18n.summary) || {};
+        var $summary = $('.blc-dashboard-summary');
+        var summaryVariants = ['neutral', 'info', 'success', 'warning', 'danger'];
 
         function canUseRest() {
             return typeof config.restUrl === 'string' && config.restUrl.length > 0;
@@ -2666,6 +2692,354 @@ jQuery(document).ready(function($) {
         function safeInt(value) {
             var intVal = parseInt(value, 10);
             return isNaN(intVal) ? 0 : intVal;
+        }
+
+        function getLocale() {
+            if (document.documentElement && document.documentElement.lang) {
+                return document.documentElement.lang;
+            }
+
+            return 'fr';
+        }
+
+        function formatNumber(value, options) {
+            var number = typeof value === 'number' ? value : parseFloat(value);
+            if (!isFinite(number)) {
+                number = 0;
+            }
+
+            var locale = getLocale();
+
+            try {
+                if (typeof Intl !== 'undefined' && Intl.NumberFormat) {
+                    return new Intl.NumberFormat(locale, options || {}).format(number);
+                }
+            } catch (error) {
+                // Fallback to default formatting below.
+            }
+
+            if (typeof number.toLocaleString === 'function') {
+                return number.toLocaleString(locale);
+            }
+
+            return String(number);
+        }
+
+        function getUnitTemplate(unitKey, isPlural) {
+            if (!summaryConfig.units || !summaryConfig.units[unitKey]) {
+                return isPlural ? '%s ' + unitKey + 's' : '%s ' + unitKey;
+            }
+
+            var templates = summaryConfig.units[unitKey];
+            var template = isPlural ? templates.plural : templates.singular;
+
+            if (typeof template !== 'string' || template === '') {
+                return isPlural ? '%s ' + unitKey + 's' : '%s ' + unitKey;
+            }
+
+            return template;
+        }
+
+        function formatDuration(seconds) {
+            var totalSeconds = Math.max(0, parseInt(seconds, 10));
+            var remaining = totalSeconds;
+            var parts = [];
+            var hourSeconds = 3600;
+            var minuteSeconds = 60;
+
+            var hours = Math.floor(remaining / hourSeconds);
+            if (hours > 0) {
+                remaining -= hours * hourSeconds;
+                parts.push(formatTemplate(getUnitTemplate('hour', hours !== 1), formatNumber(hours)));
+            }
+
+            var minutes = Math.floor(remaining / minuteSeconds);
+            if (minutes > 0) {
+                remaining -= minutes * minuteSeconds;
+                parts.push(formatTemplate(getUnitTemplate('minute', minutes !== 1), formatNumber(minutes)));
+            }
+
+            var secondsPart = remaining;
+            if (parts.length === 0 || secondsPart > 0) {
+                parts.push(formatTemplate(getUnitTemplate('second', secondsPart !== 1), formatNumber(secondsPart)));
+            }
+
+            return parts.join(' ');
+        }
+
+        function formatRelativeTime(seconds, direction) {
+            var totalSeconds = Math.max(0, parseInt(seconds, 10));
+            var relativeDirection = direction === 'future' ? 'future' : 'past';
+
+            if (totalSeconds === 0) {
+                if (relativeDirection === 'future') {
+                    return summaryConfig.relativeSoon || 'dans un instant';
+                }
+
+                return summaryConfig.relativeJustNow || 'à l’instant';
+            }
+
+            var units = [
+                { key: 'day', seconds: 86400 },
+                { key: 'hour', seconds: 3600 },
+                { key: 'minute', seconds: 60 },
+                { key: 'second', seconds: 1 }
+            ];
+
+            var unit = units[units.length - 1];
+            for (var i = 0; i < units.length; i++) {
+                if (totalSeconds >= units[i].seconds) {
+                    unit = units[i];
+                    break;
+                }
+            }
+
+            var amount = Math.max(1, Math.round(totalSeconds / unit.seconds));
+
+            if (typeof Intl !== 'undefined' && typeof Intl.RelativeTimeFormat === 'function') {
+                try {
+                    var rtf = new Intl.RelativeTimeFormat(getLocale(), { numeric: 'auto' });
+                    return rtf.format(relativeDirection === 'future' ? amount : -amount, unit.key);
+                } catch (error) {
+                    // fall back to manual formatting below.
+                }
+            }
+
+            var quantity = formatTemplate(getUnitTemplate(unit.key, amount !== 1), formatNumber(amount));
+            var wrapper = relativeDirection === 'future'
+                ? (summaryConfig.relativeFuture || 'dans %s')
+                : (summaryConfig.relativePast || 'il y a %s');
+
+            return formatTemplate(wrapper, quantity);
+        }
+
+        function formatSummaryQueueLabel(count) {
+            var value = safeInt(count);
+            if (value <= 0) {
+                return '';
+            }
+
+            if (value === 1 && summaryConfig.queueSingle) {
+                return formatTemplate(summaryConfig.queueSingle, formatNumber(value));
+            }
+
+            if (value > 1 && summaryConfig.queuePlural) {
+                return formatTemplate(summaryConfig.queuePlural, formatNumber(value));
+            }
+
+            return formatNumber(value);
+        }
+
+        function mapStateVariant(state) {
+            switch (state) {
+                case 'running':
+                    return 'info';
+                case 'queued':
+                    return 'warning';
+                case 'completed':
+                    return 'success';
+                case 'failed':
+                    return 'danger';
+                case 'cancelled':
+                    return 'warning';
+                default:
+                    return 'neutral';
+            }
+        }
+
+        function mapProgressVariant(state) {
+            switch (state) {
+                case 'completed':
+                    return 'success';
+                case 'failed':
+                    return 'danger';
+                case 'queued':
+                case 'running':
+                    return 'info';
+                case 'cancelled':
+                    return 'warning';
+                default:
+                    return 'neutral';
+            }
+        }
+
+        function formatSummaryStateDescription(status, details, nowTimestamp) {
+            var parts = [];
+            if (details) {
+                parts.push(details);
+            }
+
+            var delta = safeInt(status.last_activity_delta);
+            var updatedAt = safeInt(status.updated_at);
+            var lastActivity = '';
+
+            if (delta > 0) {
+                lastActivity = formatTemplate(
+                    summaryConfig.lastActivityRelative || 'Actualisé : %s',
+                    formatRelativeTime(delta, 'past')
+                );
+            } else if (updatedAt > 0) {
+                var direction = updatedAt > nowTimestamp ? 'future' : 'past';
+                var difference = Math.abs(nowTimestamp - updatedAt);
+                if (difference < 5) {
+                    lastActivity = summaryConfig.lastActivityJustNow || 'Actualisé à l’instant';
+                } else {
+                    lastActivity = formatTemplate(
+                        summaryConfig.lastActivityRelative || 'Actualisé : %s',
+                        formatRelativeTime(difference, direction)
+                    );
+                }
+            } else if (summaryConfig.lastActivityUnknown) {
+                lastActivity = summaryConfig.lastActivityUnknown;
+            }
+
+            if (lastActivity) {
+                parts.push(lastActivity);
+            }
+
+            var queueLabel = formatSummaryQueueLabel(status.manual_queue_length);
+            if (queueLabel) {
+                parts.push(queueLabel);
+            }
+
+            if (!parts.length) {
+                return summaryConfig.stateDetailsFallback || '';
+            }
+
+            return parts.join(' ');
+        }
+
+        function formatSummaryProgressDescription(status) {
+            var processed = safeInt(status.processed_items);
+            var total = safeInt(status.total_items);
+
+            if (total > 0) {
+                return formatTemplate(
+                    summaryConfig.progressWithTotal || '%1$s sur %2$s URL analysées',
+                    [formatNumber(processed), formatNumber(total)]
+                );
+            }
+
+            if (processed > 0) {
+                return formatTemplate(
+                    summaryConfig.progressWithoutTotal || '%s URL analysées',
+                    formatNumber(processed)
+                );
+            }
+
+            return summaryConfig.progressIdle || '';
+        }
+
+        function formatProgressValue(percent) {
+            var value = parseFloat(percent);
+            if (!isFinite(value)) {
+                value = 0;
+            }
+
+            if (value < 0) {
+                value = 0;
+            }
+            if (value > 100) {
+                value = 100;
+            }
+
+            var decimals = value >= 10 ? 0 : 1;
+            return formatNumber(value, {
+                minimumFractionDigits: decimals,
+                maximumFractionDigits: decimals
+            }) + ' %';
+        }
+
+        function formatSummaryThroughput(status) {
+            var rate = typeof status.items_per_minute === 'number'
+                ? status.items_per_minute
+                : parseFloat(status.items_per_minute);
+            if (!isFinite(rate)) {
+                rate = 0;
+            }
+
+            var value;
+            var variant = 'neutral';
+            if (rate > 0) {
+                var decimals = rate >= 10 ? 0 : 1;
+                var formattedRate = formatNumber(rate, {
+                    minimumFractionDigits: decimals,
+                    maximumFractionDigits: decimals
+                });
+                value = formatTemplate(summaryConfig.throughputValue || '%s URL/min', formattedRate);
+                variant = 'info';
+            } else {
+                value = summaryConfig.placeholder || '—';
+            }
+
+            var duration = safeInt(status.duration_seconds);
+            var description = '';
+            if (duration > 0) {
+                description = formatTemplate(
+                    summaryConfig.durationLabel || 'Durée écoulée : %s',
+                    formatDuration(duration)
+                );
+            } else if (summaryConfig.durationUnavailable) {
+                description = summaryConfig.durationUnavailable;
+            }
+
+            return {
+                value: value,
+                description: description,
+                variant: variant
+            };
+        }
+
+        function setSummaryVariant($element, variant) {
+            if (!$element || !$element.length) {
+                return;
+            }
+
+            for (var i = 0; i < summaryVariants.length; i++) {
+                $element.removeClass('blc-dashboard-summary__item--' + summaryVariants[i]);
+            }
+
+            var normalized = summaryVariants.indexOf(variant) !== -1 ? variant : 'neutral';
+            $element.addClass('blc-dashboard-summary__item--' + normalized);
+        }
+
+        function updateDashboardSummary(status, details) {
+            if (!$summary.length) {
+                return;
+            }
+
+            var now = Math.floor(Date.now() / 1000);
+            var current = status || {};
+            var state = current.state || 'idle';
+
+            var stateMetric = $summary.find('[data-summary-metric="state"]');
+            if (stateMetric.length) {
+                setSummaryVariant(stateMetric, mapStateVariant(state));
+                stateMetric.find('[data-summary-field="state-value"]').text(getStateLabel(state));
+                stateMetric.find('[data-summary-field="state-description"]').text(
+                    formatSummaryStateDescription(current, details || '', now)
+                );
+            }
+
+            var progressMetric = $summary.find('[data-summary-metric="progress"]');
+            if (progressMetric.length) {
+                setSummaryVariant(progressMetric, mapProgressVariant(state));
+                var percent = (typeof current.progress_percentage === 'number')
+                    ? current.progress_percentage
+                    : computeProgress(current);
+                progressMetric.find('[data-summary-field="progress-value"]').text(formatProgressValue(percent));
+                progressMetric.find('[data-summary-field="progress-description"]').text(
+                    formatSummaryProgressDescription(current)
+                );
+            }
+
+            var throughputMetric = $summary.find('[data-summary-metric="throughput"]');
+            if (throughputMetric.length) {
+                var throughput = formatSummaryThroughput(current);
+                setSummaryVariant(throughputMetric, throughput.variant);
+                throughputMetric.find('[data-summary-field="throughput-value"]').text(throughput.value || '');
+                throughputMetric.find('[data-summary-field="throughput-description"]').text(throughput.description || '');
+            }
         }
 
         function getStateLabel(state) {
@@ -3083,6 +3457,8 @@ jQuery(document).ready(function($) {
             var queueLength = renderQueue(currentStatus);
             renderQueueWarning(queueLength);
             renderLog(currentStatus);
+
+            updateDashboardSummary(currentStatus, details);
 
             lastState = state;
             lastMessage = messageText;

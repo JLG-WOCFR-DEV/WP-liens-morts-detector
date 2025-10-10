@@ -425,6 +425,389 @@ function blc_get_link_severity_overview(array $count_keys) {
     return $segments;
 }
 
+if (!function_exists('blc_get_summary_placeholder')) {
+    /**
+     * Placeholder string for unavailable dashboard metrics.
+     *
+     * @return string
+     */
+    function blc_get_summary_placeholder() {
+        return __('—', 'liens-morts-detector-jlg');
+    }
+}
+
+if (!function_exists('blc_format_summary_interval_label')) {
+    /**
+     * Format a time interval into a human readable unit (seconds, minutes, hours, days, weeks).
+     *
+     * @param int $seconds Interval in seconds.
+     *
+     * @return string
+     */
+    function blc_format_summary_interval_label($seconds) {
+        $seconds = (int) abs($seconds);
+
+        if ($seconds < 1) {
+            return '';
+        }
+
+        $minute = 60;
+        $hour   = defined('HOUR_IN_SECONDS') ? (int) HOUR_IN_SECONDS : 3600;
+        $day    = defined('DAY_IN_SECONDS') ? (int) DAY_IN_SECONDS : 86400;
+        $week   = $day * 7;
+
+        if ($seconds < $minute) {
+            $value = max(1, $seconds);
+
+            return sprintf(
+                /* translators: %s: number of seconds. */
+                _n('%s seconde', '%s secondes', $value, 'liens-morts-detector-jlg'),
+                number_format_i18n($value)
+            );
+        }
+
+        if ($seconds < $hour) {
+            $value = (int) round($seconds / $minute);
+            $value = max(1, $value);
+
+            return sprintf(
+                /* translators: %s: number of minutes. */
+                _n('%s minute', '%s minutes', $value, 'liens-morts-detector-jlg'),
+                number_format_i18n($value)
+            );
+        }
+
+        if ($seconds < $day) {
+            $value = (int) round($seconds / $hour);
+            $value = max(1, $value);
+
+            return sprintf(
+                /* translators: %s: number of hours. */
+                _n('%s heure', '%s heures', $value, 'liens-morts-detector-jlg'),
+                number_format_i18n($value)
+            );
+        }
+
+        if ($seconds < $week * 4) {
+            $value = (int) round($seconds / $day);
+            $value = max(1, $value);
+
+            return sprintf(
+                /* translators: %s: number of days. */
+                _n('%s jour', '%s jours', $value, 'liens-morts-detector-jlg'),
+                number_format_i18n($value)
+            );
+        }
+
+        $value = (int) round($seconds / $week);
+        $value = max(1, $value);
+
+        return sprintf(
+            /* translators: %s: number of weeks. */
+            _n('%s semaine', '%s semaines', $value, 'liens-morts-detector-jlg'),
+            number_format_i18n($value)
+        );
+    }
+}
+
+if (!function_exists('blc_format_summary_relative_phrase')) {
+    /**
+     * Produce a localized relative time phrase.
+     *
+     * @param int    $seconds   Interval in seconds.
+     * @param string $direction Either 'past' or 'future'.
+     *
+     * @return string
+     */
+    function blc_format_summary_relative_phrase($seconds, $direction = 'past') {
+        $seconds   = (int) $seconds;
+        $direction = ('future' === $direction) ? 'future' : 'past';
+
+        if ($seconds <= 0) {
+            return ('future' === $direction)
+                ? __('dans un instant', 'liens-morts-detector-jlg')
+                : __('à l’instant', 'liens-morts-detector-jlg');
+        }
+
+        $label = blc_format_summary_interval_label($seconds);
+        if ($label === '') {
+            return '';
+        }
+
+        if ('future' === $direction) {
+            return sprintf(
+                /* translators: %s: human readable interval. */
+                __('dans %s', 'liens-morts-detector-jlg'),
+                $label
+            );
+        }
+
+        return sprintf(
+            /* translators: %s: human readable interval. */
+            __('il y a %s', 'liens-morts-detector-jlg'),
+            $label
+        );
+    }
+}
+
+if (!function_exists('blc_format_summary_last_activity_label')) {
+    /**
+     * Create the last activity label for the dashboard summary.
+     *
+     * @param int $delta_seconds Seconds since the last activity as reported by the scanner.
+     * @param int $updated_at    Timestamp of the last update, used as a fallback.
+     *
+     * @return string
+     */
+    function blc_format_summary_last_activity_label($delta_seconds, $updated_at) {
+        $delta_seconds = (int) $delta_seconds;
+        $updated_at    = (int) $updated_at;
+
+        if ($delta_seconds > 0) {
+            return sprintf(
+                /* translators: %s: relative time phrase. */
+                __('Actualisé : %s', 'liens-morts-detector-jlg'),
+                blc_format_summary_relative_phrase($delta_seconds, 'past')
+            );
+        }
+
+        if ($updated_at > 0) {
+            $now       = time();
+            $direction = ($updated_at > $now) ? 'future' : 'past';
+            $delta     = abs($now - $updated_at);
+
+            if ($delta < 5) {
+                return __('Actualisé à l’instant', 'liens-morts-detector-jlg');
+            }
+
+            return sprintf(
+                /* translators: %s: relative time phrase. */
+                __('Actualisé : %s', 'liens-morts-detector-jlg'),
+                blc_format_summary_relative_phrase($delta, $direction)
+            );
+        }
+
+        return __('Dernière actualisation inconnue', 'liens-morts-detector-jlg');
+    }
+}
+
+if (!function_exists('blc_format_summary_queue_label')) {
+    /**
+     * Build the queue length label for the summary state card.
+     *
+     * @param int $queue_length Number of manual scans queued.
+     *
+     * @return string
+     */
+    function blc_format_summary_queue_label($queue_length) {
+        $queue_length = (int) $queue_length;
+        if ($queue_length <= 0) {
+            return '';
+        }
+
+        return sprintf(
+            _n('%s analyse en file', '%s analyses en file', $queue_length, 'liens-morts-detector-jlg'),
+            number_format_i18n($queue_length)
+        );
+    }
+}
+
+if (!function_exists('blc_map_scan_state_variant')) {
+    /**
+     * Associate a visual variant with the current scan state.
+     *
+     * @param string $state Scan state slug.
+     *
+     * @return string
+     */
+    function blc_map_scan_state_variant($state) {
+        switch ($state) {
+            case 'running':
+                return 'info';
+            case 'queued':
+                return 'warning';
+            case 'completed':
+                return 'success';
+            case 'failed':
+                return 'danger';
+            case 'cancelled':
+                return 'warning';
+            default:
+                return 'neutral';
+        }
+    }
+}
+
+if (!function_exists('blc_map_progress_variant')) {
+    /**
+     * Determine the visual variant for the progress summary card.
+     *
+     * @param string $state Scan state slug.
+     *
+     * @return string
+     */
+    function blc_map_progress_variant($state) {
+        switch ($state) {
+            case 'completed':
+                return 'success';
+            case 'failed':
+                return 'danger';
+            case 'queued':
+            case 'running':
+                return 'info';
+            case 'cancelled':
+                return 'warning';
+            default:
+                return 'neutral';
+        }
+    }
+}
+
+if (!function_exists('blc_build_dashboard_summary_items')) {
+    /**
+     * Build the DashboardSummary cards displayed above the main statistics.
+     *
+     * @param array<string, mixed> $scan_status        Current scan status payload.
+     * @param string               $scan_details_line  Narrative details describing the current scan.
+     *
+     * @return array<int,array{slug:string,label:string,value:string,description:string,variant:string}>
+     */
+    function blc_build_dashboard_summary_items(array $scan_status, $scan_details_line) {
+        $scan_details_line = is_string($scan_details_line) ? trim($scan_details_line) : '';
+
+        $state_slug  = isset($scan_status['state']) ? (string) $scan_status['state'] : 'idle';
+        $state_label = blc_get_scan_state_label($state_slug);
+
+        $manual_queue_length = isset($scan_status['manual_queue_length'])
+            ? max(0, (int) $scan_status['manual_queue_length'])
+            : 0;
+        $last_activity_delta = isset($scan_status['last_activity_delta'])
+            ? (int) $scan_status['last_activity_delta']
+            : 0;
+        $updated_at = isset($scan_status['updated_at']) ? (int) $scan_status['updated_at'] : 0;
+
+        $state_description_parts = array();
+        if ($scan_details_line !== '') {
+            $state_description_parts[] = $scan_details_line;
+        }
+
+        $last_activity_label = blc_format_summary_last_activity_label($last_activity_delta, $updated_at);
+        if ($last_activity_label !== '') {
+            $state_description_parts[] = $last_activity_label;
+        }
+
+        $queue_label = blc_format_summary_queue_label($manual_queue_length);
+        if ($queue_label !== '') {
+            $state_description_parts[] = $queue_label;
+        }
+
+        if ($state_description_parts === array()) {
+            $state_description_parts[] = __('Suivi en attente de données.', 'liens-morts-detector-jlg');
+        }
+
+        $state_item = array(
+            'slug'        => 'state',
+            'label'       => __('Statut opérationnel', 'liens-morts-detector-jlg'),
+            'value'       => $state_label,
+            'description' => implode(' ', $state_description_parts),
+            'variant'     => blc_map_scan_state_variant($state_slug),
+        );
+
+        $processed_items = isset($scan_status['processed_items'])
+            ? max(0, (int) $scan_status['processed_items'])
+            : 0;
+        $total_items = isset($scan_status['total_items'])
+            ? max(0, (int) $scan_status['total_items'])
+            : 0;
+
+        $progress_percentage = null;
+        if (isset($scan_status['progress_percentage']) && is_numeric($scan_status['progress_percentage'])) {
+            $progress_percentage = (float) $scan_status['progress_percentage'];
+        }
+
+        if ($progress_percentage === null) {
+            if ($total_items > 0) {
+                $progress_percentage = ($processed_items / $total_items) * 100;
+            } elseif ($processed_items > 0) {
+                $progress_percentage = 100.0;
+            } else {
+                $progress_percentage = 0.0;
+            }
+        }
+
+        $progress_percentage = max(0.0, min(100.0, (float) $progress_percentage));
+        $progress_decimals   = ($progress_percentage >= 10.0) ? 0 : 1;
+
+        $progress_value = sprintf(
+            /* translators: %s: formatted percentage. */
+            __('%s %%', 'liens-morts-detector-jlg'),
+            number_format_i18n($progress_percentage, $progress_decimals)
+        );
+
+        if ($total_items > 0) {
+            $progress_description = sprintf(
+                /* translators: 1: processed URLs, 2: total URLs. */
+                __('%1$s sur %2$s URL analysées', 'liens-morts-detector-jlg'),
+                number_format_i18n($processed_items),
+                number_format_i18n($total_items)
+            );
+        } elseif ($processed_items > 0) {
+            $progress_description = sprintf(
+                _n('%s URL analysée', '%s URL analysées', $processed_items, 'liens-morts-detector-jlg'),
+                number_format_i18n($processed_items)
+            );
+        } else {
+            $progress_description = __('Analyse en attente de démarrage.', 'liens-morts-detector-jlg');
+        }
+
+        $progress_item = array(
+            'slug'        => 'progress',
+            'label'       => __('Progression', 'liens-morts-detector-jlg'),
+            'value'       => $progress_value,
+            'description' => $progress_description,
+            'variant'     => blc_map_progress_variant($state_slug),
+        );
+
+        $items_per_minute = isset($scan_status['items_per_minute'])
+            ? (float) $scan_status['items_per_minute']
+            : 0.0;
+        $duration_seconds = isset($scan_status['duration_seconds'])
+            ? max(0, (int) $scan_status['duration_seconds'])
+            : 0;
+
+        if ($items_per_minute > 0) {
+            $throughput_decimals = ($items_per_minute >= 10.0) ? 0 : 1;
+            $throughput_value    = sprintf(
+                /* translators: %s: throughput in URLs per minute. */
+                __('%s URL/min', 'liens-morts-detector-jlg'),
+                number_format_i18n($items_per_minute, $throughput_decimals)
+            );
+        } else {
+            $throughput_value = blc_get_summary_placeholder();
+        }
+
+        if ($duration_seconds > 0) {
+            $throughput_description = sprintf(
+                /* translators: %s: formatted duration. */
+                __('Durée écoulée : %s', 'liens-morts-detector-jlg'),
+                blc_format_scan_duration($duration_seconds * 1000)
+            );
+        } else {
+            $throughput_description = __('Durée écoulée : en attente de calcul.', 'liens-morts-detector-jlg');
+        }
+
+        $throughput_item = array(
+            'slug'        => 'throughput',
+            'label'       => __('Rythme d’analyse', 'liens-morts-detector-jlg'),
+            'value'       => $throughput_value,
+            'description' => $throughput_description,
+            'variant'     => ($items_per_minute > 0) ? 'info' : 'neutral',
+        );
+
+        return array($state_item, $progress_item, $throughput_item);
+    }
+}
+
 /**
  * Build a prioritized action queue based on the most impacted domains.
  *
@@ -892,16 +1275,33 @@ function blc_schedule_manual_link_scan($is_full_scan = false, $force_cancel = fa
 /**
  * Schedule a manual image scan and update the stored status.
  *
- * @return array{success:bool,message:string,manual_trigger_failed:bool}
+ * @return array{success:bool,message:string,manual_trigger_failed:bool,job_id:string,attempt:int,scheduled_at:int}
  */
 function blc_schedule_manual_image_scan() {
     $automatic_enabled = (bool) get_option('blc_image_scan_schedule_enabled', false);
+
+    $job_id = function_exists('blc_generate_image_scan_job_id')
+        ? blc_generate_image_scan_job_id()
+        : uniqid('blc_img_', true);
+    $attempt = 1;
+    $scheduled_at = time();
 
     if (!$automatic_enabled && function_exists('wp_clear_scheduled_hook')) {
         wp_clear_scheduled_hook('blc_check_image_batch', array(0, true));
     }
 
-    $scheduled = wp_schedule_single_event(time(), 'blc_check_image_batch', array(0, true));
+    $schedule_args = array(0, true);
+    $scheduled = wp_schedule_single_event($scheduled_at, 'blc_check_image_batch', $schedule_args);
+
+    if (false === $scheduled) {
+        $retry_delay = function_exists('apply_filters') ? (int) apply_filters('blc_manual_image_scan_retry_delay', 60) : 60;
+        if ($retry_delay < 5) {
+            $retry_delay = 5;
+        }
+
+        $attempt++;
+        $scheduled = wp_schedule_single_event($scheduled_at + $retry_delay, 'blc_check_image_batch', $schedule_args);
+    }
 
     if (false === $scheduled) {
         error_log('BLC: Failed to schedule manual image check.');
@@ -914,12 +1314,29 @@ function blc_schedule_manual_image_scan() {
             'message'    => $failure_message,
             'last_error' => $failure_message,
             'started_at' => 0,
+            'job_id'     => $job_id,
+            'attempt'    => $attempt,
+            'scheduled_at' => $scheduled_at,
+        ]);
+
+        blc_append_image_scan_history_entry([
+            'job_id'                => $job_id,
+            'state'                 => 'failed',
+            'message'               => $failure_message,
+            'attempt'               => $attempt,
+            'is_full_scan'          => true,
+            'scheduled_at'          => $scheduled_at,
+            'manual_trigger_failed' => false,
+            'automatic_schedule_enabled' => $automatic_enabled,
         ]);
 
         return [
             'success'               => false,
             'message'               => $failure_message,
             'manual_trigger_failed' => false,
+            'job_id'                => $job_id,
+            'attempt'               => $attempt,
+            'scheduled_at'          => $scheduled_at,
         ];
     }
 
@@ -954,6 +1371,17 @@ function blc_schedule_manual_image_scan() {
         $status_message .= ' ' . __("Le déclenchement immédiat du cron a échoué. Le système WordPress essaiera de l'exécuter automatiquement.", 'liens-morts-detector-jlg');
     }
 
+    blc_append_image_scan_history_entry([
+        'job_id'                => $job_id,
+        'state'                 => 'queued',
+        'message'               => $status_message,
+        'attempt'               => $attempt,
+        'is_full_scan'          => true,
+        'scheduled_at'          => $scheduled_at,
+        'manual_trigger_failed' => $manual_trigger_failed,
+        'automatic_schedule_enabled' => $automatic_enabled,
+    ]);
+
     blc_update_image_scan_status([
         'state'             => 'queued',
         'current_batch'     => 0,
@@ -967,12 +1395,28 @@ function blc_schedule_manual_image_scan() {
         'last_error'        => '',
         'started_at'        => 0,
         'ended_at'          => 0,
+        'job_id'            => $job_id,
+        'attempt'           => $attempt,
+        'scheduled_at'      => $scheduled_at,
     ]);
+
+    $return_message = sprintf(
+        /* translators: %s: unique job identifier. */
+        __("La vérification des images a été programmée et s'exécute en arrière-plan. (Job : %s)", 'liens-morts-detector-jlg'),
+        esc_html($job_id)
+    );
+
+    if ($manual_trigger_failed) {
+        $return_message .= ' ' . __("Le déclenchement immédiat du cron a échoué. Le système WordPress essaiera de l'exécuter automatiquement.", 'liens-morts-detector-jlg');
+    }
 
     return [
         'success'               => true,
-        'message'               => __("La vérification des images a été programmée et s'exécute en arrière-plan.", 'liens-morts-detector-jlg'),
+        'message'               => $return_message,
         'manual_trigger_failed' => $manual_trigger_failed,
+        'job_id'                => $job_id,
+        'attempt'               => $attempt,
+        'scheduled_at'          => $scheduled_at,
     ];
 }
 
@@ -1737,6 +2181,8 @@ function blc_dashboard_links_page() {
 
     $scan_details = trim(implode(' ', array_filter(array_map('strval', $scan_details_parts))));
 
+    $summary_items = blc_build_dashboard_summary_items($scan_status, $scan_details);
+
     $scan_panel_classes = array_filter(
         array(
             'blc-scan-status',
@@ -1925,6 +2371,28 @@ function blc_dashboard_links_page() {
     <div class="wrap blc-dashboard-links-page">
         <?php blc_render_dashboard_tabs('links'); ?>
         <h1><?php esc_html_e('Rapport des Liens Cassés', 'liens-morts-detector-jlg'); ?></h1>
+        <?php if (!empty($summary_items)) : ?>
+            <section class="blc-dashboard-summary blc-admin-card blc-admin-card--subtle" aria-labelledby="blc-dashboard-summary-heading">
+                <div class="blc-dashboard-summary__header">
+                    <h2 id="blc-dashboard-summary-heading" class="blc-dashboard-summary__title"><?php esc_html_e('Synthèse opérationnelle', 'liens-morts-detector-jlg'); ?></h2>
+                    <p class="blc-dashboard-summary__subtitle"><?php esc_html_e('Mesures clés actualisées selon le dernier scan manuel.', 'liens-morts-detector-jlg'); ?></p>
+                </div>
+                <ul class="blc-dashboard-summary__grid" role="list">
+                    <?php foreach ($summary_items as $item) :
+                        $variant = isset($item['variant']) ? (string) $item['variant'] : 'neutral';
+                        ?>
+                        <li
+                            class="blc-dashboard-summary__item blc-dashboard-summary__item--<?php echo esc_attr($variant); ?>"
+                            data-summary-metric="<?php echo esc_attr($item['slug']); ?>"
+                        >
+                            <span class="blc-dashboard-summary__label"><?php echo esc_html($item['label']); ?></span>
+                            <span class="blc-dashboard-summary__value" data-summary-field="<?php echo esc_attr($item['slug'] . '-value'); ?>"><?php echo esc_html($item['value']); ?></span>
+                            <p class="blc-dashboard-summary__description" data-summary-field="<?php echo esc_attr($item['slug'] . '-description'); ?>"><?php echo esc_html($item['description']); ?></p>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+            </section>
+        <?php endif; ?>
         <div class="blc-stats-box blc-admin-card blc-admin-card--accent">
             <?php foreach ($stats_cards as $card) :
                 $link_type = $card['link_type'];
@@ -3281,6 +3749,9 @@ function blc_ajax_start_manual_image_scan() {
             array(
                 'message' => $result['message'],
                 'status'  => blc_get_image_scan_status_payload(),
+                'job_id'  => isset($result['job_id']) ? (string) $result['job_id'] : '',
+                'attempt' => isset($result['attempt']) ? (int) $result['attempt'] : 0,
+                'scheduled_at' => isset($result['scheduled_at']) ? (int) $result['scheduled_at'] : 0,
             ),
             500
         );
@@ -3290,6 +3761,9 @@ function blc_ajax_start_manual_image_scan() {
         'message'               => $result['message'],
         'status'                => blc_get_image_scan_status_payload(),
         'manual_trigger_failed' => !empty($result['manual_trigger_failed']),
+        'job_id'                => isset($result['job_id']) ? (string) $result['job_id'] : '',
+        'attempt'               => isset($result['attempt']) ? (int) $result['attempt'] : 0,
+        'scheduled_at'          => isset($result['scheduled_at']) ? (int) $result['scheduled_at'] : 0,
     );
 
     if (!empty($result['manual_trigger_failed'])) {
