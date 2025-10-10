@@ -170,6 +170,66 @@ class BlcAutomatedReportTest extends TestCase
         $this->assertSame('csv', $context['format']);
     }
 
+    public function test_schedule_automated_report_generation_deduplicates_existing_events(): void
+    {
+        $times = [
+            1_700_000_000,
+            1_700_000_030,
+            1_700_000_060,
+            1_700_000_090,
+            1_700_000_120,
+        ];
+
+        Functions\when('time')->alias(static function () use (&$times) {
+            $value = array_shift($times);
+
+            return $value !== null ? $value : 1_700_000_120;
+        });
+
+        Functions\when('apply_filters')->alias(static function ($tag, $value) {
+            return $value;
+        });
+
+        $scheduled = [];
+
+        Functions\when('wp_schedule_single_event')->alias(function ($timestamp, $hook, $args = []) use (&$scheduled) {
+            $scheduled[] = [
+                'timestamp' => $timestamp,
+                'hook'      => $hook,
+                'args'      => $args,
+            ];
+
+            return true;
+        });
+
+        Functions\when('wp_next_scheduled')->alias(static function ($hook, $args) use (&$scheduled) {
+            foreach ($scheduled as $event) {
+                if ($event['hook'] === $hook && $event['args'] === $args) {
+                    return $event['timestamp'];
+                }
+            }
+
+            return false;
+        });
+
+        $context = [
+            'job_id'     => 'job-007',
+            'started_at' => 1_699_999_400,
+            'ended_at'   => 1_699_999_900,
+        ];
+
+        $first = \blc_schedule_automated_report_generation('link', $context);
+        $second = \blc_schedule_automated_report_generation('link', $context);
+
+        $this->assertTrue($first, 'Initial scheduling should succeed.');
+        $this->assertTrue($second, 'Subsequent scheduling with the same context should also succeed.');
+        $this->assertCount(1, $scheduled, 'Only one cron event should be registered for identical contexts.');
+
+        $event = $scheduled[0];
+        $this->assertSame('blc_generate_automated_report', $event['hook']);
+        $this->assertSame(1_699_999_900, $event['args'][1]['completed_at'], 'Completed timestamp should reuse the ended_at value for stability.');
+    }
+
     public function test_generate_automated_report_csv_creates_report_file(): void
     {
         $temp_dir = sys_get_temp_dir() . '/blc-report-test-' . uniqid('', true);
