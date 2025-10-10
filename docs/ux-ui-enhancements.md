@@ -15,6 +15,8 @@ Ce document recense des axes d'amélioration identifiés pour rapprocher l'expé
 - **Proposition** :
   - Introduire des collections de filtres enregistrables et partageables entre utilisateurs.
   - Ajouter des badges de sévérité sur les lignes pour accélérer le tri et faciliter les workflows d'équipe.
+- **Mise à jour** : le rapport des liens propose désormais un panneau « Segments enregistrés » pour mémoriser, appliquer et supprimer des combinaisons de filtres privées à chaque compte.
+- **Nouvelle amélioration** : les utilisateurs peuvent définir une vue enregistrée par défaut, appliquée automatiquement lors de l'ouverture du rapport, pour coller aux pratiques des suites professionnelles.
 
 ## 3. Guidage de configuration
 - **Constat** : toutes les options de configuration (fréquences, pauses, timeouts, notifications) sont exposées sur une seule page.

@@ -77,6 +77,27 @@ class AdminScriptLocalizations
             'applyRedirectMissingModalMessage' => __('Aucune redirection détectée n\'est disponible pour ce lien.', 'liens-morts-detector-jlg'),
             /* translators: %s: number of selected links. */
             'bulkApplyRedirectModalMessage' => __('Voulez-vous appliquer la redirection détectée aux %s liens sélectionnés ?', 'liens-morts-detector-jlg'),
+            'savedViewPlaceholder'      => __('Sélectionnez une vue…', 'liens-morts-detector-jlg'),
+            /* translators: %s: saved view name. */
+            'savedViewApplied'          => __('Vue « %s » appliquée.', 'liens-morts-detector-jlg'),
+            /* translators: %s: saved view name. */
+            'savedViewCreated'          => __('Vue « %s » enregistrée.', 'liens-morts-detector-jlg'),
+            /* translators: %s: saved view name. */
+            'savedViewUpdated'          => __('Vue « %s » mise à jour.', 'liens-morts-detector-jlg'),
+            /* translators: %s: saved view name. */
+            'savedViewDeleted'          => __('Vue « %s » supprimée.', 'liens-morts-detector-jlg'),
+            'savedViewNameRequired'     => __('Veuillez saisir un nom pour enregistrer cette vue.', 'liens-morts-detector-jlg'),
+            /* translators: %s: saved view name. */
+            'savedViewDeleteConfirm'    => __('Supprimer la vue « %s » ?', 'liens-morts-detector-jlg'),
+            /* translators: %d: maximum number of saved views. */
+            'savedViewLimitReached'     => __('Limite de vues enregistrées atteinte (%d maximum).', 'liens-morts-detector-jlg'),
+            'savedViewGenericError'     => __('Impossible de gérer cette vue enregistrée pour le moment.', 'liens-morts-detector-jlg'),
+            'savedViewDefaultSuffix'    => __(' (par défaut)', 'liens-morts-detector-jlg'),
+            'savedViewDefaultBadge'     => __('Vue par défaut', 'liens-morts-detector-jlg'),
+            /* translators: %s: saved view name. */
+            'savedViewDefaultAssigned'  => __('Vue « %s » définie comme vue par défaut.', 'liens-morts-detector-jlg'),
+            /* translators: %s: saved view name. */
+            'savedViewDefaultRemoved'   => __('Vue « %s » n’est plus la vue par défaut.', 'liens-morts-detector-jlg'),
         );
     }
 

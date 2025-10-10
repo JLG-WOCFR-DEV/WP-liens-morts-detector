@@ -74,7 +74,20 @@ jQuery(document).ready(function($) {
         personaApplied: 'Préréglage appliqué.',
         personaFailed: 'Ce préréglage ne peut pas être appliqué ici.',
         tableRefreshed: 'Liste des liens mise à jour.',
-        tableFetchError: 'Impossible de rafraîchir la liste pour le moment.'
+        tableFetchError: 'Impossible de rafraîchir la liste pour le moment.',
+        savedViewPlaceholder: 'Sélectionnez une vue…',
+        savedViewApplied: 'Vue « %s » appliquée.',
+        savedViewCreated: 'Vue « %s » enregistrée.',
+        savedViewUpdated: 'Vue « %s » mise à jour.',
+        savedViewDeleted: 'Vue « %s » supprimée.',
+        savedViewNameRequired: 'Veuillez saisir un nom pour enregistrer cette vue.',
+        savedViewDeleteConfirm: 'Supprimer la vue « %s » ?',
+        savedViewLimitReached: 'Limite de vues enregistrées atteinte.',
+        savedViewGenericError: 'Impossible de gérer cette vue enregistrée pour le moment.',
+        savedViewDefaultSuffix: ' (par défaut)',
+        savedViewDefaultBadge: 'Vue par défaut',
+        savedViewDefaultAssigned: 'Vue « %s » définie comme vue par défaut.',
+        savedViewDefaultRemoved: 'Vue « %s » n’est plus la vue par défaut.'
     };
 
     var messages = $.extend({}, defaultMessages, window.blcAdminMessages || {});
@@ -4542,6 +4555,18 @@ jQuery(document).ready(function($) {
             var cacheStore = {};
             var pendingRequests = {};
             var prefetchTimer = null;
+            var viewsNonce = $form.attr('data-blc-views-nonce') || '';
+            var viewsLimitAttr = parseInt($form.attr('data-blc-views-limit'), 10);
+            var viewsLimit = Number.isFinite(viewsLimitAttr) ? viewsLimitAttr : 0;
+            var rawSavedViewsAttr = $form.attr('data-blc-saved-views');
+            var savedViews;
+            try {
+                savedViews = rawSavedViewsAttr ? JSON.parse(rawSavedViewsAttr) : [];
+            } catch (error) {
+                savedViews = [];
+            }
+            savedViews = normalizeSavedViewList(savedViews);
+            var savedViewElements = getSavedViewElements();
 
             function normalizeValue(value) {
                 if (typeof value === 'undefined' || value === null) {
@@ -4807,11 +4832,584 @@ jQuery(document).ready(function($) {
                 return '';
             }
 
+            function normalizeSavedViewList(list) {
+                if (!Array.isArray(list)) {
+                    return [];
+                }
+
+                return list.reduce(function(accumulator, item) {
+                    if (!item || typeof item.id !== 'string') {
+                        return accumulator;
+                    }
+
+                    var normalized = {
+                        id: item.id,
+                        name: item.name || '',
+                        summary: item.summary || '',
+                        updated_human: item.updated_human || '',
+                        filters: item.filters && typeof item.filters === 'object' ? item.filters : {},
+                        is_default: !!item.is_default
+                    };
+
+                    accumulator.push(normalized);
+                    return accumulator;
+                }, []);
+            }
+
+            function getSavedViewElements() {
+                var $panel = $form.find('[data-blc-saved-views-panel]');
+                if (!$panel.length) {
+                    return null;
+                }
+
+                return {
+                    panel: $panel,
+                    select: $panel.find('[data-blc-saved-views-select]'),
+                    apply: $panel.find('[data-blc-saved-views-apply]'),
+                    deleteButton: $panel.find('[data-blc-saved-views-delete]'),
+                    save: $panel.find('[data-blc-saved-views-save]'),
+                    name: $panel.find('[data-blc-saved-views-name]'),
+                    meta: $panel.find('[data-blc-saved-views-meta]'),
+                    defaultToggle: $panel.find('[data-blc-saved-views-default]')
+                };
+            }
+
+            function updateSavedViewsButtons() {
+                if (!savedViewElements) {
+                    return;
+                }
+
+                var hasSelection = !!(savedViewElements.select && savedViewElements.select.val());
+
+                if (savedViewElements.apply && savedViewElements.apply.length) {
+                    savedViewElements.apply.prop('disabled', !hasSelection);
+                }
+
+                if (savedViewElements.deleteButton && savedViewElements.deleteButton.length) {
+                    savedViewElements.deleteButton.prop('disabled', !hasSelection);
+                }
+            }
+
+            function updateSavedViewsMeta(viewId) {
+                if (!savedViewElements || !savedViewElements.meta || !savedViewElements.meta.length) {
+                    return;
+                }
+
+                var view = findSavedView(viewId);
+
+                if (!view) {
+                    savedViewElements.meta.text('').attr('hidden', 'hidden');
+                    return;
+                }
+
+                var metaParts = [];
+                if (view.is_default) {
+                    var defaultBadge = messages.savedViewDefaultBadge || defaultMessages.savedViewDefaultBadge || '';
+                    if (defaultBadge) {
+                        metaParts.push(defaultBadge);
+                    }
+                }
+                if (view.summary) {
+                    metaParts.push(view.summary);
+                }
+                if (view.updated_human) {
+                    metaParts.push(view.updated_human);
+                }
+
+                var metaText = metaParts.join(' · ');
+                if (metaText) {
+                    savedViewElements.meta.text(metaText).removeAttr('hidden');
+                } else {
+                    savedViewElements.meta.text('').attr('hidden', 'hidden');
+                }
+            }
+
+            function updateDefaultToggle(viewId) {
+                if (!savedViewElements || !savedViewElements.defaultToggle || !savedViewElements.defaultToggle.length) {
+                    return;
+                }
+
+                var targetId = typeof viewId === 'string' ? viewId : '';
+                if (!targetId && savedViewElements.select && savedViewElements.select.length) {
+                    targetId = savedViewElements.select.val();
+                }
+
+                var shouldCheck = false;
+                if (targetId) {
+                    var targetView = findSavedView(targetId);
+                    if (targetView) {
+                        shouldCheck = !!targetView.is_default;
+                    }
+                }
+
+                savedViewElements.defaultToggle.prop('checked', shouldCheck);
+
+                var $wrapper = savedViewElements.defaultToggle.closest('.blc-saved-views__toggle');
+                if ($wrapper && $wrapper.length) {
+                    $wrapper.toggleClass('is-active', shouldCheck);
+                }
+            }
+
+            function findSavedView(viewId) {
+                if (!viewId) {
+                    return null;
+                }
+
+                for (var index = 0; index < savedViews.length; index++) {
+                    var candidate = savedViews[index];
+                    if (candidate && candidate.id === viewId) {
+                        return candidate;
+                    }
+                }
+
+                return null;
+            }
+
+            function getDefaultSavedView() {
+                for (var index = 0; index < savedViews.length; index++) {
+                    var candidate = savedViews[index];
+                    if (candidate && candidate.is_default) {
+                        return candidate;
+                    }
+                }
+
+                return null;
+            }
+
+            function isBaselineFilters(filters) {
+                if (!filters || typeof filters !== 'object') {
+                    return true;
+                }
+
+                var linkType = filters.link_type || 'all';
+                var postType = filters.post_type || '';
+                var searchTerm = filters.s || '';
+                var orderby = filters.orderby || '';
+                var order = (filters.order || '').toLowerCase();
+
+                if (order !== 'asc' && order !== 'desc') {
+                    order = 'desc';
+                }
+
+                return linkType === 'all' && postType === '' && searchTerm === '' && orderby === '' && order === 'desc';
+            }
+
+            function isBaselineState(state) {
+                if (!state || typeof state !== 'object') {
+                    return true;
+                }
+
+                var view = typeof state.view === 'string' ? state.view : 'all';
+                var postType = typeof state.post_type === 'string' ? state.post_type : '';
+                var search = typeof state.search === 'string' ? state.search : '';
+                var sorting = state.sorting && typeof state.sorting === 'object' ? state.sorting : {};
+                var orderby = typeof sorting.orderby === 'string' ? sorting.orderby : '';
+                var order = typeof sorting.order === 'string' ? sorting.order.toLowerCase() : '';
+
+                if (order !== 'asc' && order !== 'desc') {
+                    order = 'desc';
+                }
+
+                return view === 'all' && postType === '' && search === '' && orderby === '' && order === 'desc';
+            }
+
+            function hasExplicitFilterQuery() {
+                if (typeof window === 'undefined' || !window.location || typeof window.location.search !== 'string') {
+                    return false;
+                }
+
+                return /[?&](link_type|post_type|s|orderby|order)=/.test(window.location.search);
+            }
+
+            function maybeApplyDefaultSavedView() {
+                var defaultView = getDefaultSavedView();
+                if (!defaultView || !defaultView.id) {
+                    return;
+                }
+
+                if (hasExplicitFilterQuery()) {
+                    return;
+                }
+
+                if (!isBaselineState(initialState)) {
+                    return;
+                }
+
+                if (savedViewElements && savedViewElements.select && savedViewElements.select.length) {
+                    savedViewElements.select.val(defaultView.id);
+                }
+                updateSavedViewsMeta(defaultView.id);
+                updateDefaultToggle(defaultView.id);
+                updateSavedViewsButtons();
+
+                if (!isBaselineFilters(defaultView.filters || {})) {
+                    applySavedView(defaultView.id, { silent: true });
+                }
+            }
+
+            function renderSavedViews(selectedId) {
+                if (!savedViewElements || !savedViewElements.select || !savedViewElements.select.length) {
+                    return;
+                }
+
+                var valueToSelect = typeof selectedId === 'string' ? selectedId : savedViewElements.select.val();
+                savedViewElements.select.empty();
+
+                var placeholder = messages.savedViewPlaceholder || defaultMessages.savedViewPlaceholder || 'Sélectionnez une vue…';
+                $('<option>', { value: '' }).text(placeholder).appendTo(savedViewElements.select);
+
+                savedViews.forEach(function(view) {
+                    if (!view || !view.id) {
+                        return;
+                    }
+
+                    var optionLabel = view.name || '';
+                    if (view.is_default) {
+                        optionLabel += messages.savedViewDefaultSuffix || defaultMessages.savedViewDefaultSuffix || ' (par défaut)';
+                    }
+
+                    $('<option>', { value: view.id, 'data-default': view.is_default ? '1' : '0' }).text(optionLabel).appendTo(savedViewElements.select);
+                });
+
+                if (valueToSelect && savedViewElements.select.find('option[value="' + valueToSelect + '"]').length) {
+                    savedViewElements.select.val(valueToSelect);
+                } else {
+                    savedViewElements.select.val('');
+                }
+
+                var activeSelection = savedViewElements.select.val();
+                updateSavedViewsMeta(activeSelection);
+                updateDefaultToggle(activeSelection);
+                updateSavedViewsButtons();
+            }
+
+            function buildCurrentFilters() {
+                var params = collectParams();
+                var orderValue = (params.order || '').toLowerCase();
+                if (orderValue !== 'asc' && orderValue !== 'desc') {
+                    orderValue = 'desc';
+                }
+                return {
+                    link_type: params.link_type || 'all',
+                    post_type: params.post_type || '',
+                    s: params.s || '',
+                    orderby: params.orderby || '',
+                    order: orderValue
+                };
+            }
+
+            function applySavedView(viewId, options) {
+                options = options || {};
+                var view = findSavedView(viewId);
+                if (!view) {
+                    return;
+                }
+
+                var filters = view.filters || {};
+                var state = {
+                    view: filters.link_type || 'all',
+                    post_type: filters.post_type || '',
+                    search: filters.s || '',
+                    sorting: {
+                        orderby: filters.orderby || '',
+                        order: filters.order || ''
+                    },
+                    pagination: { current: 1 }
+                };
+
+                syncState(state);
+                updateActiveCards(state.view || 'all');
+
+                var params = collectParams();
+                params.link_type = filters.link_type || 'all';
+                params.post_type = filters.post_type || '';
+                params.s = filters.s || '';
+                params.orderby = filters.orderby || '';
+                params.order = filters.order || '';
+                params.paged = 1;
+
+                requestTable(params, { prefetch: false });
+
+                var appliedMessage = formatTemplate(messages.savedViewApplied || '', view.name || '');
+                if (appliedMessage && !options.silent) {
+                    if (toast && typeof toast.success === 'function') {
+                        toast.success(appliedMessage);
+                    }
+                    accessibility.speak(appliedMessage, 'polite');
+                }
+            }
+
+            function handleSavedViewSave() {
+                if (!savedViewElements) {
+                    return;
+                }
+
+                var nameValue = '';
+                if (savedViewElements.name && savedViewElements.name.length) {
+                    nameValue = savedViewElements.name.val();
+                }
+                nameValue = nameValue ? nameValue.trim() : '';
+
+                if (!nameValue) {
+                    var requiredMessage = messages.savedViewNameRequired || messages.savedViewGenericError || messages.genericError || '';
+                    if (requiredMessage) {
+                        if (toast && typeof toast.warning === 'function') {
+                            toast.warning(requiredMessage);
+                        }
+                        accessibility.speak(requiredMessage, 'assertive');
+                    }
+                    if (savedViewElements.name && typeof savedViewElements.name.trigger === 'function') {
+                        savedViewElements.name.trigger('focus');
+                    }
+                    return;
+                }
+
+                var filters = buildCurrentFilters();
+                var shouldSetDefault = savedViewElements.defaultToggle && savedViewElements.defaultToggle.length
+                    ? savedViewElements.defaultToggle.is(':checked')
+                    : false;
+
+                if (savedViewElements.save && savedViewElements.save.length) {
+                    savedViewElements.save.prop('disabled', true);
+                }
+
+                $.ajax({
+                    url: endpoint,
+                    method: 'POST',
+                    dataType: 'json',
+                    data: {
+                        action: 'blc_save_links_view',
+                        _ajax_nonce: viewsNonce || nonce,
+                        name: nameValue,
+                        filters: filters,
+                        is_default: shouldSetDefault ? '1' : '0'
+                    }
+                }).done(function(response) {
+                    if (!response || !response.success || !response.data) {
+                        throw new Error('invalid_response');
+                    }
+
+                    var payload = response.data;
+
+                    if (Array.isArray(payload.views)) {
+                        savedViews = normalizeSavedViewList(payload.views);
+                    }
+
+                    if (typeof payload.limit !== 'undefined') {
+                        var limitCandidate = parseInt(payload.limit, 10);
+                        if (Number.isFinite(limitCandidate)) {
+                            viewsLimit = limitCandidate;
+                        }
+                    }
+
+                    var selectedId = payload.view && payload.view.id ? payload.view.id : '';
+                    renderSavedViews(selectedId);
+                    updateSavedViewsMeta(selectedId);
+                    updateDefaultToggle(selectedId);
+
+                    if (savedViewElements.name && savedViewElements.name.length) {
+                        savedViewElements.name.val('');
+                    }
+
+                    var activeView = selectedId ? findSavedView(selectedId) : null;
+                    var status = payload.status || '';
+                    var template = messages.savedViewCreated || '';
+                    if (status === 'updated') {
+                        template = messages.savedViewUpdated || template;
+                    } else if (status === 'created') {
+                        template = messages.savedViewCreated || template;
+                    }
+                    var successMessage = formatTemplate(template, activeView ? activeView.name || '' : nameValue);
+                    var defaultStatus = payload.default_status || '';
+                    var defaultMessage = '';
+                    if (defaultStatus === 'assigned') {
+                        defaultMessage = formatTemplate(messages.savedViewDefaultAssigned || '', activeView ? activeView.name || '' : nameValue);
+                    } else if (defaultStatus === 'removed') {
+                        defaultMessage = formatTemplate(messages.savedViewDefaultRemoved || '', activeView ? activeView.name || '' : nameValue);
+                    }
+
+                    if (defaultMessage) {
+                        successMessage = successMessage ? successMessage + ' ' + defaultMessage : defaultMessage;
+                    }
+
+                    if (successMessage) {
+                        if (toast && typeof toast.success === 'function') {
+                            toast.success(successMessage);
+                        }
+                        accessibility.speak(successMessage, 'polite');
+                    }
+                }).fail(function(xhr) {
+                    var fallbackMessage = messages.savedViewGenericError || messages.genericError || '';
+                    var errorData = xhr && xhr.responseJSON && xhr.responseJSON.data ? xhr.responseJSON.data : null;
+
+                    if (errorData) {
+                        if (errorData.code === 'invalid_name') {
+                            fallbackMessage = messages.savedViewNameRequired || fallbackMessage;
+                        } else if (errorData.code === 'limit_reached') {
+                            var limitValue = errorData.limit || viewsLimit;
+                            if (messages.savedViewLimitReached) {
+                                fallbackMessage = formatTemplate(messages.savedViewLimitReached, limitValue);
+                            }
+                        } else if (errorData.message) {
+                            fallbackMessage = errorData.message;
+                        }
+                    }
+
+                    if (fallbackMessage) {
+                        if (toast && typeof toast.error === 'function') {
+                            toast.error(fallbackMessage);
+                        }
+                        accessibility.speak(fallbackMessage, 'assertive');
+                    }
+                }).always(function() {
+                    if (savedViewElements.save && savedViewElements.save.length) {
+                        savedViewElements.save.prop('disabled', false);
+                    }
+                    updateSavedViewsButtons();
+                });
+            }
+
+            function handleSavedViewDelete() {
+                if (!savedViewElements || !savedViewElements.select || !savedViewElements.select.length) {
+                    return;
+                }
+
+                var selectedId = savedViewElements.select.val();
+                if (!selectedId) {
+                    return;
+                }
+
+                var selectedView = findSavedView(selectedId);
+                var confirmTemplate = messages.savedViewDeleteConfirm || '';
+                var confirmMessage = confirmTemplate ? formatTemplate(confirmTemplate, selectedView ? selectedView.name || '' : '') : '';
+                if (confirmMessage && !window.confirm(confirmMessage)) {
+                    return;
+                }
+
+                if (savedViewElements.deleteButton && savedViewElements.deleteButton.length) {
+                    savedViewElements.deleteButton.prop('disabled', true);
+                }
+
+                $.ajax({
+                    url: endpoint,
+                    method: 'POST',
+                    dataType: 'json',
+                    data: {
+                        action: 'blc_delete_links_view',
+                        _ajax_nonce: viewsNonce || nonce,
+                        id: selectedId
+                    }
+                }).done(function(response) {
+                    if (!response || !response.success || !response.data) {
+                        throw new Error('invalid_response');
+                    }
+
+                    var payload = response.data;
+                    if (Array.isArray(payload.views)) {
+                        savedViews = normalizeSavedViewList(payload.views);
+                    }
+
+                    renderSavedViews('');
+                    updateDefaultToggle('');
+
+                    var deletedMessage = formatTemplate(messages.savedViewDeleted || '', selectedView ? selectedView.name || '' : '');
+                    if (deletedMessage) {
+                        if (toast && typeof toast.success === 'function') {
+                            toast.success(deletedMessage);
+                        }
+                        accessibility.speak(deletedMessage, 'polite');
+                    }
+                }).fail(function(xhr) {
+                    var errorMessage = messages.savedViewGenericError || messages.genericError || '';
+                    var errorData = xhr && xhr.responseJSON && xhr.responseJSON.data ? xhr.responseJSON.data : null;
+
+                    if (errorData && errorData.message) {
+                        errorMessage = errorData.message;
+                    }
+
+                    if (errorMessage) {
+                        if (toast && typeof toast.error === 'function') {
+                            toast.error(errorMessage);
+                        }
+                        accessibility.speak(errorMessage, 'assertive');
+                    }
+                }).always(function() {
+                    if (savedViewElements.deleteButton && savedViewElements.deleteButton.length) {
+                        savedViewElements.deleteButton.prop('disabled', false);
+                    }
+                    updateSavedViewsButtons();
+                });
+            }
+
+            function initializeSavedViews() {
+                if (!savedViewElements) {
+                    return;
+                }
+
+                renderSavedViews('');
+
+                if (savedViewElements.select && savedViewElements.select.length) {
+                    savedViewElements.select.on('change', function() {
+                        var value = $(this).val();
+                        updateSavedViewsMeta(value);
+                        updateDefaultToggle(value);
+                        updateSavedViewsButtons();
+                    });
+
+                    savedViewElements.select.on('dblclick', function() {
+                        var selected = $(this).val();
+                        if (selected) {
+                            applySavedView(selected);
+                        }
+                    });
+                }
+
+                if (savedViewElements.apply && savedViewElements.apply.length) {
+                    savedViewElements.apply.on('click', function(event) {
+                        event.preventDefault();
+                        var selected = savedViewElements.select ? savedViewElements.select.val() : '';
+                        if (!selected) {
+                            return;
+                        }
+                        applySavedView(selected);
+                    });
+                }
+
+                if (savedViewElements.save && savedViewElements.save.length) {
+                    savedViewElements.save.on('click', function(event) {
+                        event.preventDefault();
+                        handleSavedViewSave();
+                    });
+                }
+
+                if (savedViewElements.deleteButton && savedViewElements.deleteButton.length) {
+                    savedViewElements.deleteButton.on('click', function(event) {
+                        event.preventDefault();
+                        handleSavedViewDelete();
+                    });
+                }
+
+                if (savedViewElements.defaultToggle && savedViewElements.defaultToggle.length) {
+                    savedViewElements.defaultToggle.on('change', function() {
+                        var $wrapper = $(this).closest('.blc-saved-views__toggle');
+                        if ($wrapper && $wrapper.length) {
+                            $wrapper.toggleClass('is-active', $(this).is(':checked'));
+                        }
+                    });
+                }
+
+                updateSavedViewsButtons();
+            }
+
+            initializeSavedViews();
+
             if (initialState && typeof initialState === 'object') {
                 syncState(initialState);
                 updateActiveCards(initialState.view || 'all');
                 schedulePrefetch(initialState);
             }
+
+            maybeApplyDefaultSavedView();
 
             $form.on('submit', function(event) {
                 if ($form.data('blcBulkConfirmed')) {

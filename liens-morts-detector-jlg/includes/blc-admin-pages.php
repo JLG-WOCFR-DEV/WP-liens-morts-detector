@@ -19,6 +19,608 @@ if (!function_exists('blc_get_required_capability')) {
     require_once __DIR__ . '/blc-capabilities.php';
 }
 
+if (!defined('BLC_SAVED_LINK_VIEWS_META_KEY')) {
+    define('BLC_SAVED_LINK_VIEWS_META_KEY', 'blc_saved_link_views');
+}
+
+/**
+ * Returns the maximum number of saved views allowed per user.
+ *
+ * @return int
+ */
+function blc_get_saved_link_views_limit() {
+    $limit = (int) apply_filters('blc_saved_link_views_limit', 12);
+
+    return ($limit < 0) ? 0 : $limit;
+}
+
+/**
+ * Normalize filters persisted within a saved view.
+ *
+ * @param array<string, mixed> $filters
+ *
+ * @return array{link_type:string,post_type:string,s:string,orderby:string,order:string}
+ */
+function blc_normalize_link_view_filters($filters) {
+    $normalized = array(
+        'link_type' => 'all',
+        'post_type' => '',
+        's'         => '',
+        'orderby'   => '',
+        'order'     => 'desc',
+    );
+
+    if (!is_array($filters)) {
+        return $normalized;
+    }
+
+    $link_type = '';
+    if (isset($filters['link_type'])) {
+        $link_type = sanitize_key((string) $filters['link_type']);
+    } elseif (isset($filters['view'])) {
+        $link_type = sanitize_key((string) $filters['view']);
+    }
+    if ($link_type === '') {
+        $link_type = 'all';
+    }
+    $normalized['link_type'] = $link_type;
+
+    if (isset($filters['post_type'])) {
+        $post_type = sanitize_key((string) $filters['post_type']);
+        if ($post_type !== '') {
+            $normalized['post_type'] = $post_type;
+        }
+    }
+
+    if (isset($filters['s'])) {
+        $normalized['s'] = sanitize_text_field((string) $filters['s']);
+    } elseif (isset($filters['search'])) {
+        $normalized['s'] = sanitize_text_field((string) $filters['search']);
+    }
+
+    if (isset($filters['orderby'])) {
+        $allowed_orderby = array('url', 'anchor_text', 'http_status', 'redirect_target_url', 'last_checked_at', 'post_title');
+        $orderby         = sanitize_key((string) $filters['orderby']);
+
+        if ($orderby !== '' && in_array($orderby, $allowed_orderby, true)) {
+            $normalized['orderby'] = $orderby;
+        }
+    }
+
+    if (isset($filters['order'])) {
+        $order = strtolower((string) $filters['order']);
+        if ($order === 'asc' || $order === 'desc') {
+            $normalized['order'] = $order;
+        }
+    }
+
+    return $normalized;
+}
+
+/**
+ * Sort saved views by the most recent update.
+ *
+ * @param array<int, array<string, mixed>> $views
+ *
+ * @return array<int, array<string, mixed>>
+ */
+function blc_sort_link_views_by_recency(array $views) {
+    usort(
+        $views,
+        static function ($a, $b) {
+            $a_default = !empty($a['is_default']);
+            $b_default = !empty($b['is_default']);
+
+            if ($a_default !== $b_default) {
+                return $a_default ? -1 : 1;
+            }
+
+            $a_time = isset($a['updated_at']) ? (int) $a['updated_at'] : 0;
+            $b_time = isset($b['updated_at']) ? (int) $b['updated_at'] : 0;
+
+            if ($a_time === $b_time) {
+                $a_name = isset($a['name']) ? (string) $a['name'] : '';
+                $b_name = isset($b['name']) ? (string) $b['name'] : '';
+
+                return strcasecmp($a_name, $b_name);
+            }
+
+            return ($a_time > $b_time) ? -1 : 1;
+        }
+    );
+
+    return array_values($views);
+}
+
+/**
+ * Store the provided set of saved views for a user.
+ *
+ * @param int                                        $user_id
+ * @param array<int, array<string, mixed>>           $views
+ *
+ * @return array<int, array<string, mixed>>
+ */
+function blc_store_link_views($user_id, array $views) {
+    if ($user_id <= 0) {
+        return array();
+    }
+
+    $ordered = blc_sort_link_views_by_recency($views);
+    update_user_meta($user_id, BLC_SAVED_LINK_VIEWS_META_KEY, $ordered);
+
+    return $ordered;
+}
+
+/**
+ * Retrieve the saved views for the current user.
+ *
+ * @param int $user_id
+ *
+ * @return array<int, array<string, mixed>>
+ */
+function blc_get_saved_link_views($user_id = 0) {
+    if (!function_exists('get_current_user_id')) {
+        return array();
+    }
+
+    if ($user_id <= 0) {
+        $user_id = (int) get_current_user_id();
+    }
+
+    if ($user_id <= 0) {
+        return array();
+    }
+
+    $raw_views = get_user_meta($user_id, BLC_SAVED_LINK_VIEWS_META_KEY, true);
+    if (!is_array($raw_views)) {
+        return array();
+    }
+
+    $normalized = array();
+
+    foreach ($raw_views as $view) {
+        if (!is_array($view)) {
+            continue;
+        }
+
+        $id   = isset($view['id']) ? (string) $view['id'] : '';
+        $name = isset($view['name']) ? (string) $view['name'] : '';
+
+        if ($id === '' || $name === '') {
+            continue;
+        }
+
+        $filters = isset($view['filters']) ? $view['filters'] : array();
+        $normalized[] = array(
+            'id'         => $id,
+            'name'       => $name,
+            'filters'    => blc_normalize_link_view_filters($filters),
+            'created_at' => isset($view['created_at']) ? (int) $view['created_at'] : 0,
+            'updated_at' => isset($view['updated_at']) ? (int) $view['updated_at'] : 0,
+            'is_default' => !empty($view['is_default']),
+        );
+    }
+
+    return blc_sort_link_views_by_recency($normalized);
+}
+
+/**
+ * Retrieve the identifier of the default saved view within a list.
+ *
+ * @param array<int, array<string, mixed>> $views
+ *
+ * @return string
+ */
+function blc_get_default_link_view_id(array $views) {
+    foreach ($views as $view) {
+        if (!empty($view['is_default']) && isset($view['id'])) {
+            return (string) $view['id'];
+        }
+    }
+
+    return '';
+}
+
+/**
+ * Resolve a localized label for the provided link type.
+ *
+ * @param string $link_type
+ *
+ * @return string
+ */
+function blc_get_link_view_link_type_label($link_type) {
+    $map = array(
+        'all'             => __('Tous les statuts', 'liens-morts-detector-jlg'),
+        'internal'        => __('Internes', 'liens-morts-detector-jlg'),
+        'external'        => __('Externes', 'liens-morts-detector-jlg'),
+        'ignored'         => __('Ignorés', 'liens-morts-detector-jlg'),
+        'status_404_410'  => __('404 / 410', 'liens-morts-detector-jlg'),
+        'status_5xx'      => __('5xx', 'liens-morts-detector-jlg'),
+        'status_redirects'=> __('Redirections', 'liens-morts-detector-jlg'),
+        'needs_recheck'   => __('À revérifier', 'liens-morts-detector-jlg'),
+        'link'            => __('Liens HTML', 'liens-morts-detector-jlg'),
+        'iframe'          => __('Iframes', 'liens-morts-detector-jlg'),
+        'script'          => __('Scripts externes', 'liens-morts-detector-jlg'),
+        'stylesheet'      => __('Balises <link>', 'liens-morts-detector-jlg'),
+        'form'            => __('Formulaires', 'liens-morts-detector-jlg'),
+        'css-background'  => __('Arrière-plans CSS', 'liens-morts-detector-jlg'),
+    );
+
+    if (isset($map[$link_type])) {
+        return $map[$link_type];
+    }
+
+    $fallback = str_replace(array('-', '_'), ' ', $link_type);
+    $fallback = trim($fallback);
+
+    if ($fallback === '') {
+        return __('Tous les statuts', 'liens-morts-detector-jlg');
+    }
+
+    return ucfirst($fallback);
+}
+
+/**
+ * Return a display label for a post type within saved views.
+ *
+ * @param string $post_type
+ *
+ * @return string
+ */
+function blc_get_link_view_post_type_label($post_type) {
+    if (function_exists('get_post_type_object')) {
+        $post_type_object = get_post_type_object($post_type);
+        if ($post_type_object && isset($post_type_object->labels) && isset($post_type_object->labels->name)) {
+            return (string) $post_type_object->labels->name;
+        }
+    }
+
+    $fallback = str_replace(array('-', '_'), ' ', $post_type);
+    $fallback = trim($fallback);
+
+    if ($fallback === '') {
+        return __('Tous les contenus', 'liens-morts-detector-jlg');
+    }
+
+    return ucwords($fallback);
+}
+
+/**
+ * Resolve the label used for the selected sorting field.
+ *
+ * @param string $orderby
+ *
+ * @return string
+ */
+function blc_get_link_view_sort_label($orderby) {
+    $map = array(
+        'url'                => __('URL Cassée', 'liens-morts-detector-jlg'),
+        'anchor_text'        => __('Texte du lien', 'liens-morts-detector-jlg'),
+        'http_status'        => __('Statut HTTP', 'liens-morts-detector-jlg'),
+        'redirect_target_url'=> __('Cible détectée', 'liens-morts-detector-jlg'),
+        'last_checked_at'    => __('Dernier contrôle', 'liens-morts-detector-jlg'),
+        'post_title'         => __('Trouvé dans l\'article/page', 'liens-morts-detector-jlg'),
+    );
+
+    if (isset($map[$orderby])) {
+        return $map[$orderby];
+    }
+
+    return __('Ordre par défaut', 'liens-morts-detector-jlg');
+}
+
+/**
+ * Build a short textual summary for a saved view.
+ *
+ * @param array{link_type:string,post_type:string,s:string,orderby:string,order:string} $filters
+ *
+ * @return string
+ */
+function blc_build_link_view_summary(array $filters) {
+    $parts = array();
+
+    $link_type = isset($filters['link_type']) ? (string) $filters['link_type'] : 'all';
+    $link_label = blc_get_link_view_link_type_label($link_type);
+
+    if ($link_type === 'all') {
+        $parts[] = $link_label;
+    } else {
+        $parts[] = sprintf(
+            /* translators: %s: label of the link status filter. */
+            __('Statut : %s', 'liens-morts-detector-jlg'),
+            $link_label
+        );
+    }
+
+    $post_type = isset($filters['post_type']) ? (string) $filters['post_type'] : '';
+    if ($post_type !== '') {
+        $parts[] = sprintf(
+            /* translators: %s: label of the post type filter. */
+            __('Type : %s', 'liens-morts-detector-jlg'),
+            blc_get_link_view_post_type_label($post_type)
+        );
+    }
+
+    $search = isset($filters['s']) ? (string) $filters['s'] : '';
+    if ($search !== '') {
+        $parts[] = sprintf(
+            /* translators: %s: search term. */
+            __('Recherche : “%s”', 'liens-morts-detector-jlg'),
+            $search
+        );
+    }
+
+    $orderby = isset($filters['orderby']) ? (string) $filters['orderby'] : '';
+    if ($orderby !== '') {
+        $order = isset($filters['order']) ? strtolower((string) $filters['order']) : 'desc';
+        $arrow = ($order === 'asc') ? '↑' : '↓';
+        $parts[] = sprintf(
+            /* translators: 1: sort label. 2: arrow indicating direction. */
+            __('Tri : %1$s %2$s', 'liens-morts-detector-jlg'),
+            blc_get_link_view_sort_label($orderby),
+            $arrow
+        );
+    }
+
+    if ($parts === array()) {
+        $parts[] = __('Tous les statuts', 'liens-morts-detector-jlg');
+    }
+
+    return implode(' · ', $parts);
+}
+
+/**
+ * Prepare a saved view payload for front-end consumption.
+ *
+ * @param array<string, mixed> $view
+ *
+ * @return array<string, mixed>
+ */
+function blc_prepare_link_view_for_client(array $view) {
+    $id      = isset($view['id']) ? (string) $view['id'] : '';
+    $name    = isset($view['name']) ? (string) $view['name'] : '';
+    $filters = isset($view['filters']) ? blc_normalize_link_view_filters($view['filters']) : blc_normalize_link_view_filters(array());
+    $updated = isset($view['updated_at']) ? (int) $view['updated_at'] : 0;
+
+    $updated_human = '';
+    if ($updated > 0) {
+        $now = function_exists('current_time') ? (int) current_time('timestamp') : time();
+        $diff = human_time_diff($updated, $now);
+        if (!empty($diff)) {
+            $updated_human = sprintf(
+                /* translators: %s: human readable time difference. */
+                __('Mis à jour il y a %s', 'liens-morts-detector-jlg'),
+                $diff
+            );
+        } else {
+            $updated_human = __('Mis à jour à l’instant', 'liens-morts-detector-jlg');
+        }
+    }
+
+    return array(
+        'id'            => $id,
+        'name'          => $name,
+        'filters'       => $filters,
+        'summary'       => blc_build_link_view_summary($filters),
+        'is_default'    => !empty($view['is_default']),
+        'updated_at'    => $updated,
+        'updated_human' => $updated_human,
+    );
+}
+
+/**
+ * Prepare an array of saved views for front-end usage.
+ *
+ * @param array<int, array<string, mixed>> $views
+ *
+ * @return array<int, array<string, mixed>>
+ */
+function blc_prepare_link_views_for_client(array $views) {
+    $prepared = array();
+
+    foreach ($views as $view) {
+        $prepared[] = blc_prepare_link_view_for_client($view);
+    }
+
+    return $prepared;
+}
+
+/**
+ * Persist a saved view for a user.
+ *
+ * @param string                         $name
+ * @param array<string, mixed>           $filters
+ * @param int                            $user_id
+ *
+ * @return array<string, mixed>|\WP_Error
+ */
+function blc_save_link_view($name, array $filters, $user_id = 0, $set_default = null) {
+    if (!function_exists('get_current_user_id')) {
+        return new \WP_Error('invalid_context', __('Impossible d’enregistrer cette vue.', 'liens-morts-detector-jlg'));
+    }
+
+    if ($user_id <= 0) {
+        $user_id = (int) get_current_user_id();
+    }
+
+    if ($user_id <= 0) {
+        return new \WP_Error('invalid_user', __('Impossible d’enregistrer cette vue.', 'liens-morts-detector-jlg'));
+    }
+
+    $name = trim((string) $name);
+    $name = preg_replace('/\s+/u', ' ', $name);
+    $name = sanitize_text_field($name);
+
+    if ($name === '') {
+        return new \WP_Error('invalid_name', __('Veuillez saisir un nom pour enregistrer cette vue.', 'liens-morts-detector-jlg'));
+    }
+
+    if (function_exists('mb_strlen') && mb_strlen($name) > 80) {
+        $name = mb_substr($name, 0, 80);
+    } elseif (strlen($name) > 80) {
+        $name = substr($name, 0, 80);
+    }
+
+    $normalized_filters = blc_normalize_link_view_filters($filters);
+    $existing_views      = blc_get_saved_link_views($user_id);
+    $limit               = blc_get_saved_link_views_limit();
+    $requested_default   = null;
+
+    if ($set_default !== null) {
+        $requested_default = (bool) $set_default;
+    }
+
+    $previous_default_id = blc_get_default_link_view_id($existing_views);
+
+    $slug           = sanitize_title($name);
+    $existing_index = null;
+
+    foreach ($existing_views as $index => $existing_view) {
+        if (sanitize_title($existing_view['name']) === $slug) {
+            $existing_index = $index;
+            break;
+        }
+    }
+
+    if ($existing_index === null && $limit > 0 && count($existing_views) >= $limit) {
+        return new \WP_Error(
+            'limit_reached',
+            sprintf(
+                /* translators: %d: limit of saved views. */
+                __('Vous pouvez enregistrer jusqu’à %d vues personnalisées.', 'liens-morts-detector-jlg'),
+                $limit
+            ),
+            array('limit' => $limit)
+        );
+    }
+
+    $timestamp = function_exists('current_time') ? (int) current_time('timestamp') : time();
+
+    if ($existing_index !== null) {
+        $existing_views[$existing_index]['name']       = $name;
+        $existing_views[$existing_index]['filters']    = $normalized_filters;
+        $existing_views[$existing_index]['updated_at'] = $timestamp;
+
+        $is_default = $requested_default;
+        if ($is_default === null) {
+            $is_default = !empty($existing_views[$existing_index]['is_default']);
+        }
+
+        $existing_views[$existing_index]['is_default'] = (bool) $is_default;
+
+        $view   = $existing_views[$existing_index];
+        $status = 'updated';
+    } else {
+        $view_id = function_exists('wp_generate_uuid4')
+            ? 'sv_' . wp_generate_uuid4()
+            : 'sv_' . uniqid('', true);
+
+        $is_default = ($requested_default !== null) ? (bool) $requested_default : false;
+
+        $view = array(
+            'id'         => $view_id,
+            'name'       => $name,
+            'filters'    => $normalized_filters,
+            'created_at' => $timestamp,
+            'updated_at' => $timestamp,
+            'is_default' => $is_default,
+        );
+
+        $existing_views[] = $view;
+        $status           = 'created';
+    }
+
+    if (!empty($view['is_default'])) {
+        foreach ($existing_views as $index => $candidate) {
+            if (!isset($candidate['id']) || $candidate['id'] === $view['id']) {
+                continue;
+            }
+
+            $existing_views[$index]['is_default'] = false;
+        }
+    }
+
+    $stored_views = blc_store_link_views($user_id, $existing_views);
+
+    foreach ($stored_views as $stored_view) {
+        if ($stored_view['id'] === $view['id']) {
+            $view = $stored_view;
+            break;
+        }
+    }
+
+    $new_default_id = blc_get_default_link_view_id($stored_views);
+    $view_id        = isset($view['id']) ? (string) $view['id'] : '';
+    $default_status = 'unchanged';
+
+    if ($view_id !== '') {
+        if ($new_default_id === $view_id && $previous_default_id !== $view_id) {
+            $default_status = 'assigned';
+        } elseif ($previous_default_id === $view_id && $new_default_id !== $view_id) {
+            $default_status = 'removed';
+        }
+    }
+
+    return array(
+        'status' => $status,
+        'view'   => $view,
+        'views'  => $stored_views,
+        'limit'  => $limit,
+        'default_status' => $default_status,
+        'default_view_id' => $new_default_id,
+    );
+}
+
+/**
+ * Remove a saved view for a user.
+ *
+ * @param string $view_id
+ * @param int    $user_id
+ *
+ * @return array<string, mixed>|\WP_Error
+ */
+function blc_delete_link_view($view_id, $user_id = 0) {
+    if (!function_exists('get_current_user_id')) {
+        return new \WP_Error('invalid_context', __('Impossible de supprimer cette vue.', 'liens-morts-detector-jlg'));
+    }
+
+    $view_id = sanitize_text_field((string) $view_id);
+
+    if ($view_id === '') {
+        return new \WP_Error('invalid_id', __('Impossible de supprimer cette vue.', 'liens-morts-detector-jlg'));
+    }
+
+    if ($user_id <= 0) {
+        $user_id = (int) get_current_user_id();
+    }
+
+    if ($user_id <= 0) {
+        return new \WP_Error('invalid_user', __('Impossible de supprimer cette vue.', 'liens-morts-detector-jlg'));
+    }
+
+    $existing_views = blc_get_saved_link_views($user_id);
+    $deleted_view   = null;
+
+    foreach ($existing_views as $index => $view) {
+        if (isset($view['id']) && $view['id'] === $view_id) {
+            $deleted_view = $view;
+            unset($existing_views[$index]);
+            break;
+        }
+    }
+
+    if ($deleted_view === null) {
+        return new \WP_Error('not_found', __('Cette vue enregistrée est introuvable.', 'liens-morts-detector-jlg'));
+    }
+
+    $stored_views = blc_store_link_views($user_id, array_values($existing_views));
+
+    return array(
+        'view'  => $deleted_view,
+        'views' => $stored_views,
+    );
+}
+
 /**
  * Crée le menu principal et les sous-menus pour les rapports et les réglages.
  */
@@ -2365,6 +2967,14 @@ function blc_dashboard_links_page() {
     if ($cache_ttl < 5) {
         $cache_ttl = 60;
     }
+    $saved_views_raw     = blc_get_saved_link_views();
+    $saved_views_payload = blc_prepare_link_views_for_client($saved_views_raw);
+    $saved_views_json    = wp_json_encode($saved_views_payload);
+    if (!is_string($saved_views_json)) {
+        $saved_views_json = '[]';
+    }
+    $saved_views_nonce = wp_create_nonce('blc_links_views');
+    $saved_views_limit = blc_get_saved_link_views_limit();
     blc_render_action_modal();
 
     ?>
@@ -2751,6 +3361,9 @@ function blc_dashboard_links_page() {
                 data-blc-ajax-nonce="<?php echo esc_attr($ajax_nonce); ?>"
                 data-blc-cache-ttl="<?php echo esc_attr($cache_ttl); ?>"
                 data-blc-initial-state="<?php echo esc_attr($initial_state_json); ?>"
+                data-blc-saved-views="<?php echo esc_attr($saved_views_json); ?>"
+                data-blc-views-nonce="<?php echo esc_attr($saved_views_nonce); ?>"
+                data-blc-views-limit="<?php echo esc_attr($saved_views_limit); ?>"
             >
                 <h2 id="blc-links-filter-heading" class="screen-reader-text"><?php esc_html_e('Filtres de la liste des liens cassés', 'liens-morts-detector-jlg'); ?></h2>
                 <?php
@@ -2788,6 +3401,63 @@ function blc_dashboard_links_page() {
                 <input type="hidden" name="orderby" value="<?php echo esc_attr(isset($current_sorting['orderby']) ? (string) $current_sorting['orderby'] : ''); ?>" data-blc-state-field="orderby" />
                 <input type="hidden" name="order" value="<?php echo esc_attr(isset($current_sorting['order']) ? (string) $current_sorting['order'] : ''); ?>" data-blc-state-field="order" />
                 <input type="hidden" name="paged" value="<?php echo esc_attr(isset($pagination_state['current']) ? (int) $pagination_state['current'] : 1); ?>" data-blc-state-field="paged" />
+                <div
+                    class="blc-saved-views"
+                    data-blc-saved-views-panel
+                >
+                    <div class="blc-saved-views__row">
+                        <label for="blc-saved-views-select" class="blc-saved-views__label"><?php esc_html_e('Segments enregistrés', 'liens-morts-detector-jlg'); ?></label>
+                        <div class="blc-saved-views__controls">
+                            <select
+                                id="blc-saved-views-select"
+                                class="blc-saved-views__select"
+                                data-blc-saved-views-select
+                            >
+                                <option value=""><?php esc_html_e('Sélectionnez une vue…', 'liens-morts-detector-jlg'); ?></option>
+                                <?php foreach ($saved_views_payload as $saved_view) : ?>
+                                    <option value="<?php echo esc_attr($saved_view['id']); ?>">
+                                        <?php echo esc_html($saved_view['name']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <button type="button" class="button button-secondary blc-saved-views__apply" data-blc-saved-views-apply disabled>
+                                <?php esc_html_e('Appliquer', 'liens-morts-detector-jlg'); ?>
+                            </button>
+                            <button type="button" class="button-link blc-saved-views__delete" data-blc-saved-views-delete disabled>
+                                <?php esc_html_e('Supprimer', 'liens-morts-detector-jlg'); ?>
+                            </button>
+                        </div>
+                    </div>
+                    <p class="blc-saved-views__meta" data-blc-saved-views-meta aria-live="polite" hidden></p>
+                    <div class="blc-saved-views__row blc-saved-views__row--save">
+                        <label for="blc-saved-views-name" class="blc-saved-views__label"><?php esc_html_e('Enregistrer la vue actuelle', 'liens-morts-detector-jlg'); ?></label>
+                        <div class="blc-saved-views__controls">
+                            <input
+                                type="text"
+                                id="blc-saved-views-name"
+                                class="blc-saved-views__input"
+                                placeholder="<?php echo esc_attr__('Nom du segment (ex. 404 critiques)', 'liens-morts-detector-jlg'); ?>"
+                                data-blc-saved-views-name
+                            />
+                            <button type="button" class="button button-primary blc-saved-views__save" data-blc-saved-views-save>
+                                <?php esc_html_e('Enregistrer', 'liens-morts-detector-jlg'); ?>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="blc-saved-views__row blc-saved-views__row--default">
+                        <span class="blc-saved-views__label"><?php esc_html_e('Vue par défaut', 'liens-morts-detector-jlg'); ?></span>
+                        <div class="blc-saved-views__controls">
+                            <label class="blc-saved-views__toggle">
+                                <input type="checkbox" class="blc-saved-views__toggle-input" data-blc-saved-views-default />
+                                <span><?php esc_html_e('Définir comme vue par défaut', 'liens-morts-detector-jlg'); ?></span>
+                            </label>
+                            <p class="blc-saved-views__note"><?php esc_html_e('Appliquera automatiquement cette vue lors de vos prochaines visites du rapport.', 'liens-morts-detector-jlg'); ?></p>
+                        </div>
+                    </div>
+                    <p class="blc-saved-views__hint">
+                        <?php esc_html_e('Vos vues enregistrées sont privées et synchronisées avec votre compte.', 'liens-morts-detector-jlg'); ?>
+                    </p>
+                </div>
                 <div class="blc-links-table" data-blc-table-region>
                     <?php echo $table_markup; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
                 </div>
@@ -3539,6 +4209,8 @@ add_action('wp_ajax_blc_start_manual_image_scan', 'blc_ajax_start_manual_image_s
 add_action('wp_ajax_blc_cancel_manual_image_scan', 'blc_ajax_cancel_manual_image_scan');
 add_action('wp_ajax_blc_get_image_scan_status', 'blc_ajax_get_image_scan_status');
 add_action('wp_ajax_blc_fetch_links_table', 'blc_ajax_fetch_links_table');
+add_action('wp_ajax_blc_save_links_view', 'blc_ajax_save_links_view');
+add_action('wp_ajax_blc_delete_links_view', 'blc_ajax_delete_links_view');
 
 /**
  * AJAX handler to start a manual scan via admin-ajax.
@@ -3867,5 +4539,105 @@ function blc_ajax_fetch_links_table() {
             'state'  => $list_table->export_state(),
         )
     );
+}
+
+/**
+ * Handle the creation or update of a saved links view via AJAX.
+ *
+ * @return void
+ */
+function blc_ajax_save_links_view() {
+    check_ajax_referer('blc_links_views');
+
+    if (!blc_current_user_can_view_reports()) {
+        wp_send_json_error(
+            array(
+                'message' => __('Permissions insuffisantes pour gérer les vues enregistrées.', 'liens-morts-detector-jlg'),
+            ),
+            defined('BLC_HTTP_FORBIDDEN') ? (int) BLC_HTTP_FORBIDDEN : 403
+        );
+    }
+
+    $name = isset($_POST['name']) ? (string) wp_unslash($_POST['name']) : '';
+    $filters = array();
+    if (isset($_POST['filters']) && is_array($_POST['filters'])) {
+        $filters = wp_unslash($_POST['filters']);
+    }
+
+    $default_flag = null;
+    if (isset($_POST['is_default'])) {
+        $raw_default = wp_unslash($_POST['is_default']);
+        $default_flag = in_array($raw_default, array('1', 'true', 'on', 'yes'), true);
+    }
+
+    $result = blc_save_link_view($name, is_array($filters) ? $filters : array(), 0, $default_flag);
+
+    if (is_wp_error($result)) {
+        $error_data = array(
+            'message' => $result->get_error_message(),
+            'code'    => $result->get_error_code(),
+        );
+
+        $error_meta = $result->get_error_data();
+        if (is_array($error_meta)) {
+            $error_data = array_merge($error_data, $error_meta);
+        }
+
+        wp_send_json_error($error_data, 400);
+    }
+
+    $response = array(
+        'views'  => blc_prepare_link_views_for_client(isset($result['views']) && is_array($result['views']) ? $result['views'] : array()),
+        'view'   => blc_prepare_link_view_for_client(isset($result['view']) && is_array($result['view']) ? $result['view'] : array()),
+        'status' => isset($result['status']) ? (string) $result['status'] : '',
+        'limit'  => isset($result['limit']) ? (int) $result['limit'] : blc_get_saved_link_views_limit(),
+        'default_status' => isset($result['default_status']) ? (string) $result['default_status'] : 'unchanged',
+        'default_view_id' => isset($result['default_view_id']) ? (string) $result['default_view_id'] : '',
+    );
+
+    wp_send_json_success($response);
+}
+
+/**
+ * Handle the deletion of a saved links view via AJAX.
+ *
+ * @return void
+ */
+function blc_ajax_delete_links_view() {
+    check_ajax_referer('blc_links_views');
+
+    if (!blc_current_user_can_view_reports()) {
+        wp_send_json_error(
+            array(
+                'message' => __('Permissions insuffisantes pour gérer les vues enregistrées.', 'liens-morts-detector-jlg'),
+            ),
+            defined('BLC_HTTP_FORBIDDEN') ? (int) BLC_HTTP_FORBIDDEN : 403
+        );
+    }
+
+    $view_id = isset($_POST['id']) ? (string) wp_unslash($_POST['id']) : '';
+
+    $result = blc_delete_link_view($view_id);
+
+    if (is_wp_error($result)) {
+        $error_data = array(
+            'message' => $result->get_error_message(),
+            'code'    => $result->get_error_code(),
+        );
+
+        $error_meta = $result->get_error_data();
+        if (is_array($error_meta)) {
+            $error_data = array_merge($error_data, $error_meta);
+        }
+
+        wp_send_json_error($error_data, 400);
+    }
+
+    $response = array(
+        'views' => blc_prepare_link_views_for_client(isset($result['views']) && is_array($result['views']) ? $result['views'] : array()),
+        'view'  => blc_prepare_link_view_for_client(isset($result['view']) && is_array($result['view']) ? $result['view'] : array()),
+    );
+
+    wp_send_json_success($response);
 }
 
