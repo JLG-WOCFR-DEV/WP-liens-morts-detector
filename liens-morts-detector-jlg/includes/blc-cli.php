@@ -73,10 +73,11 @@ class BLC_Scan_CLI_Command extends WP_CLI_Command
                 $batch = (int) ($task['args'][0] ?? 0);
                 $is_full = (bool) ($task['args'][1] ?? false);
                 $bypass = (bool) ($task['args'][2] ?? false);
+                $context = isset($task['args'][3]) && is_array($task['args'][3]) ? $task['args'][3] : array();
 
                 \WP_CLI::log(sprintf('→ Lancement du lot de liens #%d (scan complet : %s)…', $batch, $is_full ? 'oui' : 'non'));
 
-                $result = $controller->runBatch($batch, $is_full, $bypass);
+                $result = $controller->runBatch($batch, $is_full, $bypass, $context);
                 if (is_wp_error($result)) {
                     \WP_CLI::error($result->get_error_message());
                 }
@@ -88,7 +89,7 @@ class BLC_Scan_CLI_Command extends WP_CLI_Command
             },
             [
                 'hook'  => 'blc_check_batch',
-                'args'  => [0, $is_full_scan, $bypass_rest_window],
+                'args'  => [0, $is_full_scan, $bypass_rest_window, array()],
                 'delay' => 0,
             ],
             ['blc_check_batch']
@@ -300,3 +301,94 @@ class BLC_Scan_CLI_Command extends WP_CLI_Command
 }
 
 WP_CLI::add_command('broken-links scan', 'BLC_Scan_CLI_Command');
+
+class BLC_Worker_CLI_Command extends WP_CLI_Command
+{
+    /**
+     * Exécute un worker qui consomme la file distribuée.
+     *
+     * ## OPTIONS
+     *
+     * [--max-jobs=<n>]
+     * : Nombre maximal de lots à traiter avant d’arrêter le worker. 0 = illimité.
+     *
+     * [--sleep=<seconds>]
+     * : Délai d’attente entre deux tentatives quand la file est vide. (Défaut : 3s)
+     *
+     * ## EXAMPLES
+     *
+     *     wp blc:worker run --max-jobs=10
+     *
+     * @subcommand run
+     */
+    public function run($args, $assoc_args)
+    {
+        $max_jobs = (int) \WP_CLI\Utils\get_flag_value($assoc_args, 'max-jobs', 0);
+        $sleep_seconds = (int) \WP_CLI\Utils\get_flag_value($assoc_args, 'sleep', 3);
+
+        $remote_client = blc_make_remote_request_client();
+        $queue = blc_make_scan_queue($remote_client);
+        $driver = $queue->getQueueDriver();
+
+        if (!$driver->supportsAsyncPull()) {
+            \WP_CLI::success("Le pilote courant utilise WP-Cron. Aucun worker n'est nécessaire.");
+            return;
+        }
+
+        if (!$driver->isConnected()) {
+            \WP_CLI::warning("Impossible de se connecter au pilote de file. Programmation via WP-Cron.");
+            $fallback_driver = new \JLG\BrokenLinks\Scanner\QueueDrivers\WpCronQueueDriver();
+            $fallback_driver->scheduleBatch(
+                array(
+                    'batch'              => 0,
+                    'is_full_scan'       => false,
+                    'bypass_rest_window' => false,
+                    'context'            => array(),
+                ),
+                0
+            );
+            \WP_CLI::success('Lot initial programmé via WP-Cron.');
+            return;
+        }
+
+        $processed = 0;
+        while ($max_jobs === 0 || $processed < $max_jobs) {
+            $job = $driver->receiveBatch();
+            if ($job === null) {
+                if ($sleep_seconds > 0) {
+                    sleep($sleep_seconds);
+                }
+                continue;
+            }
+
+            $batch = isset($job['batch']) ? (int) $job['batch'] : 0;
+            $is_full = isset($job['is_full_scan']) ? (bool) $job['is_full_scan'] : false;
+            $bypass = isset($job['bypass_rest_window']) ? (bool) $job['bypass_rest_window'] : false;
+            $context = isset($job['context']) && is_array($job['context']) ? $job['context'] : array();
+
+            \WP_CLI::log(sprintf('→ Exécution du lot #%d (scan complet : %s)…', $batch, $is_full ? 'oui' : 'non'));
+
+            $result = $queue->runBatch($batch, $is_full, $bypass, $context);
+
+            if (is_wp_error($result)) {
+                $message = $result->get_error_message();
+                \WP_CLI::warning(sprintf('Lot #%d en erreur : %s', $batch, $message));
+                $driver->reportFailure($job, new \RuntimeException($message));
+                continue;
+            }
+
+            $driver->acknowledge($job);
+            $processed++;
+
+            $status = blc_get_link_scan_status();
+            $state = isset($status['state']) ? (string) $status['state'] : 'running';
+            if (in_array($state, array('completed', 'failed', 'cancelled'), true)) {
+                break;
+            }
+        }
+
+        \WP_CLI::success(sprintf('Worker arrêté après %d lot(s).', $processed));
+    }
+}
+
+WP_CLI::add_command('blc:worker', 'BLC_Worker_CLI_Command');

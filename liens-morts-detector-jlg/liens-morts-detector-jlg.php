@@ -126,8 +126,8 @@ add_filter('cron_schedules', 'blc_add_cron_schedules');
 
 // Lie nos fonctions de scan aux tâches planifiées
 add_action('blc_check_links', 'blc_perform_check');
-add_action('blc_check_batch', 'blc_perform_check', 10, 3);
-add_action('blc_manual_check_batch', 'blc_perform_check', 10, 3);
+add_action('blc_check_batch', 'blc_perform_check', 10, 4);
+add_action('blc_manual_check_batch', 'blc_perform_check', 10, 4);
 add_action('blc_check_image_batch', 'blc_perform_image_check', 10, 2);
 add_action('blc_generate_report_exports', 'blc_run_automated_report_exports');
 

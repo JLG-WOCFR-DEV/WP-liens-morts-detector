@@ -1964,7 +1964,7 @@ function blc_schedule_manual_link_scan($is_full_scan = false, $force_cancel = fa
         wp_clear_scheduled_hook('blc_manual_check_batch');
     }
 
-    $schedule_args = array(0, $is_full_scan, $bypass_rest_window);
+    $schedule_args = array(0, $is_full_scan, $bypass_rest_window, array());
     $scheduled = wp_schedule_single_event($scheduled_at, 'blc_manual_check_batch', $schedule_args);
 
     if (false === $scheduled) {
