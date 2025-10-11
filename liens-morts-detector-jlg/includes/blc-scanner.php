@@ -2321,11 +2321,11 @@ if (!class_exists('ImageScanQueue')) {
             $debug_mode
         ) {
             $normalized = $normalizer->normalize($candidate_url, $permalink);
-            if ($normalized === null) {
+            if (!$normalized->isSuccessful()) {
                 return;
             }
 
-            $file_path = $normalized['file_path'];
+            $file_path = $normalized->getFilePath();
 
             if (!isset($checked_local_paths[$file_path]) || !is_array($checked_local_paths[$file_path])) {
                 $checked_local_paths[$file_path] = [
@@ -2359,7 +2359,7 @@ if (!class_exists('ImageScanQueue')) {
         }
 
         private function persistBrokenImage(
-            array $normalized,
+            BlcImageNormalizationResult $normalized,
             $post,
             $table_name,
             $post_title_for_storage,
@@ -2370,11 +2370,11 @@ if (!class_exists('ImageScanQueue')) {
         ) {
             global $wpdb;
 
-            $candidate_url = $normalized['original_url'];
-            $normalized_url = $normalized['normalized_url'];
-            $file_path = $normalized['file_path'];
-            $decoded_relative_path = $normalized['decoded_relative_path'];
-            $is_remote_upload_candidate = !empty($normalized['is_remote_upload_candidate']);
+            $candidate_url = $normalized->getOriginalUrl();
+            $normalized_url = $normalized->getNormalizedUrl();
+            $file_path = $normalized->getFilePath();
+            $decoded_relative_path = $normalized->getDecodedRelativePath();
+            $is_remote_upload_candidate = $normalized->isRemoteUploadCandidate();
 
             if ($debug_mode) {
                 error_log("  -> Image Cassée Trouvée : " . $candidate_url);
