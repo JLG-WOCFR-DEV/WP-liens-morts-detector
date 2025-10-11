@@ -1,6 +1,7 @@
 <?php
 
 namespace {
+    require_once __DIR__ . '/../vendor/autoload.php';
     require_once __DIR__ . '/translation-stubs.php';
 
     if (!class_exists('WP_Error')) {
@@ -69,6 +70,21 @@ namespace {
         function is_email($email)
         {
             return filter_var((string) $email, FILTER_VALIDATE_EMAIL) !== false;
+        }
+    }
+
+    if (!function_exists('esc_sql')) {
+        function esc_sql($value)
+        {
+            if (is_array($value)) {
+                return array_map('esc_sql', $value);
+            }
+
+            if (is_float($value) || is_int($value)) {
+                return $value;
+            }
+
+            return addslashes((string) $value);
         }
     }
 
@@ -4033,6 +4049,101 @@ HTML;
         if (is_dir($uploads_dir)) {
             @rmdir($uploads_dir);
         }
+    }
+
+    public function test_blc_perform_image_check_records_metrics_history_and_triggers_hook(): void
+    {
+        global $wpdb;
+        $wpdb = $this->createWpdbStub();
+
+        $initialStatus = blc_get_default_image_scan_status();
+        $initialStatus['state'] = 'running';
+        $initialStatus['job_id'] = 'img-job-123';
+        $initialStatus['attempt'] = 2;
+        $initialStatus['processed_batches'] = 1;
+        $initialStatus['total_batches'] = 4;
+        $initialStatus['processed_items'] = 10;
+        $initialStatus['total_items'] = 40;
+        $initialStatus['is_full_scan'] = true;
+        $this->options['blc_image_scan_status'] = $initialStatus;
+        $this->options['blc_image_scan_history'] = [];
+
+        $controllerResult = ['processed' => 40];
+        $controller = new class($controllerResult) {
+            /** @var array<string, mixed> */
+            private array $result;
+
+            /**
+             * @param array<string, mixed> $result
+             */
+            public function __construct(array $result)
+            {
+                $this->result = $result;
+            }
+
+            /**
+             * @param int  $batch
+             * @param bool $is_full_scan
+             *
+             * @return array<string, mixed>
+             */
+            public function run($batch, $is_full_scan)
+            {
+                blc_update_image_scan_status([
+                    'state'             => 'completed',
+                    'processed_batches' => 4,
+                    'total_batches'     => 4,
+                    'processed_items'   => 40,
+                    'total_items'       => 40,
+                    'message'           => 'Scan terminé',
+                ]);
+
+                return $this->result;
+            }
+        };
+
+        \Brain\Monkey\Functions\when('blc_make_image_scan_controller')->alias(fn($queue) => $controller);
+
+        $result = blc_perform_image_check(0, true);
+
+        $this->assertSame($controllerResult, $result, 'Le contrôleur stub doit retourner le payload attendu.');
+
+        $this->assertArrayHasKey('blc_image_scan_metrics_history', $this->updatedOptions, 'Les métriques doivent être historisées.');
+        $history = $this->updatedOptions['blc_image_scan_metrics_history'];
+        $this->assertIsArray($history);
+        $this->assertNotEmpty($history, 'Le premier lot doit enregistrer une entrée de métriques.');
+        $metrics = $history[0];
+        $this->assertSame('img-job-123', $metrics['job_id']);
+        $this->assertSame(0, $metrics['batch']);
+        $this->assertArrayHasKey('duration_ms', $metrics);
+        $this->assertIsInt($metrics['duration_ms']);
+        $this->assertGreaterThanOrEqual(0, $metrics['duration_ms']);
+        $this->assertLessThan(5000, $metrics['duration_ms']);
+        $this->assertSame($this->utcNow, $metrics['timestamp']);
+        $this->assertSame('completed', $metrics['state']);
+        $this->assertTrue($metrics['success']);
+        $this->assertSame(4, $metrics['processed_batches']);
+        $this->assertSame(4, $metrics['total_batches']);
+        $this->assertSame(40, $metrics['processed_items']);
+        $this->assertSame(40, $metrics['total_items']);
+        $this->assertSame(2, $metrics['attempt']);
+        $this->assertTrue($metrics['is_full_scan']);
+
+        $actions = array_filter(
+            $this->triggeredActions,
+            static fn(array $action) => $action['hook'] === 'blc_image_scan_metrics'
+        );
+        $this->assertNotEmpty($actions, 'Le hook blc_image_scan_metrics doit être déclenché.');
+        $lastAction = array_pop($actions);
+        $this->assertSame($metrics, $lastAction['args'][0]);
+        $this->assertSame($controllerResult, $lastAction['args'][1]);
+
+        $this->assertArrayHasKey('blc_image_scan_history', $this->options, 'Le journal des jobs doit être maintenu.');
+        $historyEntries = $this->options['blc_image_scan_history'];
+        $this->assertNotEmpty($historyEntries);
+        $this->assertSame('img-job-123', $historyEntries[0]['job_id']);
+        $this->assertArrayHasKey('metrics', $historyEntries[0], 'Les métriques doivent être attachées à l’entrée du job.');
+        $this->assertSame($metrics, $historyEntries[0]['metrics']);
     }
 
     public function test_blc_perform_image_check_detects_missing_srcset_variant(): void
