@@ -171,6 +171,10 @@ abstract class ScannerTestCase extends TestCase
         $GLOBALS['wpdb'] = $this->wpdb;
 
         $this->stubWordPressFunctions();
+
+        if (function_exists('blc_get_proxy_pool_instance')) {
+            blc_get_proxy_pool_instance(true);
+        }
     }
 
     protected function tearDown(): void
@@ -368,6 +372,16 @@ abstract class ScannerTestCase extends TestCase
             $stripped = strip_tags($text);
 
             return trim(preg_replace('/[\r\n\t ]+/', ' ', $stripped));
+        });
+
+        Functions\when('esc_url_raw')->alias(function ($url) {
+            if (!is_string($url)) {
+                return '';
+            }
+
+            $sanitized = filter_var($url, FILTER_SANITIZE_URL);
+
+            return is_string($sanitized) ? $sanitized : '';
         });
 
         if (!function_exists('sanitize_email')) {

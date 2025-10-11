@@ -4,6 +4,7 @@ if (!defined('ABSPATH')) exit;
 
 
 require_once __DIR__ . '/Scanner/HttpClientInterface.php';
+require_once __DIR__ . '/Scanner/ProxyPool.php';
 require_once __DIR__ . '/Scanner/RemoteRequestClient.php';
 require_once __DIR__ . '/Scanner/ImageUrlNormalizer.php';
 require_once __DIR__ . '/Scanner/ImageNormalizationContext.php';
@@ -796,6 +797,22 @@ if (!function_exists('blc_record_remote_request_metrics')) {
         }
 
         update_option('blc_remote_request_metrics_history', $history, false);
+
+        if (isset($metrics['proxy_id']) && is_string($metrics['proxy_id'])) {
+            $proxyId = function_exists('sanitize_key') ? sanitize_key($metrics['proxy_id']) : strtolower(preg_replace('/[^a-z0-9_\-]/i', '', $metrics['proxy_id']));
+            if ($proxyId !== '') {
+                $timestamp = isset($metrics['timestamp']) ? (int) $metrics['timestamp'] : time();
+                $outcomeRecorded = !empty($metrics['proxy_outcome_recorded']);
+
+                if (!$outcomeRecorded) {
+                    if (!empty($metrics['proxy_failure'])) {
+                        blc_proxy_pool_register_outcome($proxyId, false, $timestamp);
+                    } elseif (!empty($metrics['success'])) {
+                        blc_proxy_pool_register_outcome($proxyId, true, $timestamp);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -2525,7 +2542,13 @@ function blc_make_remote_request_client($force_refresh = false) {
         return $cache['instance'];
     }
 
-    $client = new \JLG\BrokenLinks\Scanner\RemoteRequestClient($default_args, $retry_plan, $user_agents);
+    $proxy_pool = blc_get_proxy_pool_instance();
+
+    $client = new \JLG\BrokenLinks\Scanner\RemoteRequestClient($default_args, $retry_plan, $user_agents, $proxy_pool instanceof \JLG\BrokenLinks\Scanner\ProxyPool ? $proxy_pool : null);
+
+    if ($proxy_pool instanceof \JLG\BrokenLinks\Scanner\ProxyPool) {
+        $client->setProxyPool($proxy_pool);
+    }
 
     if (function_exists('apply_filters')) {
         $maybe_client = apply_filters('blc_remote_request_client_instance', $client, $default_args, $retry_plan, $user_agents);

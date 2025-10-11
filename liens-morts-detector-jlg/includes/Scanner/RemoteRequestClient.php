@@ -34,7 +34,14 @@ class RemoteRequestClient implements HttpClientInterface
      */
     private $lastRequestAt = 0.0;
 
-    public function __construct(array $defaultArgs = [], array $retryPlan = [], array $userAgents = [])
+    /**
+     * Pool of proxies used to route outgoing requests.
+     *
+     * @var ProxyPool|null
+     */
+    private $proxyPool;
+
+    public function __construct(array $defaultArgs = [], array $retryPlan = [], array $userAgents = [], ?ProxyPool $proxyPool = null)
     {
         $defaults = [
             'timeout'     => 10,
@@ -57,6 +64,12 @@ class RemoteRequestClient implements HttpClientInterface
         $this->defaultArgs = array_merge($defaults, $defaultArgs);
         $this->retryPlan   = array_merge($retryDefaults, $retryPlan);
         $this->userAgents  = $userAgents !== [] ? array_values(array_filter($userAgents, 'is_string')) : $this->getDefaultUserAgents();
+        $this->proxyPool   = $proxyPool;
+    }
+
+    public function setProxyPool(?ProxyPool $proxyPool = null)
+    {
+        $this->proxyPool = $proxyPool;
     }
 
     public function head($url, array $args = [])
@@ -94,12 +107,21 @@ class RemoteRequestClient implements HttpClientInterface
             $this->enforceRateLimit();
 
             $requestArgs = $this->prepareRequestArguments($args, $attempt);
+            $proxySelection = $this->acquireProxySelection($url, $requestArgs);
+            if ($proxySelection !== null && $this->proxyPool instanceof ProxyPool && $this->proxyPool->isEnabled()) {
+                $requestArgs = $this->proxyPool->injectProxyArguments($url, $requestArgs, $proxySelection);
+            }
+
             $requestStartedAt = microtime(true);
             $lastResponse = $this->dispatchRequest($method, $url, $requestArgs);
             $durationMs = (int) round((microtime(true) - $requestStartedAt) * 1000);
 
+            $responseCode = $this->extractResponseCode($lastResponse);
             $retryAfter = $this->getRetryAfterDelay($lastResponse);
             $willRetry = $this->shouldRetry($lastResponse, $attempt, $attempts);
+
+            $proxyFailure = $this->shouldMarkProxyFailure($lastResponse, $responseCode);
+            $proxyOutcomeRecorded = $this->reportProxyOutcome($proxySelection, $lastResponse, $responseCode, $willRetry, $proxyFailure);
 
             $this->recordRequestMetrics(
                 $method,
@@ -110,7 +132,11 @@ class RemoteRequestClient implements HttpClientInterface
                 $durationMs,
                 $lastResponse,
                 $willRetry,
-                $retryAfter
+                $retryAfter,
+                $proxySelection,
+                $proxyOutcomeRecorded,
+                $responseCode,
+                $proxyFailure
             );
 
             if (!$willRetry) {
@@ -355,7 +381,11 @@ class RemoteRequestClient implements HttpClientInterface
         $durationMs,
         $response,
         $willRetry,
-        $retryAfterMs
+        $retryAfterMs,
+        $proxySelection,
+        $proxyOutcomeRecorded,
+        $responseCode,
+        $proxyFailure
     ) {
         $metrics = $this->createRequestMetricsPayload(
             $method,
@@ -366,7 +396,11 @@ class RemoteRequestClient implements HttpClientInterface
             $durationMs,
             $response,
             $willRetry,
-            $retryAfterMs
+            $retryAfterMs,
+            $proxySelection,
+            $proxyOutcomeRecorded,
+            $responseCode,
+            $proxyFailure
         );
 
         if (function_exists('\\blc_record_remote_request_metrics')) {
@@ -402,7 +436,11 @@ class RemoteRequestClient implements HttpClientInterface
         $durationMs,
         $response,
         $willRetry,
-        $retryAfterMs
+        $retryAfterMs,
+        $proxySelection,
+        $proxyOutcomeRecorded,
+        $responseCode,
+        $proxyFailure
     ) {
         $parsedUrl = function_exists('wp_parse_url') ? \wp_parse_url($url) : parse_url($url);
 
@@ -429,7 +467,7 @@ class RemoteRequestClient implements HttpClientInterface
 
         $methodLabel = strtoupper((string) $method);
         $timestamp = time();
-        $responseCode = 0;
+        $responseCode = (int) $responseCode;
         $success = false;
 
         $errorCode = '';
@@ -439,7 +477,6 @@ class RemoteRequestClient implements HttpClientInterface
             $errorCode = (string) $response->get_error_code();
             $errorMessage = $response->get_error_message();
         } else {
-            $responseCode = (int) \wp_remote_retrieve_response_code($response);
             if (!$willRetry && $responseCode >= 200 && $responseCode < 400) {
                 $success = true;
             }
@@ -469,7 +506,140 @@ class RemoteRequestClient implements HttpClientInterface
             $metrics['user_agent'] = trim($args['user-agent']);
         }
 
+        if (is_array($proxySelection)) {
+            $proxyId = isset($proxySelection['id']) ? (string) $proxySelection['id'] : '';
+            if ($proxyId !== '') {
+                $metrics['proxy_id'] = $proxyId;
+            }
+
+            if (isset($proxySelection['region']) && is_string($proxySelection['region'])) {
+                $metrics['proxy_region'] = (string) $proxySelection['region'];
+            }
+
+            if (isset($proxySelection['priority'])) {
+                $metrics['proxy_priority'] = (int) $proxySelection['priority'];
+            }
+
+            if (isset($proxySelection['url']) && is_string($proxySelection['url'])) {
+                $metrics['proxy_url'] = $this->sanitizeProxyUrl($proxySelection['url']);
+            }
+
+            $metrics['proxy_has_credentials'] = !empty($proxySelection['credentials']);
+            $metrics['proxy_failure'] = (bool) $proxyFailure;
+            $metrics['proxy_outcome_recorded'] = (bool) $proxyOutcomeRecorded;
+
+            if ($this->proxyPool instanceof ProxyPool) {
+                $health = $this->proxyPool->getHealthSnapshot();
+                if ($proxyId !== '' && isset($health[$proxyId])) {
+                    if (isset($health[$proxyId]['suspended_until'])) {
+                        $metrics['proxy_suspended_until'] = (int) $health[$proxyId]['suspended_until'];
+                    }
+
+                    if (isset($health[$proxyId]['failure_count'])) {
+                        $metrics['proxy_failure_count'] = (int) $health[$proxyId]['failure_count'];
+                    }
+                }
+            }
+        }
+
         return $metrics;
+    }
+
+    private function acquireProxySelection($url, array $args)
+    {
+        if (!$this->proxyPool instanceof ProxyPool || !$this->proxyPool->isEnabled()) {
+            return null;
+        }
+
+        $context = ['url' => $url];
+        $parsedUrl = function_exists('wp_parse_url') ? \wp_parse_url($url) : parse_url($url);
+        if (is_array($parsedUrl) && isset($parsedUrl['host'])) {
+            $context['host'] = strtolower((string) $parsedUrl['host']);
+        }
+
+        if (isset($args['proxy_region']) && is_string($args['proxy_region'])) {
+            $context['region'] = $args['proxy_region'];
+        } elseif (isset($args['blc_proxy_region']) && is_string($args['blc_proxy_region'])) {
+            $context['region'] = $args['blc_proxy_region'];
+        }
+
+        return $this->proxyPool->acquire($context);
+    }
+
+    private function extractResponseCode($response)
+    {
+        if ($response instanceof WP_Error) {
+            return 0;
+        }
+
+        if (function_exists('wp_remote_retrieve_response_code')) {
+            return (int) \wp_remote_retrieve_response_code($response);
+        }
+
+        return 0;
+    }
+
+    private function shouldMarkProxyFailure($response, $responseCode)
+    {
+        if ($response instanceof WP_Error) {
+            return true;
+        }
+
+        if ((int) $responseCode === 0) {
+            return true;
+        }
+
+        $code = (int) $responseCode;
+
+        return in_array($code, [407, 502, 503, 504], true);
+    }
+
+    private function reportProxyOutcome($proxySelection, $response, $responseCode, $willRetry, $proxyFailure)
+    {
+        if (!is_array($proxySelection) || !$this->proxyPool instanceof ProxyPool || !$this->proxyPool->isEnabled()) {
+            return false;
+        }
+
+        $proxyId = isset($proxySelection['id']) ? (string) $proxySelection['id'] : '';
+        if ($proxyId === '') {
+            return false;
+        }
+
+        if ($proxyFailure) {
+            return $this->proxyPool->reportOutcome($proxyId, false);
+        }
+
+        $code = (int) $responseCode;
+        if (!$willRetry && $code >= 200 && $code < 400) {
+            return $this->proxyPool->reportOutcome($proxyId, true);
+        }
+
+        return false;
+    }
+
+    private function sanitizeProxyUrl($proxyUrl)
+    {
+        if (!is_string($proxyUrl) || $proxyUrl === '') {
+            return '';
+        }
+
+        $parts = parse_url($proxyUrl);
+        if (!is_array($parts)) {
+            return $proxyUrl;
+        }
+
+        $scheme = isset($parts['scheme']) ? $parts['scheme'] . '://' : '';
+        $host = $parts['host'] ?? '';
+        $port = isset($parts['port']) ? ':' . $parts['port'] : '';
+        $path = $parts['path'] ?? '';
+        $query = isset($parts['query']) ? '?' . $parts['query'] : '';
+
+        if ($host === '' && isset($parts['path']) && strpos($parts['path'], '/') === false) {
+            $host = $parts['path'];
+            $path = '';
+        }
+
+        return $scheme . $host . $port . $path . $query;
     }
 
     /**

@@ -203,4 +203,110 @@ final class RemoteRequestClientTest extends ScannerTestCase
         $this->assertSame($metricsLog[0], $hookLog[0][0]);
         $this->assertSame($metricsLog[1], $hookLog[1][0]);
     }
+
+    public function test_request_rotates_proxy_after_failure(): void
+    {
+        Functions\when('time')->justReturn(1_700_000_000);
+
+        update_option('blc_proxy_pool_enabled', true);
+        update_option('blc_proxy_pool_entries', [
+            [
+                'id'       => 'proxy-a',
+                'url'      => 'http://proxy-a:8080',
+                'regions'  => ['global'],
+                'priority' => 100,
+                'headers'  => [],
+            ],
+            [
+                'id'       => 'proxy-b',
+                'url'      => 'http://proxy-b:8080',
+                'regions'  => ['global'],
+                'priority' => 90,
+                'headers'  => [],
+            ],
+        ]);
+        update_option('blc_proxy_pool_strategy', [
+            'mappings'  => [],
+            'fallbacks' => ['default' => ['global']],
+        ]);
+        update_option('blc_proxy_pool_health', []);
+
+        $pool = blc_get_proxy_pool_instance(true);
+
+        $capturedArgs = [];
+        $metricsLog   = [];
+
+        Functions\when('blc_record_remote_request_metrics')->alias(function ($metrics) use (&$metricsLog) {
+            $metricsLog[] = $metrics;
+        });
+
+        Functions\when('do_action')->alias(function ($hook) {
+            return $hook;
+        });
+
+        Functions\when('microtime')->alias(function ($as_float = false) {
+            static $sequence = 0;
+            $sequence += 0.1;
+            if ($as_float) {
+                return 1_000_000 + $sequence;
+            }
+
+            $integer = (int) floor(1_000_000 + $sequence);
+            $fraction = (1_000_000 + $sequence) - $integer;
+
+            return sprintf('%0.8f %d', $fraction, $integer);
+        });
+
+        Functions\when('usleep')->alias(function () {
+            return true;
+        });
+
+        $responses = [
+            new \WP_Error('proxy_down', 'Proxy unreachable'),
+            ['response' => ['code' => 200], 'headers' => []],
+        ];
+
+        Functions\when('wp_safe_remote_get')->alias(function ($url, $args) use (&$responses, &$capturedArgs) {
+            $capturedArgs[] = $args;
+
+            return array_shift($responses);
+        });
+
+        Functions\when('wp_remote_retrieve_response_code')->alias(function ($response) {
+            if ($response instanceof \WP_Error) {
+                return 0;
+            }
+
+            return isset($response['response']['code']) ? (int) $response['response']['code'] : 0;
+        });
+
+        Functions\when('wp_remote_retrieve_header')->alias(static function () {
+            return '';
+        });
+
+        $client = new RemoteRequestClient([], [
+            'max_attempts'     => 2,
+            'initial_delay_ms' => 0,
+            'max_delay_ms'     => 10,
+        ], [], $pool);
+
+        $result = $client->get('https://example.com', []);
+
+        $this->assertSame(['response' => ['code' => 200], 'headers' => []], $result);
+        $this->assertCount(2, $capturedArgs);
+
+        $this->assertSame('http://proxy-a:8080', $capturedArgs[0]['curl'][CURLOPT_PROXY]);
+        $this->assertSame('http://proxy-b:8080', $capturedArgs[1]['curl'][CURLOPT_PROXY]);
+
+        $this->assertCount(2, $metricsLog);
+        $this->assertSame('proxy-a', $metricsLog[0]['proxy_id']);
+        $this->assertTrue($metricsLog[0]['proxy_failure']);
+        $this->assertSame('proxy-b', $metricsLog[1]['proxy_id']);
+        $this->assertFalse($metricsLog[1]['proxy_failure']);
+        $this->assertTrue($metricsLog[1]['success']);
+
+        $health = get_option('blc_proxy_pool_health', []);
+        $this->assertArrayHasKey('proxy-a', $health);
+        $this->assertGreaterThan(0, $health['proxy-a']['failure_count']);
+    }
 }

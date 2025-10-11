@@ -1585,7 +1585,12 @@ function blc_ajax_recheck_link_callback() {
         $get_limits['max']
     );
 
-    $remote_request_client = new \JLG\BrokenLinks\Scanner\RemoteRequestClient();
+    $proxy_pool = blc_get_proxy_pool_instance();
+    $remote_request_client = new \JLG\BrokenLinks\Scanner\RemoteRequestClient([], [], [], $proxy_pool instanceof \JLG\BrokenLinks\Scanner\ProxyPool ? $proxy_pool : null);
+
+    if ($proxy_pool instanceof \JLG\BrokenLinks\Scanner\ProxyPool) {
+        $remote_request_client->setProxyPool($proxy_pool);
+    }
 
     $head_args = [
         'user-agent'          => blc_get_http_user_agent(),

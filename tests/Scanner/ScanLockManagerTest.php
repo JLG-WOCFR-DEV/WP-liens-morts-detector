@@ -60,7 +60,7 @@ final class ScanLockManagerTest extends ScannerTestCase
         self::assertSame('rescheduled', $result['status']);
         self::assertCount(1, $this->scheduledEvents);
         self::assertSame('blc_check_batch', $this->scheduledEvents[0]['hook']);
-        self::assertSame([2, false, false], $this->scheduledEvents[0]['args']);
+        self::assertSame([2, false, false, []], $this->scheduledEvents[0]['args']);
     }
 
     public function test_acquire_or_reschedule_returns_error_for_manual_runs(): void

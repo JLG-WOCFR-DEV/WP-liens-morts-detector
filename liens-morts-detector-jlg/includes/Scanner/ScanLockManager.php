@@ -113,7 +113,7 @@ class ScanLockManager
      * @param array<string, mixed> $preflight
      * @param string               $lock_token
      */
-    public function deferDuringRestWindow(array $preflight, $lock_token, $debug_mode, array $jobContext): array
+    public function deferDuringRestWindow(array $preflight, $lock_token, $debug_mode, array $jobContext = []): array
     {
         $batch              = $preflight['batch'];
         $is_full_scan       = $preflight['is_full_scan'];
@@ -239,7 +239,7 @@ class ScanLockManager
      * @param array<string, mixed> $preflight
      * @param string               $lock_token
      */
-    public function deferForServerLoad(array $preflight, $lock_token, $debug_mode, array $jobContext): array
+    public function deferForServerLoad(array $preflight, $lock_token, $debug_mode, array $jobContext = []): array
     {
         if (!function_exists('sys_getloadavg')) {
             return [
