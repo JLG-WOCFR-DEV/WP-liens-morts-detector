@@ -2544,8 +2544,94 @@ function blc_make_remote_request_client($force_refresh = false) {
     return $client;
 }
 
+/**
+ * Retrieve registered queue drivers.
+ *
+ * @return array<string, \JLG\BrokenLinks\Scanner\QueueDriverInterface>
+ */
+function blc_get_queue_drivers_registry() {
+    $selected = get_option('blc_queue_driver', 'wp_cron');
+
+    $drivers = array(
+        'wp_cron' => new \JLG\BrokenLinks\Scanner\QueueDrivers\WpCronQueueDriver(),
+    );
+
+    $blocking_timeout = 5;
+    if (function_exists('apply_filters')) {
+        $blocking_timeout = (int) apply_filters('blc_queue_redis_blocking_timeout', $blocking_timeout);
+    }
+
+    $redis_config = array(
+        'host'             => get_option('blc_queue_redis_host', '127.0.0.1'),
+        'port'             => (int) get_option('blc_queue_redis_port', 6379),
+        'password'         => get_option('blc_queue_redis_password', ''),
+        'queue'            => 'blc:scan-queue',
+        'blocking_timeout' => max(1, $blocking_timeout),
+    );
+
+    $drivers['redis'] = new \JLG\BrokenLinks\Scanner\QueueDrivers\RedisQueueDriver($redis_config);
+
+    if (function_exists('apply_filters')) {
+        $drivers = apply_filters('blc_queue_drivers', $drivers, $selected);
+    }
+
+    if (function_exists('do_action')) {
+        foreach ($drivers as $driver) {
+            if ($driver instanceof \JLG\BrokenLinks\Scanner\QueueDriverInterface) {
+                do_action('blc_queue_driver_registered', $driver);
+            }
+        }
+    }
+
+    return $drivers;
+}
+
+function blc_resolve_queue_driver() {
+    static $cached = null;
+
+    if ($cached instanceof \JLG\BrokenLinks\Scanner\QueueDriverInterface) {
+        return $cached;
+    }
+
+    $selected = get_option('blc_queue_driver', 'wp_cron');
+    $drivers = blc_get_queue_drivers_registry();
+
+    if (isset($drivers[$selected]) && $drivers[$selected] instanceof \JLG\BrokenLinks\Scanner\QueueDriverInterface) {
+        $candidate = $drivers[$selected];
+        if (!$candidate->supportsAsyncPull() || $candidate->isConnected()) {
+            $cached = $candidate;
+        }
+    }
+
+    if (!$cached && $selected !== 'wp_cron' && function_exists('error_log')) {
+        error_log(sprintf('BLC: Queue driver "%s" indisponible, bascule sur WP-Cron.', $selected));
+    }
+
+    if (!$cached && isset($drivers['wp_cron']) && $drivers['wp_cron'] instanceof \JLG\BrokenLinks\Scanner\QueueDriverInterface) {
+        $cached = $drivers['wp_cron'];
+    }
+
+    if (!$cached) {
+        $cached = new \JLG\BrokenLinks\Scanner\QueueDrivers\WpCronQueueDriver();
+    }
+
+    if (function_exists('do_action')) {
+        do_action('blc_queue_driver_resolved', $cached, $selected);
+    }
+
+    return $cached;
+}
+
 function blc_make_scan_queue(\JLG\BrokenLinks\Scanner\HttpClientInterface $client) {
-    return new \JLG\BrokenLinks\Scanner\ScanQueue($client);
+    $driver = blc_resolve_queue_driver();
+    $lock_manager = new \JLG\BrokenLinks\Scanner\ScanLockManager($driver);
+    $queue = new \JLG\BrokenLinks\Scanner\ScanQueue($client, null, $lock_manager, $driver);
+
+    if (function_exists('do_action')) {
+        do_action('blc_scan_queue_created', $queue, $driver);
+    }
+
+    return $queue;
 }
 
 function blc_make_link_scan_controller(\JLG\BrokenLinks\Scanner\ScanQueue $queue) {
@@ -4614,7 +4700,7 @@ function blc_restore_dataset_refresh($table_name, $types, $scan_run_id, ?array $
  * Déclenchée par la planification et le bouton principal.
  */
 
-function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_window = false) {
+function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_window = false, $job_context = array()) {
     $execution_started_at = microtime(true);
     global $wpdb;
 
@@ -4652,7 +4738,11 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
     $queue = blc_make_scan_queue($remote_client);
     $controller = blc_make_link_scan_controller($queue);
 
-    $result = $controller->runBatch((int) $batch, (bool) $is_full_scan, (bool) $bypass_rest_window);
+    if (!is_array($job_context)) {
+        $job_context = array();
+    }
+
+    $result = $controller->runBatch((int) $batch, (bool) $is_full_scan, (bool) $bypass_rest_window, $job_context);
 
     if (function_exists('is_wp_error') && is_wp_error($result)) {
         $message = $result->get_error_message();

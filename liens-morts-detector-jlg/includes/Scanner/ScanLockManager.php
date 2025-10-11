@@ -2,10 +2,22 @@
 
 namespace JLG\BrokenLinks\Scanner;
 
+require_once __DIR__ . '/ScanQueue.php';
+
 use WP_Error;
 
 class ScanLockManager
 {
+    /**
+     * @var QueueDriverInterface|null
+     */
+    private $queueDriver;
+
+    public function __construct(?QueueDriverInterface $queueDriver = null)
+    {
+        $this->queueDriver = $queueDriver;
+    }
+
     /**
      * Ensure there is a job identifier stored in the shared status payload.
      */
@@ -56,7 +68,8 @@ class ScanLockManager
         $bypass_rest_window,
         $batch_delay_s,
         $lock_timeout,
-        $debug_mode
+        $debug_mode,
+        array $jobContext = []
     ) {
         $lock_token = blc_acquire_link_scan_lock($lock_timeout);
 
@@ -73,12 +86,7 @@ class ScanLockManager
             }
 
             $retry_delay = max(60, $batch_delay_s);
-            $scheduled   = wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
-
-            if (false === $scheduled) {
-                error_log(sprintf('BLC: Failed to reschedule link batch #%d while waiting for lock.', $batch));
-                do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'lock_unavailable');
-            }
+            $this->scheduleBatch($batch, $is_full_scan, $bypass_rest_window, $jobContext, $retry_delay, 'lock_unavailable');
 
             return [
                 'status' => 'rescheduled',
@@ -105,7 +113,7 @@ class ScanLockManager
      * @param array<string, mixed> $preflight
      * @param string               $lock_token
      */
-    public function deferDuringRestWindow(array $preflight, $lock_token, $debug_mode): array
+    public function deferDuringRestWindow(array $preflight, $lock_token, $debug_mode, array $jobContext): array
     {
         $batch              = $preflight['batch'];
         $is_full_scan       = $preflight['is_full_scan'];
@@ -211,11 +219,8 @@ class ScanLockManager
             $next_timestamp = $current_gmt_timestamp + 60;
         }
 
-        $scheduled = wp_schedule_single_event($next_timestamp, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
-        if (false === $scheduled) {
-            error_log(sprintf('BLC: Failed to schedule link batch #%d during rest window.', $batch));
-            do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'rest_window');
-        }
+        $delay_seconds = max(0, $next_timestamp - time());
+        $this->scheduleBatch($batch, $is_full_scan, $bypass_rest_window, $jobContext, $delay_seconds, 'rest_window');
 
         if ($lock_token !== '') {
             blc_release_link_scan_lock($lock_token);
@@ -234,7 +239,7 @@ class ScanLockManager
      * @param array<string, mixed> $preflight
      * @param string               $lock_token
      */
-    public function deferForServerLoad(array $preflight, $lock_token, $debug_mode): array
+    public function deferForServerLoad(array $preflight, $lock_token, $debug_mode, array $jobContext): array
     {
         if (!function_exists('sys_getloadavg')) {
             return [
@@ -281,11 +286,7 @@ class ScanLockManager
             error_log('Scan reporté : charge serveur trop élevée (' . $current_load . ').');
         }
 
-        $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
-        if (false === $scheduled) {
-            error_log(sprintf('BLC: Failed to schedule link batch #%d after high load.', $batch));
-            do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'server_load');
-        }
+        $this->scheduleBatch($batch, $is_full_scan, $bypass_rest_window, $jobContext, $retry_delay, 'server_load');
 
         if ($lock_token !== '') {
             blc_release_link_scan_lock($lock_token);
@@ -297,4 +298,41 @@ class ScanLockManager
             'lock_token' => $lock_token,
         ];
     }
+
+    private function scheduleBatch(int $batch, bool $is_full_scan, bool $bypass_rest_window, array $jobContext, int $delay_seconds, string $reason): void
+    {
+        $delay_seconds = max(0, $delay_seconds);
+
+        $job = [
+            'batch'               => (int) $batch,
+            'is_full_scan'        => (bool) $is_full_scan,
+            'bypass_rest_window'  => (bool) $bypass_rest_window,
+            'context'             => $jobContext,
+        ];
+
+        $scheduled = false;
+
+        if ($this->queueDriver instanceof QueueDriverInterface) {
+            $scheduled = $this->queueDriver->scheduleBatch($job, $delay_seconds);
+        }
+
+        if (!$scheduled) {
+            $timestamp = time() + $delay_seconds;
+            $args = [$batch, $is_full_scan, $bypass_rest_window, $jobContext];
+            $scheduled = wp_schedule_single_event($timestamp, 'blc_check_batch', $args);
+        }
+
+        if (!$scheduled && function_exists('error_log')) {
+            error_log(sprintf('BLC: Failed to schedule link batch #%d (%s).', $batch, $reason));
+        }
+
+        if (function_exists('do_action')) {
+            if (!$scheduled) {
+                do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, $reason, $job);
+            } else {
+                do_action('blc_queue_job_scheduled', $job, $delay_seconds, $reason, $this->queueDriver);
+            }
+        }
+    }
 }
+

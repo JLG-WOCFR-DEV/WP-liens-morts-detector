@@ -427,6 +427,56 @@ function blc_register_settings() {
         )
     );
 
+    register_setting(
+        $option_group,
+        'blc_queue_driver',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_queue_driver_option',
+            'default'           => 'wp_cron',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_queue_redis_host',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_queue_host_option',
+            'default'           => '127.0.0.1',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_queue_redis_port',
+        array(
+            'type'              => 'integer',
+            'sanitize_callback' => 'blc_sanitize_queue_port_option',
+            'default'           => 6379,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_queue_redis_password',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_queue_password_option',
+            'default'           => '',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_queue_concurrency',
+        array(
+            'type'              => 'integer',
+            'sanitize_callback' => 'blc_sanitize_queue_concurrency_option',
+            'default'           => 1,
+        )
+    );
+
     blc_register_settings_sections();
 }
 
@@ -572,6 +622,73 @@ function blc_register_settings_sections() {
         __('Détection de soft 404', 'liens-morts-detector-jlg'),
         '__return_false',
         $page
+    );
+
+    add_settings_section(
+        'blc_queue_section',
+        __('File d’attente distribuée', 'liens-morts-detector-jlg'),
+        '__return_false',
+        $page
+    );
+
+    add_settings_field(
+        'blc_queue_driver',
+        __('Pilote de file', 'liens-morts-detector-jlg'),
+        'blc_render_queue_driver_field',
+        $page,
+        'blc_queue_section',
+        array(
+            'label_for' => 'blc_queue_driver',
+        )
+    );
+
+    add_settings_field(
+        'blc_queue_redis_host',
+        __('Hôte Redis', 'liens-morts-detector-jlg'),
+        'blc_render_queue_host_field',
+        $page,
+        'blc_queue_section',
+        array(
+            'label_for' => 'blc_queue_redis_host',
+        )
+    );
+
+    add_settings_field(
+        'blc_queue_redis_port',
+        __('Port Redis', 'liens-morts-detector-jlg'),
+        'blc_render_queue_port_field',
+        $page,
+        'blc_queue_section',
+        array(
+            'label_for' => 'blc_queue_redis_port',
+        )
+    );
+
+    add_settings_field(
+        'blc_queue_redis_password',
+        __('Mot de passe', 'liens-morts-detector-jlg'),
+        'blc_render_queue_password_field',
+        $page,
+        'blc_queue_section',
+        array(
+            'label_for' => 'blc_queue_redis_password',
+        )
+    );
+
+    add_settings_field(
+        'blc_queue_concurrency',
+        __('Travailleurs simultanés', 'liens-morts-detector-jlg'),
+        'blc_render_number_field',
+        $page,
+        'blc_queue_section',
+        array(
+            'option_name' => 'blc_queue_concurrency',
+            'min'         => 1,
+            'step'        => 1,
+            'description' => __('Nombre maximum de workers WP-CLI/externes exécutés en parallèle.', 'liens-morts-detector-jlg'),
+            'label_for'   => 'blc_queue_concurrency',
+            'tooltip'     => __('Ajustez selon la capacité de votre backend Redis ou SQS.', 'liens-morts-detector-jlg'),
+        )
     );
 
     add_settings_field(
@@ -1426,6 +1543,62 @@ function blc_render_timeout_field($args) {
             'tooltip'     => isset($args['tooltip']) ? $args['tooltip'] : '',
         )
     );
+}
+
+function blc_render_queue_driver_field()
+{
+    $value = get_option('blc_queue_driver', 'wp_cron');
+    $options = array(
+        'wp_cron' => __('WP-Cron (interne)', 'liens-morts-detector-jlg'),
+        'redis'   => __('Redis Streams / Listes', 'liens-morts-detector-jlg'),
+    );
+
+    if (function_exists('apply_filters')) {
+        $options = apply_filters('blc_queue_driver_options', $options);
+    }
+
+    echo '<div class="blc-field-with-help">';
+    echo '<select id="blc_queue_driver" name="blc_queue_driver">';
+    foreach ($options as $option_value => $label) {
+        printf(
+            '<option value="%1$s" %2$s>%3$s</option>',
+            esc_attr((string) $option_value),
+            selected($value, $option_value, false),
+            esc_html((string) $label)
+        );
+    }
+    echo '</select>';
+    blc_render_field_help('blc_queue_driver', __('Choisissez WP-Cron pour rester sur le comportement natif ou Redis pour externaliser la file (Streams/Listes).', 'liens-morts-detector-jlg'));
+    echo '</div>';
+    echo '<p class="description">' . esc_html__('Les pilotes externes nécessitent un worker WP-CLI ou un service dédié.', 'liens-morts-detector-jlg') . '</p>';
+}
+
+function blc_render_queue_host_field()
+{
+    $value = get_option('blc_queue_redis_host', '127.0.0.1');
+    echo '<div class="blc-field-with-help">';
+    echo '<input type="text" class="regular-text" id="blc_queue_redis_host" name="blc_queue_redis_host" value="' . esc_attr($value) . '" autocomplete="off">';
+    blc_render_field_help('blc_queue_redis_host', __('Adresse de votre serveur Redis (hôte ou IP).', 'liens-morts-detector-jlg'));
+    echo '</div>';
+    echo '<p class="description">' . esc_html__('Par exemple : 127.0.0.1 ou redis.internal.', 'liens-morts-detector-jlg') . '</p>';
+}
+
+function blc_render_queue_port_field()
+{
+    $value = (int) get_option('blc_queue_redis_port', 6379);
+    echo '<div class="blc-field-with-help">';
+    echo '<input type="number" min="1" max="65535" id="blc_queue_redis_port" name="blc_queue_redis_port" value="' . esc_attr($value) . '">';
+    blc_render_field_help('blc_queue_redis_port', __('Port TCP utilisé par Redis (défaut : 6379).', 'liens-morts-detector-jlg'));
+    echo '</div>';
+}
+
+function blc_render_queue_password_field()
+{
+    $value = (string) get_option('blc_queue_redis_password', '');
+    echo '<div class="blc-field-with-help">';
+    echo '<input type="password" class="regular-text" id="blc_queue_redis_password" name="blc_queue_redis_password" value="' . esc_attr($value) . '" autocomplete="new-password">';
+    blc_render_field_help('blc_queue_redis_password', __('Laissez vide si votre instance Redis n’utilise pas d’authentification.', 'liens-morts-detector-jlg'));
+    echo '</div>';
 }
 
 /**
@@ -3133,5 +3306,73 @@ function blc_sanitize_notification_webhook_channel_option($value) {
  */
 function blc_sanitize_notification_message_template_option($value) {
     return blc_normalize_notification_message_template($value);
+}
+
+function blc_sanitize_queue_driver_option($value) {
+    if (!is_string($value)) {
+        $value = (string) $value;
+    }
+
+    $value = sanitize_key($value);
+    if ('' === $value) {
+        return 'wp_cron';
+    }
+
+    $drivers = blc_get_queue_drivers_registry();
+    if (!isset($drivers[$value]) || !$drivers[$value] instanceof \JLG\BrokenLinks\Scanner\QueueDriverInterface) {
+        return 'wp_cron';
+    }
+
+    return $value;
+}
+
+function blc_sanitize_queue_host_option($value) {
+    if (!is_string($value)) {
+        $value = (string) $value;
+    }
+
+    $value = trim($value);
+
+    if ($value === '') {
+        return '127.0.0.1';
+    }
+
+    return $value;
+}
+
+function blc_sanitize_queue_port_option($value) {
+    if (!is_numeric($value)) {
+        $value = 6379;
+    }
+
+    $port = (int) $value;
+    if ($port < 1) {
+        $port = 1;
+    } elseif ($port > 65535) {
+        $port = 65535;
+    }
+
+    return $port;
+}
+
+function blc_sanitize_queue_password_option($value) {
+    if (!is_string($value)) {
+        $value = (string) $value;
+    }
+
+    return trim($value);
+}
+
+function blc_sanitize_queue_concurrency_option($value) {
+    if (!is_numeric($value)) {
+        $value = 1;
+    }
+
+    $int = (int) $value;
+    if ($int < 1) {
+        $int = 1;
+    }
+
+    return $int;
 }
 

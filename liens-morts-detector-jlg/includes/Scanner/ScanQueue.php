@@ -4,10 +4,30 @@ namespace JLG\BrokenLinks\Scanner;
 
 use DOMDocument;
 use DOMXPath;
+use JLG\BrokenLinks\Scanner\QueueDrivers\WpCronQueueDriver;
 use Requests_Exception;
 use Requests_Response;
 use WP_Error;
 use WP_Query;
+
+interface QueueDriverInterface
+{
+    public function getSlug(): string;
+
+    public function getLabel(): string;
+
+    public function scheduleBatch(array $job, int $delaySeconds = 0): bool;
+
+    public function receiveBatch(): ?array;
+
+    public function acknowledge(array $job): void;
+
+    public function reportFailure(array $job, \Throwable $error): void;
+
+    public function isConnected(): bool;
+
+    public function supportsAsyncPull(): bool;
+}
 
 class ScanQueue {
         /** @var HttpClientInterface */
@@ -19,17 +39,36 @@ class ScanQueue {
     /** @var ScanLockManager */
     private $lockManager;
 
+    /** @var QueueDriverInterface */
+    private $queueDriver;
+
+    /** @var array<string, mixed> */
+    private $jobContext = [];
+
     public function __construct(
         HttpClientInterface $remoteRequestClient,
         ?ScanPreflight $preflight = null,
-        ?ScanLockManager $lockManager = null
+        ?ScanLockManager $lockManager = null,
+        ?QueueDriverInterface $queueDriver = null
     ) {
         $this->remoteRequestClient = $remoteRequestClient;
         $this->preflight = $preflight ?: new ScanPreflight();
-        $this->lockManager = $lockManager ?: new ScanLockManager();
+        $this->queueDriver = $queueDriver ?: new WpCronQueueDriver();
+        $this->lockManager = $lockManager ?: new ScanLockManager($this->queueDriver);
     }
 
-    public function runBatch($batch = 0, $is_full_scan = false, $bypass_rest_window = false) {
+    public function getQueueDriver(): QueueDriverInterface
+    {
+        return $this->queueDriver;
+    }
+
+    public function getLockManager(): ScanLockManager
+    {
+        return $this->lockManager;
+    }
+
+    public function runBatch($batch = 0, $is_full_scan = false, $bypass_rest_window = false, array $jobContext = []) {
+        $this->jobContext = $this->normalizeJobContext($jobContext);
         $remote_request_client = $this->remoteRequestClient;
         global $wpdb;
 
@@ -79,7 +118,8 @@ class ScanQueue {
             $bypass_rest_window,
             $batch_delay_s,
             $lock_timeout,
-            $debug_mode
+            $debug_mode,
+            $this->jobContext
         );
 
         if ($lock_outcome['status'] === 'rescheduled') {
@@ -92,13 +132,13 @@ class ScanQueue {
 
         $lock_token = $lock_outcome['lock_token'];
 
-        $rest_window = $this->lockManager->deferDuringRestWindow($preflight, $lock_token, $debug_mode);
+        $rest_window = $this->lockManager->deferDuringRestWindow($preflight, $lock_token, $debug_mode, $this->jobContext);
         $lock_token  = $rest_window['lock_token'];
         if ($rest_window['deferred']) {
             return;
         }
 
-        $server_load = $this->lockManager->deferForServerLoad($preflight, $lock_token, $debug_mode);
+        $server_load = $this->lockManager->deferForServerLoad($preflight, $lock_token, $debug_mode, $this->jobContext);
         $lock_token  = $server_load['lock_token'];
         if ($server_load['deferred']) {
             return;
@@ -160,9 +200,34 @@ class ScanQueue {
             $soft_404_body_indicators = $soft_404_heuristics->getBodyIndicators();
             $soft_404_ignore_patterns = $soft_404_heuristics->getIgnorePatterns();
 
+            $queue_concurrency_option = get_option('blc_queue_concurrency', 1);
+            if (!is_int($queue_concurrency_option)) {
+                $queue_concurrency_option = (int) $queue_concurrency_option;
+            }
+            if ($queue_concurrency_option < 1) {
+                $queue_concurrency_option = 1;
+            }
+
             $soft_404_extract_title = [$soft_404_heuristics, 'extractTitle'];
             $soft_404_strip_text = [$soft_404_heuristics, 'stripText'];
             $soft_404_matches_any = [$soft_404_heuristics, 'matchesAny'];
+
+            $soft_404_context = [
+                'min_length'       => $soft_404_min_length,
+                'title_indicators' => $soft_404_title_indicators,
+                'body_indicators'  => $soft_404_body_indicators,
+                'ignore_patterns'  => $soft_404_ignore_patterns,
+            ];
+
+            $this->jobContext = array_merge(
+                $this->jobContext,
+                [
+                    'scan_method'             => $scan_method,
+                    'max_concurrent_requests' => $max_concurrent_requests,
+                    'soft_404'                => $soft_404_context,
+                    'queue_concurrency'       => $queue_concurrency_option,
+                ]
+            );
 
             $remote_request_queue = ParallelRequestDispatcher::fromFilters(
                 $remote_request_client,
@@ -1028,15 +1093,14 @@ class ScanQueue {
                                     $retry_delay = 0;
                                 }
 
-                                $scheduled = wp_schedule_single_event(
-                                    time() + $retry_delay,
-                                    'blc_check_batch',
-                                    array($batch, $is_full_scan, $bypass_rest_window)
+                                $scheduled = $this->scheduleBatch(
+                                    $batch,
+                                    $is_full_scan,
+                                    $bypass_rest_window,
+                                    $retry_delay,
+                                    'temporary_retry'
                                 );
-                                if (false === $scheduled) {
-                                    error_log(sprintf('BLC: Failed to schedule temporary retry for link batch #%d.', $batch));
-                                    do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'temporary_retry');
-                                } else {
+                                if ($scheduled) {
                                     $temporary_retry_scheduled = true;
                                 }
                             }
@@ -1773,10 +1837,14 @@ class ScanQueue {
                 }
 
                 if ($wp_query->max_num_pages > ($batch + 1)) {
-                    $scheduled = wp_schedule_single_event(time() + $batch_delay_s, 'blc_check_batch', array($batch + 1, $is_full_scan, $bypass_rest_window));
-                    if (false === $scheduled) {
-                        error_log(sprintf('BLC: Failed to schedule next link batch #%d.', $batch + 1));
-                        do_action('blc_check_batch_schedule_failed', $batch + 1, $is_full_scan, $bypass_rest_window, 'next_batch');
+                    $scheduled = $this->scheduleBatch(
+                        $batch + 1,
+                        $is_full_scan,
+                        $bypass_rest_window,
+                        $batch_delay_s,
+                        'next_batch'
+                    );
+                    if (!$scheduled) {
                         \blc_update_link_scan_status([
                             'state'           => 'failed',
                             'last_error'      => \__('Impossible de programmer le lot suivant.', 'liens-morts-detector-jlg'),
@@ -1784,8 +1852,7 @@ class ScanQueue {
                             'total_items'     => $total_items,
                             'processed_items' => $processed_items,
                         ]);
-                    }
-                    if (false !== $scheduled) {
+                    } else {
                         \blc_update_link_scan_status([
                             'state'             => 'running',
                             'current_batch'     => (int) $batch,
@@ -1839,9 +1906,9 @@ class ScanQueue {
             }
         }
 
-    public function run($batch = 0, $is_full_scan = false, $bypass_rest_window = false)
+    public function run($batch = 0, $is_full_scan = false, $bypass_rest_window = false, array $jobContext = [])
     {
-        return $this->runBatch($batch, $is_full_scan, $bypass_rest_window);
+        return $this->runBatch($batch, $is_full_scan, $bypass_rest_window, $jobContext);
     }
 
     /**
@@ -1886,6 +1953,76 @@ class ScanQueue {
         }
 
         return array_keys($normalized);
+    }
+
+    private function scheduleBatch(int $batch, bool $is_full_scan, bool $bypass_rest_window, int $delay_seconds, string $reason): bool
+    {
+        $delay_seconds = max(0, $delay_seconds);
+
+        $job = [
+            'batch'               => (int) $batch,
+            'is_full_scan'        => (bool) $is_full_scan,
+            'bypass_rest_window'  => (bool) $bypass_rest_window,
+            'context'             => $this->jobContext,
+        ];
+
+        $scheduled = $this->queueDriver->scheduleBatch($job, $delay_seconds);
+
+        if (!$scheduled) {
+            $fallback = wp_schedule_single_event(time() + $delay_seconds, 'blc_check_batch', array(
+                $batch,
+                $is_full_scan,
+                $bypass_rest_window,
+                $this->jobContext,
+            ));
+
+            if (false !== $fallback) {
+                $scheduled = true;
+            }
+        }
+
+        if (!$scheduled) {
+            if (function_exists('error_log')) {
+                error_log(sprintf('BLC: Failed to schedule link batch #%d (%s).', $batch, $reason));
+            }
+
+            if (function_exists('do_action')) {
+                do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, $reason, $job);
+            }
+
+            return false;
+        }
+
+        if (function_exists('do_action')) {
+            do_action('blc_queue_job_scheduled', $job, $delay_seconds, $reason, $this->queueDriver);
+        }
+
+        return true;
+    }
+
+    private function normalizeJobContext(array $jobContext): array
+    {
+        $normalized = [];
+
+        foreach ($jobContext as $key => $value) {
+            if (!is_string($key)) {
+                continue;
+            }
+
+            $normalized[$key] = $value;
+        }
+
+        if (!isset($normalized['soft_404']) || !is_array($normalized['soft_404'])) {
+            $normalized['soft_404'] = [];
+        }
+
+        if (!isset($normalized['queue_concurrency']) || !is_numeric($normalized['queue_concurrency'])) {
+            $normalized['queue_concurrency'] = 1;
+        }
+
+        $normalized['queue_concurrency'] = max(1, (int) $normalized['queue_concurrency']);
+
+        return $normalized;
     }
 
     /**
