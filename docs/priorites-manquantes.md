@@ -1,7 +1,7 @@
 # État des priorités restantes
 
 ## Manques face à la feuille de route interne
-- **Notifications multicanales** : le moteur mutualisé (formatage, throttling, historique) est désormais assuré par `NotificationManager`, mais les connecteurs Slack/Teams/Mattermost décrits dans la roadmap restent à livrer. 【F:liens-morts-detector-jlg/includes/Notifications/NotificationManager.php†L36-L300】【F:liens-morts-detector-jlg/includes/Notifications/NotificationManager.php†L408-L555】
+- **Notifications multicanales** : Slack dispose désormais d’un connecteur paramétrable (canal, identité, blocs), mais les déclinaisons Teams/Mattermost et les scénarios d’escalade restent à produire. 【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L1957-L2094】【F:liens-morts-detector-jlg/includes/blc-notification-payloads.php†L61-L222】
 - **Optimisations d’interface** : les tests d’accessibilité automatisés (axe-core) et la documentation de la charte UX restent à livrer malgré la création du composant `DashboardSummary`.
 - **Renforcement de la qualité logicielle** : les scénarios Playwright et la chaîne CI complète (lint, packaging) restent planifiés mais absents du code.
 - **Surveillance proactive** : la gestion de seuils configurables, l’escalade multicanale et les visualisations sparkline doivent encore être conçues.
@@ -11,4 +11,4 @@
 - **Scalabilité horizontale** : aucune file distribuée (Redis/SQS) ni worker externe ne complète encore WP-Cron pour les catalogues volumineux.
 - **Résilience réseau avancée** : la rotation de proxys/IP et les stratégies multi-sorties restent à ajouter pour égaler les solutions premium.
 - **Workflows collaboratifs** : l’assignation, la journalisation fine des corrections et le partage de vues enregistrées ne sont pas encore disponibles.
-- **Connecteurs prêts à l’emploi** : l’extension ne propose pas d’intégrations Slack/Jira/ServiceNow ni de documentation REST industrialisée comme les concurrents.
+- **Connecteurs prêts à l’emploi** : l’extension ne propose pas encore de modules Jira/ServiceNow ni de documentation REST industrialisée comme les concurrents, malgré l’adaptateur Slack amélioré.

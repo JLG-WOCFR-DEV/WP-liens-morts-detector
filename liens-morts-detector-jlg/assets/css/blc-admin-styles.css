@@ -568,6 +568,25 @@
     gap: 6px;
 }
 
+.blc-notification-channel-advanced {
+    margin-top: 24px;
+    padding: 16px 20px;
+    border: 1px solid var(--blc-admin-border-subtle);
+    border-radius: var(--blc-admin-radius-sm);
+    background: var(--blc-admin-surface-subtle);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    transition: border-color var(--blc-admin-transition), box-shadow var(--blc-admin-transition);
+}
+
+.blc-notification-channel-advanced[hidden] {
+    display: none;
+}
+
+.blc-notification-channel-advanced.is-active {
+    border-color: var(--blc-admin-border-strong);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 0 0 1px rgba(110, 86, 207, 0.05);
+}
+
 /* Styles pour l'encadré des statistiques */
 .blc-stats-box {
     display: flex;

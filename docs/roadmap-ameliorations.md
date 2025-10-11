@@ -35,6 +35,7 @@ Cette feuille de route décline les pistes d'amélioration listées dans le `REA
 3. Ajouter un adaptateur Teams/Mattermost basé sur les cartes Adaptive Cards.
 
 > ✅ Un gestionnaire centralisé `NotificationManager` mutualise désormais le formatage des messages, la mise en attente anti-doublon et l'historique des envois pour les canaux e-mail et webhook. 【F:liens-morts-detector-jlg/includes/Notifications/NotificationManager.php†L36-L300】【F:liens-morts-detector-jlg/includes/Notifications/NotificationManager.php†L408-L555】
+> ✅ L’adaptateur Slack permet de choisir le canal cible, le nom d’expéditeur, l’icône et les blocs (filtres, principaux problèmes) pour aligner les alertes sur les runbooks d’escalade internes. 【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L1957-L2094】【F:liens-morts-detector-jlg/includes/blc-notification-payloads.php†L61-L222】【F:tests/NotificationPayloadsTest.php†L72-L194】
 
 **Indicateurs de réussite**
 - Notifications livrées en < 5 secondes après la fin d'un scan.
