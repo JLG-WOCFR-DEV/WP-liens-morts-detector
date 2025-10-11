@@ -23,7 +23,7 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 - Actions en ligne et groupées : modifier une URL, proposer/appliquer une redirection détectée, re-vérifier, ignorer/restaurer ou dissocier un lien en conservant l’ancre.【F:liens-morts-detector-jlg/includes/class-blc-links-list-table.php†L530-L881】
 
 ### Notifications et suivi
-- Notifications par e-mail ou webhook personnalisable, avec choix du canal (générique JSON, Slack, Microsoft Teams ou Mattermost), du gabarit de message et des catégories de statuts HTTP qui déclenchent un envoi.【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L295-L366】【F:liens-morts-detector-jlg/includes/blc-notification-payloads.php†L1-L318】
+- Notifications par e-mail ou webhook personnalisable, avec choix du canal (générique JSON, Slack, Microsoft Teams ou Mattermost), du gabarit de message, des catégories de statuts HTTP qui déclenchent un envoi et d’une identité Slack dédiée (canal cible, nom, icône, sections affichées).【F:liens-morts-detector-jlg/includes/blc-settings-fields.php†L1957-L2094】【F:liens-morts-detector-jlg/includes/blc-notification-payloads.php†L61-L222】
 - Résumés post-scan envoyés automatiquement depuis le cœur du scanner dès que des destinataires ou un webhook sont configurés.【F:liens-morts-detector-jlg/includes/blc-scanner.php†L1231-L1250】
 - Chaque lot publie des métriques (durée, progression, réussite/échec) stockées côté WordPress et exposées via un hook pour alimenter des tableaux de bord externes.【F:liens-morts-detector-jlg/includes/blc-scanner.php†L3214-L3250】
 

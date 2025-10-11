@@ -419,6 +419,66 @@ function blc_register_settings() {
 
     register_setting(
         $option_group,
+        'blc_notification_slack_channel_override',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_notification_slack_channel_option',
+            'default'           => '',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_notification_slack_username',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_notification_slack_username_option',
+            'default'           => '',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_notification_slack_icon',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_notification_slack_icon_option',
+            'default'           => '',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_notification_slack_title_template',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_notification_slack_title_template_option',
+            'default'           => '{{subject}}',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_notification_slack_show_filters',
+        array(
+            'type'              => 'boolean',
+            'sanitize_callback' => 'blc_sanitize_notification_slack_toggle_option',
+            'default'           => true,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_notification_slack_show_top_issues',
+        array(
+            'type'              => 'boolean',
+            'sanitize_callback' => 'blc_sanitize_notification_slack_toggle_option',
+            'default'           => true,
+        )
+    );
+
+    register_setting(
+        $option_group,
         'blc_notification_status_filters',
         array(
             'type'              => 'array',
@@ -1960,6 +2020,12 @@ function blc_render_notification_channels_field() {
     $webhook_channel = blc_normalize_notification_webhook_channel(get_option('blc_notification_webhook_channel', 'disabled'));
     $webhook_url = (string) get_option('blc_notification_webhook_url', '');
     $message_template = (string) get_option('blc_notification_message_template', "{{subject}}\n\n{{message}}");
+    $slack_channel_override = blc_normalize_notification_slack_channel_override(get_option('blc_notification_slack_channel_override', ''));
+    $slack_username = blc_normalize_notification_slack_username(get_option('blc_notification_slack_username', ''));
+    $slack_icon = blc_normalize_notification_slack_icon(get_option('blc_notification_slack_icon', ''));
+    $slack_title_template = blc_normalize_notification_slack_title_template(get_option('blc_notification_slack_title_template', '{{subject}}'));
+    $slack_show_filters = blc_normalize_notification_slack_toggle(get_option('blc_notification_slack_show_filters', true));
+    $slack_show_top_issues = blc_normalize_notification_slack_toggle(get_option('blc_notification_slack_show_top_issues', true));
     $channel_choices = blc_get_notification_webhook_channel_choices();
     $status_choices = blc_get_notification_status_filter_choices();
     $status_filters = blc_get_notification_status_filters();
@@ -1995,6 +2061,40 @@ function blc_render_notification_channels_field() {
             <textarea name="blc_notification_message_template" id="blc_notification_message_template" rows="4" class="large-text code"><?php echo esc_textarea($message_template); ?></textarea>
         </p>
         <p class="description"><?php esc_html_e('Placeholders disponibles : {{subject}}, {{message}}, {{dataset_type}}, {{dataset_label}}, {{broken_count}}, {{report_url}}, {{site_name}}.', 'liens-morts-detector-jlg'); ?></p>
+        <div class="blc-notification-channel-advanced" data-blc-webhook-channel="slack">
+            <hr>
+            <p><strong><?php esc_html_e('Options Slack', 'liens-morts-detector-jlg'); ?></strong></p>
+            <p class="description"><?php esc_html_e('Personnalisez le rendu Block Kit pour aligner le message sur vos salons d’incident comme dans les suites professionnelles.', 'liens-morts-detector-jlg'); ?></p>
+            <p>
+                <label for="blc_notification_slack_channel_override"><strong><?php esc_html_e('Salon ou canal cible', 'liens-morts-detector-jlg'); ?></strong></label><br>
+                <input type="text" name="blc_notification_slack_channel_override" id="blc_notification_slack_channel_override" class="regular-text" value="<?php echo esc_attr($slack_channel_override); ?>" placeholder="#monitoring">
+            </p>
+            <p class="description"><?php esc_html_e('Utilisez #salon, @utilisateur ou un ID Slack (C12345). Laissez vide pour garder le canal du webhook.', 'liens-morts-detector-jlg'); ?></p>
+            <p>
+                <label for="blc_notification_slack_username"><strong><?php esc_html_e('Nom d’expéditeur', 'liens-morts-detector-jlg'); ?></strong></label><br>
+                <input type="text" name="blc_notification_slack_username" id="blc_notification_slack_username" class="regular-text" value="<?php echo esc_attr($slack_username); ?>" placeholder="Liens Morts Detector">
+            </p>
+            <p class="description"><?php esc_html_e('Affiche un nom personnalisé dans Slack, pratique pour distinguer les alertes qualité de vos autres flux.', 'liens-morts-detector-jlg'); ?></p>
+            <p>
+                <label for="blc_notification_slack_icon"><strong><?php esc_html_e('Icône', 'liens-morts-detector-jlg'); ?></strong></label><br>
+                <input type="text" name="blc_notification_slack_icon" id="blc_notification_slack_icon" class="regular-text" value="<?php echo esc_attr($slack_icon); ?>" placeholder=":rotating_light:">
+            </p>
+            <p class="description"><?php esc_html_e('Saisissez un emoji Slack (:robot_face:) ou une URL d’image sécurisée.', 'liens-morts-detector-jlg'); ?></p>
+            <p>
+                <label for="blc_notification_slack_title_template"><strong><?php esc_html_e('Titre du message', 'liens-morts-detector-jlg'); ?></strong></label><br>
+                <input type="text" name="blc_notification_slack_title_template" id="blc_notification_slack_title_template" class="regular-text" value="<?php echo esc_attr($slack_title_template); ?>" placeholder="{{site_name}} · {{dataset_label}}">
+            </p>
+            <p class="description"><?php esc_html_e('Placeholders disponibles : {{subject}}, {{dataset_label}}, {{site_name}}, {{broken_count}}.', 'liens-morts-detector-jlg'); ?></p>
+            <label for="blc_notification_slack_show_filters" class="blc-toggle">
+                <input type="checkbox" name="blc_notification_slack_show_filters" id="blc_notification_slack_show_filters" value="1" <?php checked($slack_show_filters, true); ?>>
+                <?php esc_html_e('Afficher les filtres HTTP actifs', 'liens-morts-detector-jlg'); ?>
+            </label>
+            <br>
+            <label for="blc_notification_slack_show_top_issues" class="blc-toggle">
+                <input type="checkbox" name="blc_notification_slack_show_top_issues" id="blc_notification_slack_show_top_issues" value="1" <?php checked($slack_show_top_issues, true); ?>>
+                <?php esc_html_e('Lister les problèmes principaux', 'liens-morts-detector-jlg'); ?>
+            </label>
+        </div>
         <p>
             <button type="button" class="button" id="blc-send-test-email"><?php esc_html_e('Envoyer une notification de test', 'liens-morts-detector-jlg'); ?></button>
             <span class="spinner" id="blc-test-email-spinner" aria-hidden="true"></span>
@@ -3275,6 +3375,118 @@ function blc_normalize_notification_message_template($value) {
     return $value;
 }
 
+function blc_normalize_notification_slack_channel_override($value) {
+    if (!is_scalar($value)) {
+        return '';
+    }
+
+    $raw = trim((string) $value);
+    if ($raw === '') {
+        return '';
+    }
+
+    $raw = preg_replace('/\s+/', '', $raw);
+    if ($raw === '') {
+        return '';
+    }
+
+    $prefix = $raw[0];
+    if ($prefix === '#' || $prefix === '@') {
+        $identifier = ltrim($raw, '#@');
+        $identifier = preg_replace('/[^A-Za-z0-9._\-]/', '', $identifier);
+        if ($identifier === '') {
+            return '';
+        }
+
+        $identifier = substr($identifier, 0, 80);
+
+        return $prefix . $identifier;
+    }
+
+    $normalized = preg_replace('/[^A-Za-z0-9]/', '', $raw);
+    if ($normalized === '') {
+        return '';
+    }
+
+    if (function_exists('strtoupper')) {
+        $normalized = strtoupper($normalized);
+    }
+
+    return substr($normalized, 0, 80);
+}
+
+function blc_normalize_notification_slack_username($value) {
+    if (!is_scalar($value)) {
+        return '';
+    }
+
+    $value = sanitize_text_field((string) $value);
+    $value = trim($value);
+
+    if ($value === '') {
+        return '';
+    }
+
+    if (function_exists('mb_substr')) {
+        $value = mb_substr($value, 0, 80);
+    } else {
+        $value = substr($value, 0, 80);
+    }
+
+    return $value;
+}
+
+function blc_normalize_notification_slack_icon($value) {
+    if (!is_scalar($value)) {
+        return '';
+    }
+
+    $value = trim((string) $value);
+    if ($value === '') {
+        return '';
+    }
+
+    if (preg_match('/^:[A-Za-z0-9_\-+]{2,100}:$/', $value)) {
+        return strtolower($value);
+    }
+
+    $url = esc_url_raw($value);
+    if ($url === '') {
+        return '';
+    }
+
+    return $url;
+}
+
+function blc_normalize_notification_slack_title_template($value) {
+    if (!is_scalar($value)) {
+        $value = '';
+    }
+
+    $value = (string) $value;
+    $value = wp_unslash($value);
+    $value = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+/u', '', $value);
+    $value = trim($value);
+
+    if ($value === '') {
+        $value = '{{subject}}';
+    }
+
+    $value = preg_replace('/\s+/', ' ', $value);
+
+    if (function_exists('mb_substr')) {
+        $value = mb_substr($value, 0, 120);
+    } else {
+        $value = substr($value, 0, 120);
+    }
+
+    return $value;
+}
+
+function blc_normalize_notification_slack_toggle($value) {
+    return (bool) $value;
+}
+
 /**
  * Sanitize l'URL du webhook de notification.
  *
@@ -3306,6 +3518,26 @@ function blc_sanitize_notification_webhook_channel_option($value) {
  */
 function blc_sanitize_notification_message_template_option($value) {
     return blc_normalize_notification_message_template($value);
+}
+
+function blc_sanitize_notification_slack_channel_option($value) {
+    return blc_normalize_notification_slack_channel_override($value);
+}
+
+function blc_sanitize_notification_slack_username_option($value) {
+    return blc_normalize_notification_slack_username($value);
+}
+
+function blc_sanitize_notification_slack_icon_option($value) {
+    return blc_normalize_notification_slack_icon($value);
+}
+
+function blc_sanitize_notification_slack_title_template_option($value) {
+    return blc_normalize_notification_slack_title_template($value);
+}
+
+function blc_sanitize_notification_slack_toggle_option($value) {
+    return blc_normalize_notification_slack_toggle($value);
 }
 
 function blc_sanitize_queue_driver_option($value) {

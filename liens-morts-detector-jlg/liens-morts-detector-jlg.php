@@ -231,6 +231,12 @@ function blc_get_notification_webhook_settings($overrides = array()) {
         'url'              => blc_normalize_notification_webhook_url(get_option('blc_notification_webhook_url', '')),
         'channel'          => blc_normalize_notification_webhook_channel(get_option('blc_notification_webhook_channel', 'disabled')),
         'message_template' => blc_normalize_notification_message_template(get_option('blc_notification_message_template', "{{subject}}\n\n{{message}}")),
+        'slack_channel_override' => blc_normalize_notification_slack_channel_override(get_option('blc_notification_slack_channel_override', '')),
+        'slack_username'         => blc_normalize_notification_slack_username(get_option('blc_notification_slack_username', '')),
+        'slack_icon'             => blc_normalize_notification_slack_icon(get_option('blc_notification_slack_icon', '')),
+        'slack_title_template'   => blc_normalize_notification_slack_title_template(get_option('blc_notification_slack_title_template', '{{subject}}')),
+        'slack_show_filters'     => blc_normalize_notification_slack_toggle(get_option('blc_notification_slack_show_filters', true)),
+        'slack_show_top_issues'  => blc_normalize_notification_slack_toggle(get_option('blc_notification_slack_show_top_issues', true)),
     );
 
     if (is_array($overrides)) {
@@ -244,6 +250,30 @@ function blc_get_notification_webhook_settings($overrides = array()) {
 
         if (array_key_exists('message_template', $overrides)) {
             $settings['message_template'] = blc_normalize_notification_message_template($overrides['message_template']);
+        }
+
+        if (array_key_exists('slack_channel_override', $overrides)) {
+            $settings['slack_channel_override'] = blc_normalize_notification_slack_channel_override($overrides['slack_channel_override']);
+        }
+
+        if (array_key_exists('slack_username', $overrides)) {
+            $settings['slack_username'] = blc_normalize_notification_slack_username($overrides['slack_username']);
+        }
+
+        if (array_key_exists('slack_icon', $overrides)) {
+            $settings['slack_icon'] = blc_normalize_notification_slack_icon($overrides['slack_icon']);
+        }
+
+        if (array_key_exists('slack_title_template', $overrides)) {
+            $settings['slack_title_template'] = blc_normalize_notification_slack_title_template($overrides['slack_title_template']);
+        }
+
+        if (array_key_exists('slack_show_filters', $overrides)) {
+            $settings['slack_show_filters'] = blc_normalize_notification_slack_toggle($overrides['slack_show_filters']);
+        }
+
+        if (array_key_exists('slack_show_top_issues', $overrides)) {
+            $settings['slack_show_top_issues'] = blc_normalize_notification_slack_toggle($overrides['slack_show_top_issues']);
         }
     }
 

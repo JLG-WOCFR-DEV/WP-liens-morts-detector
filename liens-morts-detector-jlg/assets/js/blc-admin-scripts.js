@@ -773,6 +773,41 @@ jQuery(document).ready(function($) {
         });
     })();
 
+    (function setupWebhookChannelAdvancedOptions() {
+        var $channelField = $('#blc_notification_webhook_channel');
+        if (!$channelField.length) {
+            return;
+        }
+
+        var $containers = $('.blc-notification-channel-advanced');
+        if (!$containers.length) {
+            return;
+        }
+
+        function refreshVisibility() {
+            var currentChannel = String($channelField.val() || '');
+
+            $containers.each(function() {
+                var $container = $(this);
+                var targetChannel = String($container.data('blcWebhookChannel') || '');
+                var shouldShow = !targetChannel || targetChannel === currentChannel;
+
+                $container.toggleClass('is-active', shouldShow);
+
+                if (shouldShow) {
+                    $container.removeAttr('hidden');
+                    $container.attr('aria-hidden', 'false');
+                } else {
+                    $container.attr('hidden', 'hidden');
+                    $container.attr('aria-hidden', 'true');
+                }
+            });
+        }
+
+        $channelField.on('change', refreshVisibility);
+        refreshVisibility();
+    })();
+
     (function announceBulkNotice() {
         var $notice = $('.blc-bulk-notice');
 
