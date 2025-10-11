@@ -739,6 +739,46 @@ if (!function_exists('blc_record_link_scan_metrics')) {
     }
 }
 
+if (!function_exists('blc_record_image_scan_metrics')) {
+    /**
+     * Store last image scan metrics for observability dashboards.
+     *
+     * @param array<string, mixed> $metrics
+     *
+     * @return void
+     */
+    function blc_record_image_scan_metrics(array $metrics) {
+        $history = get_option('blc_image_scan_metrics_history', []);
+        if (!is_array($history)) {
+            $history = [];
+        }
+
+        array_unshift($history, $metrics);
+        if (count($history) > 50) {
+            $history = array_slice($history, 0, 50);
+        }
+
+        update_option('blc_image_scan_metrics_history', $history, false);
+
+        if (isset($metrics['job_id'])) {
+            blc_update_image_scan_history_entry($metrics['job_id'], ['metrics' => $metrics]);
+        }
+    }
+}
+
+if (!function_exists('blc_get_image_scan_metrics_history')) {
+    /**
+     * Retrieve the persisted metrics history for image scans.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    function blc_get_image_scan_metrics_history() {
+        $history = get_option('blc_image_scan_metrics_history', []);
+
+        return is_array($history) ? $history : [];
+    }
+}
+
 if (!function_exists('blc_get_link_scan_metrics_history')) {
     /**
      * Retrieve the persisted metrics history for link scans.
@@ -4628,9 +4668,12 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 function blc_perform_image_check($batch = 0, $is_full_scan = true) {
     global $wpdb;
 
+    $execution_started_at = microtime(true);
     $table_name = (isset($wpdb) && isset($wpdb->prefix))
         ? $wpdb->prefix . 'blc_broken_links'
         : 'blc_broken_links';
+
+    $result = null;
 
     if (function_exists('blc_ensure_broken_links_table_exists') && !blc_ensure_broken_links_table_exists()) {
         $message = sprintf(
@@ -4652,15 +4695,52 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) {
         }
 
         if (class_exists('WP_Error')) {
-            return new \WP_Error('blc_missing_broken_links_table', $message);
+            $result = new \WP_Error('blc_missing_broken_links_table', $message);
+        } else {
+            $result = false;
         }
+    } else {
+        $queue = blc_make_image_scan_queue();
+        $controller = blc_make_image_scan_controller($queue);
 
-        return false;
+        $result = $controller->run($batch, $is_full_scan);
     }
 
-    $queue = blc_make_image_scan_queue();
-    $controller = blc_make_image_scan_controller($queue);
+    if (function_exists('is_wp_error') && is_wp_error($result)) {
+        $message = $result->get_error_message();
 
-    return $controller->run($batch, $is_full_scan);
+        blc_update_image_scan_status([
+            'state'      => 'failed',
+            'last_error' => $message,
+            'message'    => $message,
+        ]);
+    }
+
+    $status = blc_get_image_scan_status();
+    $duration_ms = (int) round((microtime(true) - $execution_started_at) * 1000);
+    $job_id = isset($status['job_id']) ? (string) $status['job_id'] : '';
+
+    $metrics = [
+        'job_id'             => $job_id,
+        'batch'              => (int) $batch,
+        'duration_ms'        => $duration_ms,
+        'timestamp'          => time(),
+        'state'              => isset($status['state']) ? (string) $status['state'] : 'unknown',
+        'success'            => !(function_exists('is_wp_error') && is_wp_error($result)) && (!isset($status['state']) || $status['state'] !== 'failed'),
+        'processed_batches'  => isset($status['processed_batches']) ? (int) $status['processed_batches'] : 0,
+        'total_batches'      => isset($status['total_batches']) ? (int) $status['total_batches'] : 0,
+        'processed_items'    => isset($status['processed_items']) ? (int) $status['processed_items'] : 0,
+        'total_items'        => isset($status['total_items']) ? (int) $status['total_items'] : 0,
+        'attempt'            => isset($status['attempt']) ? (int) $status['attempt'] : 0,
+        'is_full_scan'       => isset($status['is_full_scan']) ? (bool) $status['is_full_scan'] : (bool) $is_full_scan,
+    ];
+
+    blc_record_image_scan_metrics($metrics);
+
+    if (function_exists('do_action')) {
+        do_action('blc_image_scan_metrics', $metrics, $result);
+    }
+
+    return $result;
 }
 
