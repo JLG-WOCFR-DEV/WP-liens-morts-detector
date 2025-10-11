@@ -1,7 +1,7 @@
 # État des priorités restantes
 
 ## Manques face à la feuille de route interne
-- **Notifications multicanales** : le moteur mutualisé et les connecteurs Slack/Teams/Mattermost décrits dans la roadmap n’ont pas encore été implémentés.
+- **Notifications multicanales** : le moteur mutualisé (formatage, throttling, historique) est désormais assuré par `NotificationManager`, mais les connecteurs Slack/Teams/Mattermost décrits dans la roadmap restent à livrer. 【F:liens-morts-detector-jlg/includes/Notifications/NotificationManager.php†L36-L300】【F:liens-morts-detector-jlg/includes/Notifications/NotificationManager.php†L408-L555】
 - **Optimisations d’interface** : les tests d’accessibilité automatisés (axe-core) et la documentation de la charte UX restent à livrer malgré la création du composant `DashboardSummary`.
 - **Renforcement de la qualité logicielle** : les scénarios Playwright et la chaîne CI complète (lint, packaging) restent planifiés mais absents du code.
 - **Surveillance proactive** : la gestion de seuils configurables, l’escalade multicanale et les visualisations sparkline doivent encore être conçues.
