@@ -237,6 +237,22 @@ abstract class ScannerTestCase extends TestCase
             return 'https://example.com/' . ltrim($path, '/');
         });
 
+        Functions\when('get_permalink')->alias(function ($post = 0) {
+            if (is_object($post) && isset($post->ID)) {
+                $id = $post->ID;
+            } elseif (is_array($post) && isset($post['ID'])) {
+                $id = $post['ID'];
+            } else {
+                $id = $post;
+            }
+
+            if (!is_scalar($id) || $id === null) {
+                $id = 0;
+            }
+
+            return 'https://example.com/?p=' . $id;
+        });
+
         Functions\when('site_url')->alias(function ($path = '', $scheme = null) {
             $path = (string) $path;
             if ($path === '') {
