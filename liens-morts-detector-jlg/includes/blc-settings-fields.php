@@ -650,6 +650,7 @@ function blc_register_settings_sections() {
         'blc_performance_section',
         array(
             'option_name' => 'blc_link_delay',
+            'default'     => 200,
             'min'         => 0,
             'step'        => 50,
             'unit'        => __('ms', 'liens-morts-detector-jlg'),
@@ -667,6 +668,7 @@ function blc_register_settings_sections() {
         'blc_performance_section',
         array(
             'option_name' => 'blc_batch_delay',
+            'default'     => 60,
             'min'         => 10,
             'step'        => 10,
             'unit'        => __('secondes', 'liens-morts-detector-jlg'),
@@ -684,6 +686,7 @@ function blc_register_settings_sections() {
         'blc_performance_section',
         array(
             'option_name' => 'blc_batch_size',
+            'default'     => isset($batch_size_constraints['default']) ? $batch_size_constraints['default'] : 20,
             'min'         => isset($batch_size_constraints['min']) ? $batch_size_constraints['min'] : 5,
             'max'         => isset($batch_size_constraints['max']) ? $batch_size_constraints['max'] : 200,
             'step'        => 1,
@@ -832,6 +835,7 @@ function blc_register_settings_sections() {
         'blc_queue_section',
         array(
             'option_name' => 'blc_queue_concurrency',
+            'default'     => 1,
             'min'         => 1,
             'step'        => 1,
             'description' => __('Nombre maximum de workers WP-CLI/externes exécutés en parallèle.', 'liens-morts-detector-jlg'),
@@ -848,6 +852,7 @@ function blc_register_settings_sections() {
         'blc_soft_404_section',
         array(
             'option_name' => 'blc_soft_404_min_length',
+            'default'     => 512,
             'min'         => 0,
             'step'        => 10,
             'unit'        => __('caractères', 'liens-morts-detector-jlg'),
@@ -865,6 +870,7 @@ function blc_register_settings_sections() {
         'blc_soft_404_section',
         array(
             'option_name' => 'blc_soft_404_title_weight',
+            'default'     => 1.0,
             'min'         => 0,
             'step'        => 0.1,
             'description' => __('Ajuste l’influence du titre dans les heuristiques. (Défaut : 1)', 'liens-morts-detector-jlg'),
@@ -1566,15 +1572,49 @@ function blc_render_number_field($args) {
         return;
     }
 
+    $default = isset($args['default']) ? $args['default'] : null;
+
     if (isset($args['value'])) {
         $value = $args['value'];
     } else {
-        $value = get_option($option_name, 0);
+        $stored_value = get_option($option_name, null);
+
+        if (false === $stored_value || null === $stored_value) {
+            if (null !== $default) {
+                $value = $default;
+            } elseif (isset($args['min']) && is_numeric($args['min'])) {
+                $value = $args['min'];
+            } else {
+                $value = 0;
+            }
+        } else {
+            $value = $stored_value;
+        }
     }
     $min   = isset($args['min']) ? $args['min'] : null;
     $max   = isset($args['max']) ? $args['max'] : null;
     $step  = isset($args['step']) ? $args['step'] : 1;
     $unit  = isset($args['unit']) ? (string) $args['unit'] : '';
+
+    if (is_numeric($value)) {
+        $numeric_value = (float) $value;
+        $min_numeric   = (null !== $min && is_numeric($min)) ? (float) $min : null;
+        $max_numeric   = (null !== $max && is_numeric($max)) ? (float) $max : null;
+
+        if (null !== $min_numeric && $numeric_value < $min_numeric) {
+            $numeric_value = $min_numeric;
+        }
+
+        if (null !== $max_numeric && $numeric_value > $max_numeric) {
+            $numeric_value = $max_numeric;
+        }
+
+        if (abs($numeric_value - round($numeric_value)) < 0.00001) {
+            $value = (int) round($numeric_value);
+        } else {
+            $value = $numeric_value;
+        }
+    }
 
     $attributes = array(
         'type="number"',
