@@ -94,14 +94,30 @@ class RemoteRequestClient implements HttpClientInterface
             $this->enforceRateLimit();
 
             $requestArgs = $this->prepareRequestArguments($args, $attempt);
+            $requestStartedAt = microtime(true);
             $lastResponse = $this->dispatchRequest($method, $url, $requestArgs);
+            $durationMs = (int) round((microtime(true) - $requestStartedAt) * 1000);
 
-            if (!$this->shouldRetry($lastResponse, $attempt, $attempts)) {
+            $retryAfter = $this->getRetryAfterDelay($lastResponse);
+            $willRetry = $this->shouldRetry($lastResponse, $attempt, $attempts);
+
+            $this->recordRequestMetrics(
+                $method,
+                $url,
+                $requestArgs,
+                $attempt,
+                $attempts,
+                $durationMs,
+                $lastResponse,
+                $willRetry,
+                $retryAfter
+            );
+
+            if (!$willRetry) {
                 return $lastResponse;
             }
 
             $delay = min($maxDelayMs, $delayMs * (2 ** ($attempt - 1)));
-            $retryAfter = $this->getRetryAfterDelay($lastResponse);
             if ($retryAfter !== null) {
                 $delay = max($delay, $retryAfter);
             }
@@ -279,7 +295,7 @@ class RemoteRequestClient implements HttpClientInterface
         }
 
         $header = \wp_remote_retrieve_header($response, 'retry-after');
-        if ($header === '') {
+        if (!is_string($header) || $header === '') {
             return null;
         }
 
@@ -313,6 +329,147 @@ class RemoteRequestClient implements HttpClientInterface
         $index = ($attempt - 1) % count($this->userAgents);
 
         return $this->userAgents[$index];
+    }
+
+    /**
+     * Build and dispatch request metrics for observability.
+     *
+     * @param string               $method
+     * @param string               $url
+     * @param array<string, mixed> $args
+     * @param int                  $attempt
+     * @param int                  $maxAttempts
+     * @param int                  $durationMs
+     * @param array|WP_Error       $response
+     * @param bool                 $willRetry
+     * @param int|null             $retryAfterMs
+     *
+     * @return void
+     */
+    private function recordRequestMetrics(
+        $method,
+        $url,
+        array $args,
+        $attempt,
+        $maxAttempts,
+        $durationMs,
+        $response,
+        $willRetry,
+        $retryAfterMs
+    ) {
+        $metrics = $this->createRequestMetricsPayload(
+            $method,
+            $url,
+            $args,
+            $attempt,
+            $maxAttempts,
+            $durationMs,
+            $response,
+            $willRetry,
+            $retryAfterMs
+        );
+
+        if (function_exists('\\blc_record_remote_request_metrics')) {
+            \blc_record_remote_request_metrics($metrics);
+        }
+
+        if (function_exists('\\do_action')) {
+            \do_action('blc_remote_request_metrics', $metrics, $response, $args);
+        }
+    }
+
+    /**
+     * Assemble the metrics payload describing the request attempt.
+     *
+     * @param string               $method
+     * @param string               $url
+     * @param array<string, mixed> $args
+     * @param int                  $attempt
+     * @param int                  $maxAttempts
+     * @param int                  $durationMs
+     * @param array|WP_Error       $response
+     * @param bool                 $willRetry
+     * @param int|null             $retryAfterMs
+     *
+     * @return array<string, mixed>
+     */
+    private function createRequestMetricsPayload(
+        $method,
+        $url,
+        array $args,
+        $attempt,
+        $maxAttempts,
+        $durationMs,
+        $response,
+        $willRetry,
+        $retryAfterMs
+    ) {
+        $parsedUrl = function_exists('wp_parse_url') ? \wp_parse_url($url) : parse_url($url);
+
+        $host = '';
+        if (is_array($parsedUrl) && isset($parsedUrl['host'])) {
+            $host = (string) $parsedUrl['host'];
+            if (function_exists('blc_normalize_remote_host')) {
+                $normalizedHost = \blc_normalize_remote_host($host);
+                if ($normalizedHost !== '') {
+                    $host = $normalizedHost;
+                }
+            } else {
+                $host = strtolower($host);
+            }
+        }
+
+        $path = '/';
+        if (is_array($parsedUrl) && isset($parsedUrl['path'])) {
+            $candidatePath = (string) $parsedUrl['path'];
+            if ($candidatePath !== '') {
+                $path = $candidatePath;
+            }
+        }
+
+        $methodLabel = strtoupper((string) $method);
+        $timestamp = time();
+        $responseCode = 0;
+        $success = false;
+
+        $errorCode = '';
+        $errorMessage = '';
+
+        if ($response instanceof WP_Error) {
+            $errorCode = (string) $response->get_error_code();
+            $errorMessage = $response->get_error_message();
+        } else {
+            $responseCode = (int) \wp_remote_retrieve_response_code($response);
+            if (!$willRetry && $responseCode >= 200 && $responseCode < 400) {
+                $success = true;
+            }
+        }
+
+        $metrics = [
+            'method'         => $methodLabel,
+            'url'            => (string) $url,
+            'host'           => $host,
+            'path'           => $path,
+            'attempt'        => (int) $attempt,
+            'max_attempts'   => (int) $maxAttempts,
+            'duration_ms'    => max(0, (int) $durationMs),
+            'timestamp'      => (int) $timestamp,
+            'response_code'  => $responseCode,
+            'success'        => $success,
+            'will_retry'     => (bool) $willRetry,
+            'retry_after_ms' => ($retryAfterMs !== null) ? max(0, (int) $retryAfterMs) : null,
+        ];
+
+        if ($errorCode !== '' || $errorMessage !== '') {
+            $metrics['error_code'] = $errorCode;
+            $metrics['error_message'] = $errorMessage;
+        }
+
+        if (isset($args['user-agent']) && is_string($args['user-agent'])) {
+            $metrics['user_agent'] = trim($args['user-agent']);
+        }
+
+        return $metrics;
     }
 
     /**

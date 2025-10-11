@@ -5,6 +5,8 @@
         "dns_get_record",
         "gethostbynamel",
         "error_log",
-        "file_exists"
+        "file_exists",
+        "microtime",
+        "usleep"
     ]
 }

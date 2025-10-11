@@ -766,6 +766,39 @@ if (!function_exists('blc_record_image_scan_metrics')) {
     }
 }
 
+if (!function_exists('blc_get_remote_request_metrics_history')) {
+    /**
+     * Retrieve the history of remote request metrics collected during scans.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    function blc_get_remote_request_metrics_history() {
+        $history = get_option('blc_remote_request_metrics_history', []);
+
+        return is_array($history) ? $history : [];
+    }
+}
+
+if (!function_exists('blc_record_remote_request_metrics')) {
+    /**
+     * Persist telemetry about a remote HTTP request performed during scanning.
+     *
+     * @param array<string, mixed> $metrics
+     *
+     * @return void
+     */
+    function blc_record_remote_request_metrics(array $metrics) {
+        $history = blc_get_remote_request_metrics_history();
+
+        array_unshift($history, $metrics);
+        if (count($history) > 100) {
+            $history = array_slice($history, 0, 100);
+        }
+
+        update_option('blc_remote_request_metrics_history', $history, false);
+    }
+}
+
 if (!function_exists('blc_get_image_scan_metrics_history')) {
     /**
      * Retrieve the persisted metrics history for image scans.
