@@ -60,6 +60,7 @@ require_once BLC_PLUGIN_PATH . 'includes/blc-scanner.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-reporting.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-google-sheets.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-s3-exports.php';
+require_once BLC_PLUGIN_PATH . 'includes/Notifications/NotificationManager.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-notification-payloads.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-utils.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-settings-fields.php';
@@ -197,6 +198,27 @@ function blc_add_admin_body_class($classes) {
     return trim($classes);
 }
 
+function blc_notification_manager() {
+    static $manager = null;
+
+    if ($manager === null) {
+        $manager = new \JLG\BrokenLinks\Notifications\NotificationManager();
+    }
+
+    return $manager;
+}
+
+/**
+ * Retrieve the stored notification delivery history.
+ *
+ * @param int|null $limit Optional number of entries to return.
+ *
+ * @return array<int, array<string, mixed>>
+ */
+function blc_get_notification_delivery_history($limit = null) {
+    return blc_notification_manager()->getHistoryEntries($limit);
+}
+
 /**
  * Retourne la configuration actuelle du webhook avec la possibilité de surcharger certaines valeurs.
  *
@@ -284,7 +306,7 @@ function blc_render_notification_message_template($template, array $summary) {
 }
 
 /**
- * Prépare et envoie la notification webhook.
+ * Prépare et envoie la notification webhook via le gestionnaire mutualisé.
  *
  * @param string               $dataset_type Type d'analyse.
  * @param array<string, mixed> $summary      Résumé d'analyse.
@@ -293,79 +315,7 @@ function blc_render_notification_message_template($template, array $summary) {
  * @return array<string, mixed>|WP_Error
  */
 function blc_send_scan_summary_webhook($dataset_type, array $summary, array $settings) {
-    if (!blc_is_webhook_notification_configured($settings)) {
-        return new WP_Error('blc_webhook_not_configured', __('Aucun webhook configuré.', 'liens-morts-detector-jlg'));
-    }
-
-    $channel = isset($settings['channel']) ? (string) $settings['channel'] : 'generic';
-    $message = blc_render_notification_message_template(isset($settings['message_template']) ? $settings['message_template'] : '', $summary);
-    if ($message === '') {
-        $message = isset($summary['subject']) ? (string) $summary['subject'] : '';
-    }
-
-    $payload = blc_build_notification_webhook_payload($channel, $message, $summary, $settings);
-
-    /**
-     * Permet de personnaliser le contenu envoyé au webhook.
-     *
-     * @param array<string, mixed> $payload       Corps JSON.
-     * @param string               $dataset_type  Type d'analyse.
-     * @param array<string, mixed> $summary       Résumé d'analyse.
-     * @param array<string, mixed> $settings      Configuration du webhook.
-     * @param string               $channel       Canal sélectionné.
-     * @param string               $message       Message textuel envoyé aux canaux.
-     */
-    $payload = apply_filters('blc_notification_webhook_payload', $payload, $dataset_type, $summary, $settings, $channel, $message);
-
-    if (is_wp_error($payload)) {
-        return $payload;
-    }
-
-    $encoded_payload = wp_json_encode($payload);
-    if (!is_string($encoded_payload)) {
-        return new WP_Error('blc_webhook_json_encoding_failed', __('Impossible d’encoder le message de webhook en JSON.', 'liens-morts-detector-jlg'));
-    }
-
-    $request_args = array(
-        'timeout'     => apply_filters('blc_notification_webhook_timeout', 15, $dataset_type, $settings, $payload),
-        'redirection' => 3,
-        'blocking'    => true,
-        'headers'     => array('Content-Type' => 'application/json; charset=utf-8'),
-        'body'        => $encoded_payload,
-    );
-
-    /**
-     * Permet de filtrer les arguments passés à wp_remote_post pour le webhook.
-     *
-     * @param array<string, mixed> $request_args Arguments de la requête HTTP.
-     * @param string               $dataset_type Type d'analyse.
-     * @param array<string, mixed> $summary      Résumé d'analyse.
-     * @param array<string, mixed> $settings     Configuration du webhook.
-     * @param array<string, mixed> $payload      Corps JSON.
-     */
-    $request_args = apply_filters('blc_notification_webhook_request_args', $request_args, $dataset_type, $summary, $settings, $payload);
-
-    $response = wp_remote_post($settings['url'], $request_args);
-    if (is_wp_error($response)) {
-        return $response;
-    }
-
-    $code = (int) wp_remote_retrieve_response_code($response);
-    if ($code < 200 || $code >= 300) {
-        return new WP_Error(
-            'blc_webhook_unexpected_status',
-            sprintf(__('Le webhook a répondu avec le code HTTP %d.', 'liens-morts-detector-jlg'), $code),
-            array('response' => $response, 'code' => $code)
-        );
-    }
-
-    return array(
-        'response'     => $response,
-        'request_args' => $request_args,
-        'payload'      => $payload,
-        'code'         => $code,
-        'message'      => $message,
-    );
+    return blc_notification_manager()->sendWebhookOnly($dataset_type, $summary, $settings);
 }
 
 /**
@@ -379,49 +329,7 @@ function blc_send_scan_summary_webhook($dataset_type, array $summary, array $set
  * @return array<string, array<string, mixed>>
  */
 function blc_dispatch_scan_summary_notifications($dataset_type, array $summary, array $recipients, array $args = array()) {
-    $results = array(
-        'email'   => array('status' => 'skipped'),
-        'webhook' => array('status' => 'skipped'),
-    );
-
-    $context = isset($args['context']) ? (string) $args['context'] : 'scan';
-    $webhook_settings = isset($args['webhook_settings']) && is_array($args['webhook_settings'])
-        ? $args['webhook_settings']
-        : blc_get_notification_webhook_settings();
-
-    $dataset_label = isset($summary['dataset_label']) ? (string) $summary['dataset_label'] : $dataset_type;
-    $context_label = ($context === 'test') ? __('de test', 'liens-morts-detector-jlg') : __('planifiée', 'liens-morts-detector-jlg');
-
-    if ($recipients !== array()) {
-        $sent = wp_mail($recipients, (string) $summary['subject'], (string) $summary['message']);
-        if ($sent) {
-            $results['email']['status'] = 'sent';
-        } else {
-            $results['email'] = array(
-                'status' => 'failed',
-                'error'  => sprintf(__('Échec de l’envoi de l’e-mail pour l’analyse %s.', 'liens-morts-detector-jlg'), $dataset_label),
-            );
-            error_log(sprintf('BLC: Failed to send %s summary email (%s).', $dataset_type, $context_label));
-        }
-    }
-
-    if (blc_is_webhook_notification_configured($webhook_settings)) {
-        $webhook_response = blc_send_scan_summary_webhook($dataset_type, $summary, $webhook_settings);
-        if (is_wp_error($webhook_response)) {
-            $results['webhook'] = array(
-                'status' => 'failed',
-                'error'  => $webhook_response->get_error_message(),
-            );
-            error_log(sprintf('BLC: Webhook notification failed for %s summary (%s): %s', $dataset_type, $context_label, $webhook_response->get_error_message()));
-        } else {
-            $results['webhook'] = array(
-                'status' => 'sent',
-                'code'   => $webhook_response['code'],
-            );
-        }
-    }
-
-    return $results;
+    return blc_notification_manager()->sendSummaryNotifications($dataset_type, $summary, $recipients, $args);
 }
 
 /**
@@ -1856,6 +1764,7 @@ function blc_ajax_send_test_email() {
         'sent'    => __('envoyé', 'liens-morts-detector-jlg'),
         'failed'  => __('échec', 'liens-morts-detector-jlg'),
         'skipped' => __('ignoré', 'liens-morts-detector-jlg'),
+        'throttled' => __('en attente (anti-doublon)', 'liens-morts-detector-jlg'),
     );
 
     $format_channel_statuses = static function (array $channel_results) use ($channel_labels, $status_labels) {
