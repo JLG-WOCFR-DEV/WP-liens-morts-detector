@@ -226,6 +226,35 @@ final class ScanQueueRunBatchTest extends ScannerTestCase
         }
     }
 
+    public function test_run_batch_updates_status_transitions(): void
+    {
+        $this->prepareLinkScanEnvironment();
+
+        $GLOBALS['wp_query_queue'] = [[
+            'posts'         => [],
+            'max_num_pages' => 0,
+        ]];
+
+        $statusUpdates = [];
+        Functions\when('blc_get_link_scan_status')->alias(fn() => []);
+        Functions\when('blc_generate_link_scan_job_id')->alias(fn() => 'job-status');
+        Functions\when('blc_update_link_scan_status')->alias(function ($status) use (&$statusUpdates) {
+            $statusUpdates[] = $status;
+        });
+
+        $queue = new ScanQueue(new RemoteRequestClient());
+        $queue->runBatch(0, false, false);
+
+        $this->assertNotEmpty($statusUpdates);
+        $statusesWithState = array_values(array_filter($statusUpdates, static function ($status) {
+            return isset($status['state']);
+        }));
+        $this->assertNotEmpty($statusesWithState);
+        $this->assertSame('running', $statusesWithState[0]['state'] ?? '');
+        $finalStatus = $statusesWithState[array_key_last($statusesWithState)] ?? [];
+        $this->assertSame('completed', $finalStatus['state'] ?? '');
+    }
+
     public function test_run_batch_detects_soft_404_with_suspicious_200(): void
     {
         $this->prepareLinkScanEnvironment();
@@ -441,6 +470,17 @@ final class ScanQueueRunBatchTest extends ScannerTestCase
             'host'        => 'example.com',
             'is_internal' => 0,
         ]);
+        Functions\when('get_permalink')->alias(function ($post) {
+            if (is_object($post) && isset($post->ID)) {
+                return 'https://example.com/post-' . (int) $post->ID;
+            }
+
+            if (is_numeric($post)) {
+                return 'https://example.com/post-' . (int) $post;
+            }
+
+            return 'https://example.com/permalink';
+        });
         Functions\when('blc_determine_response_target_url')->alias(fn() => '');
         Functions\when('blc_update_link_scan_status')->alias(function () {
         });

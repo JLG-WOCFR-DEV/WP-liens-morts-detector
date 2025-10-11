@@ -13,414 +13,20 @@ class ScanQueue {
         /** @var HttpClientInterface */
         private $remoteRequestClient;
 
-    public function __construct(HttpClientInterface $remoteRequestClient) {
+    /** @var ScanPreflight */
+    private $preflight;
+
+    /** @var ScanLockManager */
+    private $lockManager;
+
+    public function __construct(
+        HttpClientInterface $remoteRequestClient,
+        ?ScanPreflight $preflight = null,
+        ?ScanLockManager $lockManager = null
+    ) {
         $this->remoteRequestClient = $remoteRequestClient;
-    }
-
-    /**
-     * Collect and normalise the preflight configuration before running a batch.
-     *
-     * @return array<string, mixed>
-     */
-    private function gatherPreflightConfiguration($batch, $is_full_scan, $bypass_rest_window)
-    {
-        $debug_mode = get_option('blc_debug_mode', false);
-        $current_hook = function_exists('current_filter') ? current_filter() : '';
-
-        if (!$is_full_scan && $current_hook === 'blc_check_links') {
-            $is_full_scan = true;
-        }
-
-        if ($current_hook === 'blc_check_links') {
-            $bypass_rest_window = false;
-        }
-
-        $rest_start_hour_option = get_option('blc_rest_start_hour', '08');
-        $rest_end_hour_option   = get_option('blc_rest_end_hour', '20');
-        $rest_start_hour = (int) blc_normalize_hour_option($rest_start_hour_option, '08');
-        $rest_end_hour   = (int) blc_normalize_hour_option($rest_end_hour_option, '20');
-        $link_delay_ms   = max(0, (int) get_option('blc_link_delay', 200));
-        $batch_delay_s   = max(0, (int) get_option('blc_batch_delay', 60));
-        $default_lock_timeout = defined('MINUTE_IN_SECONDS') ? 15 * MINUTE_IN_SECONDS : 900;
-        $lock_timeout = apply_filters('blc_link_scan_lock_timeout', $default_lock_timeout);
-        if (!is_int($lock_timeout)) {
-            $lock_timeout = (int) $lock_timeout;
-        }
-        if ($lock_timeout < 0) {
-            $lock_timeout = 0;
-        }
-
-        return [
-            'batch'               => (int) $batch,
-            'is_full_scan'        => (bool) $is_full_scan,
-            'bypass_rest_window'  => (bool) $bypass_rest_window,
-            'debug_mode'          => (bool) $debug_mode,
-            'current_hook'        => $current_hook,
-            'rest_start_hour'     => $rest_start_hour,
-            'rest_end_hour'       => $rest_end_hour,
-            'link_delay_ms'       => $link_delay_ms,
-            'batch_delay_s'       => $batch_delay_s,
-            'lock_timeout'        => $lock_timeout,
-        ];
-    }
-
-    /**
-     * Ensure there is a job identifier stored in the shared status payload.
-     *
-     * @return string
-     */
-    private function ensureActiveJobId()
-    {
-        if (!function_exists('\\blc_get_link_scan_status')) {
-            return '';
-        }
-
-        $status = \blc_get_link_scan_status();
-        $job_id = isset($status['job_id']) ? (string) $status['job_id'] : '';
-
-        if ($job_id !== '') {
-            return $job_id;
-        }
-
-        $job_id = function_exists('\\blc_generate_link_scan_job_id')
-            ? \blc_generate_link_scan_job_id()
-            : uniqid('blc_', true);
-
-        $attempt = isset($status['attempt']) ? max(1, (int) $status['attempt']) : 1;
-
-        \blc_update_link_scan_status([
-            'job_id'  => $job_id,
-            'attempt' => $attempt,
-        ]);
-
-        return $job_id;
-    }
-
-    /**
-     * Build helper callbacks dedicated to the soft 404 heuristics.
-     *
-     * @param array<string, mixed> $soft_404_config
-     *
-     * @return array<string, callable>
-     */
-    private function buildSoft404Toolkit(array $soft_404_config)
-    {
-        $extract_title = static function ($html) {
-            if (!is_string($html) || $html === '') {
-                return '';
-            }
-
-            if (preg_match('/<title\b[^>]*>(.*?)<\/title>/is', $html, $matches) !== 1) {
-                return '';
-            }
-
-            $title = isset($matches[1]) ? (string) $matches[1] : '';
-            if ($title === '') {
-                return '';
-            }
-
-            if (function_exists('wp_specialchars_decode')) {
-                $title = wp_specialchars_decode($title, ENT_QUOTES);
-            } else {
-                $title = html_entity_decode($title, ENT_QUOTES, 'UTF-8');
-            }
-
-            return trim(preg_replace('/\s+/', ' ', $title));
-        };
-
-        $strip_text = static function ($html) {
-            if (!is_string($html) || $html === '') {
-                return '';
-            }
-
-            if (function_exists('wp_strip_all_tags')) {
-                $text = wp_strip_all_tags($html, true);
-            } else {
-                $text = strip_tags($html);
-            }
-
-            return trim(preg_replace('/\s+/', ' ', (string) $text));
-        };
-
-        $matches_any = static function (array $patterns, array $candidates): bool {
-            if ($patterns === []) {
-                return false;
-            }
-
-            foreach ($patterns as $pattern) {
-                if (!is_string($pattern) || $pattern === '') {
-                    continue;
-                }
-
-                $pattern_value = (string) $pattern;
-                $is_regex = false;
-                $regex_body = '';
-                $regex_flags = 'i';
-
-                if (strlen($pattern_value) >= 2 && $pattern_value[0] === '/') {
-                    $last_delimiter = strrpos($pattern_value, '/');
-                    if ($last_delimiter !== false) {
-                        $regex_body = substr($pattern_value, 1, $last_delimiter - 1);
-                        $regex_flags = substr($pattern_value, $last_delimiter + 1);
-                        $is_regex = ($regex_body !== '');
-                    }
-                }
-
-                foreach ($candidates as $candidate) {
-                    if (!is_string($candidate) || $candidate === '') {
-                        continue;
-                    }
-
-                    if ($is_regex) {
-                        $regex = '/' . $regex_body . '/' . $regex_flags;
-                        if (@preg_match($regex, $candidate) === 1) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
-                            return true;
-                        }
-                    } elseif (stripos($candidate, $pattern_value) !== false) {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
-        };
-
-        return [
-            'extract_title' => $extract_title,
-            'strip_text'    => $strip_text,
-            'matches_any'   => $matches_any,
-            'config'        => $soft_404_config,
-        ];
-    }
-
-    private function acquireLockOrReschedule($current_hook, $batch, $is_full_scan, $bypass_rest_window, $batch_delay_s, $lock_timeout, $debug_mode)
-    {
-        $lock_token = blc_acquire_link_scan_lock($lock_timeout);
-
-        if ($lock_token !== '') {
-            return [
-                'status'     => 'acquired',
-                'lock_token' => $lock_token,
-            ];
-        }
-
-        if ($current_hook === 'blc_check_links') {
-            if ($debug_mode) {
-                error_log('Analyse de liens déjà en cours, reprogrammation du lot.');
-            }
-
-            $retry_delay = max(60, $batch_delay_s);
-            $scheduled   = wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
-
-            if (false === $scheduled) {
-                error_log(sprintf('BLC: Failed to reschedule link batch #%d while waiting for lock.', $batch));
-                do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'lock_unavailable');
-            }
-
-            return [
-                'status' => 'rescheduled',
-            ];
-        }
-
-        \blc_update_link_scan_status([
-            'state'   => 'running',
-            'message' => \__('Une analyse des liens est déjà en cours. Veuillez réessayer plus tard.', 'liens-morts-detector-jlg'),
-        ]);
-
-        return [
-            'status' => 'error',
-            'error'  => new WP_Error(
-                'blc_link_scan_in_progress',
-                __('Une analyse des liens est déjà en cours. Veuillez réessayer plus tard.', 'liens-morts-detector-jlg')
-            ),
-        ];
-    }
-
-    private function deferDuringRestWindow(array $preflight, $lock_token, $debug_mode)
-    {
-        $batch              = $preflight['batch'];
-        $is_full_scan       = $preflight['is_full_scan'];
-        $bypass_rest_window = $preflight['bypass_rest_window'];
-        $rest_start_hour    = $preflight['rest_start_hour'];
-        $rest_end_hour      = $preflight['rest_end_hour'];
-
-        $current_hour = (int) current_time('H');
-        $is_in_rest_window = false;
-
-        if ($rest_start_hour <= $rest_end_hour) {
-            $is_in_rest_window = ($current_hour >= $rest_start_hour && $current_hour < $rest_end_hour);
-        } else {
-            $is_in_rest_window = ($current_hour >= $rest_start_hour || $current_hour < $rest_end_hour);
-        }
-
-        if (!$is_in_rest_window || $bypass_rest_window) {
-            return [
-                'deferred'   => false,
-                'lock_token' => $lock_token,
-            ];
-        }
-
-        if ($debug_mode) {
-            error_log('Scan arrêté : dans la plage horaire de repos.');
-        }
-
-        $current_gmt_timestamp = time();
-        $timezone              = null;
-
-        if (function_exists('wp_timezone')) {
-            $maybe_timezone = wp_timezone();
-            if ($maybe_timezone instanceof \DateTimeZone) {
-                $timezone = $maybe_timezone;
-            }
-        }
-
-        if (!$timezone instanceof \DateTimeZone && function_exists('wp_timezone_string')) {
-            $timezone_string = wp_timezone_string();
-            if (is_string($timezone_string) && $timezone_string !== '') {
-                try {
-                    $timezone = new \DateTimeZone($timezone_string);
-                } catch (\Exception $e) {
-                    $timezone = null;
-                }
-            }
-        }
-
-        if (!$timezone instanceof \DateTimeZone) {
-            $offset         = (float) get_option('gmt_offset', 0);
-            $offset_seconds = (int) round($offset * 3600);
-            $timezone_name  = timezone_name_from_abbr('', $offset_seconds, 0);
-
-            if (is_string($timezone_name) && $timezone_name !== '') {
-                try {
-                    $timezone = new \DateTimeZone($timezone_name);
-                } catch (\Exception $e) {
-                    $timezone = null;
-                }
-            }
-
-            if (!$timezone instanceof \DateTimeZone) {
-                $sign       = $offset >= 0 ? '+' : '-';
-                $abs_offset = abs($offset);
-                $hours      = (int) floor($abs_offset);
-                $minutes    = (int) round(($abs_offset - $hours) * 60);
-
-                if ($minutes === 60) {
-                    $hours  += 1;
-                    $minutes = 0;
-                }
-
-                $formatted_offset = sprintf('%s%02d:%02d', $sign, $hours, $minutes);
-
-                try {
-                    $timezone = new \DateTimeZone($formatted_offset);
-                } catch (\Exception $e) {
-                    $timezone = new \DateTimeZone('UTC');
-                }
-            }
-        }
-
-        if (!$timezone instanceof \DateTimeZone) {
-            $timezone = new \DateTimeZone('UTC');
-        }
-
-        $current_datetime = (new \DateTimeImmutable('@' . $current_gmt_timestamp))->setTimezone($timezone);
-        $next_run         = $current_datetime->setTime($rest_end_hour, 0, 0);
-
-        if ($rest_start_hour > $rest_end_hour) {
-            if ($current_hour >= $rest_start_hour) {
-                $next_run = $next_run->modify('+1 day');
-            } elseif ($next_run <= $current_datetime) {
-                $next_run = $next_run->modify('+1 day');
-            }
-        } elseif ($next_run <= $current_datetime) {
-            $next_run = $next_run->modify('+1 day');
-        }
-
-        $next_timestamp = $next_run->getTimestamp();
-
-        if ($next_timestamp <= $current_gmt_timestamp) {
-            $next_timestamp = $current_gmt_timestamp + 60;
-        }
-
-        $scheduled = wp_schedule_single_event($next_timestamp, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
-        if (false === $scheduled) {
-            error_log(sprintf('BLC: Failed to schedule link batch #%d during rest window.', $batch));
-            do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'rest_window');
-        }
-
-        if ($lock_token !== '') {
-            blc_release_link_scan_lock($lock_token);
-            $lock_token = '';
-        }
-
-        return [
-            'deferred'   => true,
-            'lock_token' => $lock_token,
-        ];
-    }
-
-    private function deferForServerLoad(array $preflight, $lock_token, $debug_mode)
-    {
-        if (!function_exists('sys_getloadavg')) {
-            return [
-                'deferred'   => false,
-                'lock_token' => $lock_token,
-            ];
-        }
-
-        $load_values = sys_getloadavg();
-        if (!is_array($load_values) || empty($load_values)) {
-            return [
-                'deferred'   => false,
-                'lock_token' => $lock_token,
-            ];
-        }
-
-        $current_load = reset($load_values);
-        if (!is_numeric($current_load)) {
-            return [
-                'deferred'   => false,
-                'lock_token' => $lock_token,
-            ];
-        }
-
-        $current_load        = (float) $current_load;
-        $max_load_threshold  = (float) apply_filters('blc_max_load_threshold', 2.0);
-        $batch               = $preflight['batch'];
-        $is_full_scan        = $preflight['is_full_scan'];
-        $bypass_rest_window  = $preflight['bypass_rest_window'];
-
-        if ($max_load_threshold <= 0 || $current_load <= $max_load_threshold) {
-            return [
-                'deferred'   => false,
-                'lock_token' => $lock_token,
-            ];
-        }
-
-        $retry_delay = (int) apply_filters('blc_load_retry_delay', 300);
-        if ($retry_delay < 0) {
-            $retry_delay = 0;
-        }
-
-        if ($debug_mode) {
-            error_log('Scan reporté : charge serveur trop élevée (' . $current_load . ').');
-        }
-
-        $scheduled = wp_schedule_single_event(time() + $retry_delay, 'blc_check_batch', array($batch, $is_full_scan, $bypass_rest_window));
-        if (false === $scheduled) {
-            error_log(sprintf('BLC: Failed to schedule link batch #%d after high load.', $batch));
-            do_action('blc_check_batch_schedule_failed', $batch, $is_full_scan, $bypass_rest_window, 'server_load');
-        }
-
-        if ($lock_token !== '') {
-            blc_release_link_scan_lock($lock_token);
-            $lock_token = '';
-        }
-
-        return [
-            'deferred'   => true,
-            'lock_token' => $lock_token,
-        ];
+        $this->preflight = $preflight ?: new ScanPreflight();
+        $this->lockManager = $lockManager ?: new ScanLockManager();
     }
 
     public function runBatch($batch = 0, $is_full_scan = false, $bypass_rest_window = false) {
@@ -446,7 +52,7 @@ class ScanQueue {
         $scan_run_token = '';
         $global_link_sources = [];
 
-        $preflight = $this->gatherPreflightConfiguration($batch, $is_full_scan, $bypass_rest_window);
+        $preflight = $this->preflight->collect($batch, $is_full_scan, $bypass_rest_window);
         $batch = $preflight['batch'];
         $is_full_scan = $preflight['is_full_scan'];
         $bypass_rest_window = $preflight['bypass_rest_window'];
@@ -464,9 +70,17 @@ class ScanQueue {
 
         if ($debug_mode) { error_log("--- Début du scan LIENS (Lot #$batch) ---"); }
 
-        $job_id = $this->ensureActiveJobId();
+        $job_id = $this->lockManager->ensureActiveJobId();
 
-        $lock_outcome = $this->acquireLockOrReschedule($current_hook, $batch, $is_full_scan, $bypass_rest_window, $batch_delay_s, $lock_timeout, $debug_mode);
+        $lock_outcome = $this->lockManager->acquireOrReschedule(
+            $current_hook,
+            $batch,
+            $is_full_scan,
+            $bypass_rest_window,
+            $batch_delay_s,
+            $lock_timeout,
+            $debug_mode
+        );
 
         if ($lock_outcome['status'] === 'rescheduled') {
             return;
@@ -478,13 +92,13 @@ class ScanQueue {
 
         $lock_token = $lock_outcome['lock_token'];
 
-        $rest_window = $this->deferDuringRestWindow($preflight, $lock_token, $debug_mode);
+        $rest_window = $this->lockManager->deferDuringRestWindow($preflight, $lock_token, $debug_mode);
         $lock_token  = $rest_window['lock_token'];
         if ($rest_window['deferred']) {
             return;
         }
 
-        $server_load = $this->deferForServerLoad($preflight, $lock_token, $debug_mode);
+        $server_load = $this->lockManager->deferForServerLoad($preflight, $lock_token, $debug_mode);
         $lock_token  = $server_load['lock_token'];
         if ($server_load['deferred']) {
             return;
@@ -540,64 +154,21 @@ class ScanQueue {
             }
 
             $soft_404_config = blc_get_soft_404_heuristics();
-            $soft_404_min_length = isset($soft_404_config['min_length']) ? (int) $soft_404_config['min_length'] : 0;
-            $soft_404_title_indicators = isset($soft_404_config['title_indicators']) && is_array($soft_404_config['title_indicators'])
-                ? $soft_404_config['title_indicators']
-                : [];
-            $soft_404_body_indicators = isset($soft_404_config['body_indicators']) && is_array($soft_404_config['body_indicators'])
-                ? $soft_404_config['body_indicators']
-                : [];
-            $soft_404_ignore_patterns = isset($soft_404_config['ignore_patterns']) && is_array($soft_404_config['ignore_patterns'])
-                ? $soft_404_config['ignore_patterns']
-                : [];
+            $soft_404_heuristics = new Soft404Heuristics($soft_404_config);
+            $soft_404_min_length = $soft_404_heuristics->getMinLength();
+            $soft_404_title_indicators = $soft_404_heuristics->getTitleIndicators();
+            $soft_404_body_indicators = $soft_404_heuristics->getBodyIndicators();
+            $soft_404_ignore_patterns = $soft_404_heuristics->getIgnorePatterns();
 
-            $soft_404_toolkit = $this->buildSoft404Toolkit($soft_404_config);
-            $soft_404_extract_title = $soft_404_toolkit['extract_title'];
-            $soft_404_strip_text = $soft_404_toolkit['strip_text'];
-            $soft_404_matches_any = $soft_404_toolkit['matches_any'];
+            $soft_404_extract_title = [$soft_404_heuristics, 'extractTitle'];
+            $soft_404_strip_text = [$soft_404_heuristics, 'stripText'];
+            $soft_404_matches_any = [$soft_404_heuristics, 'matchesAny'];
 
-            $parallel_requests_dispatcher = apply_filters('blc_parallel_requests_dispatcher', null);
-            if (!is_callable($parallel_requests_dispatcher)) {
-                $parallel_requests_dispatcher = static function (array $requests) {
-                    if (empty($requests)) {
-                        return [];
-                    }
-
-                    if (!class_exists('Requests')) {
-                        if (defined('ABSPATH') && defined('WPINC')) {
-                            $requests_class_path = trailingslashit(ABSPATH) . WPINC . '/class-requests.php';
-                            if (file_exists($requests_class_path)) {
-                                require_once $requests_class_path;
-                            }
-                        }
-                        if (!class_exists('Requests')) {
-                            return [];
-                        }
-                    }
-
-                    return \Requests::request_multiple($requests);
-                };
-            }
-            $last_remote_request_completed_at = 0.0;
-
-            $wait_for_remote_slot = static function () use (&$last_remote_request_completed_at, $link_delay_ms) {
-                if ($link_delay_ms <= 0) {
-                    return;
-                }
-
-                $delay_seconds = $link_delay_ms / 1000;
-                if ($last_remote_request_completed_at > 0) {
-                    $elapsed = microtime(true) - $last_remote_request_completed_at;
-                    $remaining = $delay_seconds - $elapsed;
-                    if ($remaining > 0) {
-                        usleep((int) round($remaining * 1000000));
-                    }
-                }
-            };
-
-            $mark_remote_request_complete = static function () use (&$last_remote_request_completed_at) {
-                $last_remote_request_completed_at = microtime(true);
-            };
+            $remote_request_queue = ParallelRequestDispatcher::fromFilters(
+                $remote_request_client,
+                $max_concurrent_requests,
+                $link_delay_ms
+            );
 
             $raw_home_url = '';
             if (function_exists('home_url')) {
@@ -1062,285 +633,6 @@ class ScanQueue {
             $temporary_http_statuses = array_values(array_unique(array_map('intval', $temporary_http_statuses)));
 
             $temporary_retry_scheduled = false;
-
-            $remote_request_queue = new class (
-                $remote_request_client,
-                $max_concurrent_requests,
-                $wait_for_remote_slot,
-                $mark_remote_request_complete,
-                $parallel_requests_dispatcher
-            ) {
-                /** @var HttpClientInterface */
-                private $client;
-
-                /** @var int */
-                private $concurrency;
-
-                /** @var callable */
-                private $waitCallback;
-
-                /** @var callable */
-                private $completeCallback;
-
-                /** @var callable */
-                private $dispatcher;
-
-                /** @var array<int, array<string, mixed>> */
-                private $pending = [];
-
-                public function __construct(
-                    HttpClientInterface $client,
-                    int $concurrency,
-                    callable $waitCallback,
-                    callable $completeCallback,
-                    callable $dispatcher
-                ) {
-                    $this->client = $client;
-                    $this->concurrency = max(1, $concurrency);
-                    $this->waitCallback = $waitCallback;
-                    $this->completeCallback = $completeCallback;
-                    $this->dispatcher = $dispatcher;
-                }
-
-                public function enqueue(
-                    string $url,
-                    array $headArgs,
-                    array $getArgs,
-                    string $scanMethod,
-                    array $temporaryStatuses,
-                    callable $callback
-                ): void {
-                    $this->pending[] = [
-                        'url'                => $url,
-                        'head_args'          => $headArgs,
-                        'get_args'           => $getArgs,
-                        'scan_method'        => $scanMethod,
-                        'temporary_statuses' => $temporaryStatuses,
-                        'callback'           => $callback,
-                    ];
-
-                    $this->dispatch(false);
-                }
-
-                public function drain(): void
-                {
-                    $this->dispatch(true);
-                }
-
-                private function dispatch(bool $force): void
-                {
-                    while (!empty($this->pending) && ($force || count($this->pending) >= $this->concurrency)) {
-                        $batch = array_splice($this->pending, 0, min($this->concurrency, count($this->pending)));
-                        $this->executeBatch($batch);
-                    }
-                }
-
-                /**
-                 * @param array<int, array<string, mixed>> $batch
-                 */
-                private function executeBatch(array $batch): void
-                {
-                    if (empty($batch)) {
-                        return;
-                    }
-
-                    $headRequests = [];
-                    foreach ($batch as $index => $job) {
-                        $requestKey = 'head-' . $index;
-                        $headRequests[$requestKey] = $this->buildRequest($job['url'], 'HEAD', $job['head_args']);
-                    }
-
-                    $headResponses = $this->sendRequests($headRequests);
-
-                    $getJobs = [];
-
-                    foreach ($batch as $index => $job) {
-                        $requestKey = 'head-' . $index;
-                        $headResponse = $headResponses[$requestKey] ?? new WP_Error('blc_missing_head_response', 'Missing HEAD response.');
-
-                        $needsGetFallback = false;
-                        $fallbackDueToTemporaryStatus = false;
-                        $headRequestDisallowed = false;
-
-                        if ($job['scan_method'] === 'precise') {
-                            if (is_wp_error($headResponse)) {
-                                $needsGetFallback = true;
-                            } else {
-                                $headStatus = (int) $this->client->responseCode($headResponse);
-                                if (in_array($headStatus, $job['temporary_statuses'], true)) {
-                                    $needsGetFallback = true;
-                                    $fallbackDueToTemporaryStatus = true;
-                                } elseif (in_array($headStatus, [403, 405, 501], true)) {
-                                    $needsGetFallback = true;
-                                }
-                            }
-                        } else {
-                            if (!is_wp_error($headResponse)) {
-                                $headStatus = (int) $this->client->responseCode($headResponse);
-                                if (in_array($headStatus, [403, 405, 501], true)) {
-                                    $needsGetFallback = true;
-                                    $headRequestDisallowed = true;
-                                }
-                            }
-                        }
-
-                        if ($needsGetFallback) {
-                            $getJobs[] = [
-                                'index'                      => $index,
-                                'job'                        => $job,
-                                'fallback_due_to_temporary'  => $fallbackDueToTemporaryStatus,
-                                'head_request_disallowed'    => $headRequestDisallowed,
-                            ];
-                        } else {
-                            $this->triggerCallback(
-                                $job,
-                                $headResponse,
-                                $headRequestDisallowed,
-                                $fallbackDueToTemporaryStatus,
-                                false
-                            );
-                        }
-                    }
-
-                    if (empty($getJobs)) {
-                        return;
-                    }
-
-                    $getRequests = [];
-                    foreach ($getJobs as $entry) {
-                        $requestKey = 'get-' . $entry['index'];
-                        $getRequests[$requestKey] = $this->buildRequest($entry['job']['url'], 'GET', $entry['job']['get_args']);
-                    }
-
-                    $getResponses = $this->sendRequests($getRequests);
-
-                    foreach ($getJobs as $entry) {
-                        $requestKey = 'get-' . $entry['index'];
-                        $response = $getResponses[$requestKey] ?? new WP_Error('blc_missing_get_response', 'Missing GET response.');
-                        $this->triggerCallback(
-                            $entry['job'],
-                            $response,
-                            $entry['head_request_disallowed'],
-                            $entry['fallback_due_to_temporary'],
-                            true
-                        );
-                    }
-                }
-
-                private function triggerCallback(
-                    array $job,
-                    $response,
-                    bool $headRequestDisallowed,
-                    bool $fallbackDueToTemporaryStatus,
-                    bool $usedGetRequest
-                ): void
-                {
-                    $callback = $job['callback'];
-                    $callback($response, $headRequestDisallowed, $fallbackDueToTemporaryStatus, $usedGetRequest);
-                }
-
-                private function buildRequest(string $url, string $method, array $args): array
-                {
-                    $headers = [];
-                    if (isset($args['user-agent'])) {
-                        $headers['user-agent'] = (string) $args['user-agent'];
-                    }
-
-                    $options = [];
-                    if (isset($args['timeout'])) {
-                        $options['timeout'] = (float) $args['timeout'];
-                    }
-                    if (isset($args['redirection'])) {
-                        $options['redirects'] = (int) $args['redirection'];
-                    }
-                    if (isset($args['limit_response_size'])) {
-                        $options['max_bytes'] = (int) $args['limit_response_size'];
-                    }
-
-                    return [
-                        'url'     => $url,
-                        'type'    => $method,
-                        'headers' => $headers,
-                        'data'    => $args['body'] ?? null,
-                        'options' => $options,
-                        'args'    => $args,
-                    ];
-                }
-
-                /**
-                 * @param array<string, array<string, mixed>> $requests
-                 * @return array<string, mixed>
-                 */
-                private function sendRequests(array $requests): array
-                {
-                    if (empty($requests)) {
-                        return [];
-                    }
-
-                    $wait = $this->waitCallback;
-                    foreach ($requests as $_) {
-                        $wait();
-                    }
-
-                    $dispatcher = $this->dispatcher;
-                    $responses = $dispatcher($requests);
-                    if (!is_array($responses)) {
-                        $responses = [];
-                    }
-
-                    $normalized = [];
-                    foreach ($requests as $key => $requestSpec) {
-                        $raw = $responses[$key] ?? null;
-                        if ($raw === null) {
-                            $args = isset($requestSpec['args']) && is_array($requestSpec['args']) ? $requestSpec['args'] : [];
-                            $method = strtoupper((string) ($requestSpec['type'] ?? 'GET'));
-                            if ($method === 'HEAD') {
-                                $raw = $this->client->head($requestSpec['url'], $args);
-                            } else {
-                                $raw = $this->client->get($requestSpec['url'], $args);
-                            }
-                        }
-                        $normalized[$key] = $this->normalizeResponse($raw);
-                        $complete = $this->completeCallback;
-                        $complete();
-                    }
-
-                    return $normalized;
-                }
-
-                private function normalizeResponse($raw)
-                {
-                    if ($raw instanceof WP_Error) {
-                        return $raw;
-                    }
-
-                    if ($raw instanceof Requests_Response) {
-                        return [
-                            'headers'  => $raw->headers->getAll(),
-                            'body'     => $raw->body,
-                            'response' => [
-                                'code'    => $raw->status_code,
-                                'message' => $raw->status_text,
-                            ],
-                        ];
-                    }
-
-                    if ($raw instanceof Requests_Exception) {
-                        $code = method_exists($raw, 'getCode') ? (int) $raw->getCode() : 0;
-                        return new WP_Error('http_request_failed', $raw->getMessage(), ['status' => $code]);
-                    }
-
-                    if (is_array($raw)) {
-                        return $raw;
-                    }
-
-                    if ($raw === null) {
-                        return new WP_Error('http_request_failed', 'Empty HTTP response.');
-                    }
-
-                    return $raw;
-                }
-            };
 
             $batch_exception = null;
             $batch_wp_error = null;
