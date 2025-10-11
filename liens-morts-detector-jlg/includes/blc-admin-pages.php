@@ -1038,6 +1038,75 @@ if (!function_exists('blc_get_summary_placeholder')) {
     }
 }
 
+/**
+ * Build a dashboard URL with the provided query arguments, handling fallbacks when WordPress helpers are unavailable.
+ *
+ * @param string              $base_url Base dashboard URL.
+ * @param array<string,mixed> $args     Query arguments.
+ *
+ * @return string
+ */
+function blc_build_dashboard_filtered_url($base_url, array $args) {
+    $base_url = (string) $base_url;
+
+    if ($args === array()) {
+        return $base_url;
+    }
+
+    if (function_exists('add_query_arg')) {
+        return add_query_arg($args, $base_url);
+    }
+
+    $separator = (false === strpos($base_url, '?')) ? '?' : '&';
+    $query     = http_build_query($args, '', '&', PHP_QUERY_RFC3986);
+
+    return $base_url . $separator . $query;
+}
+
+/**
+ * Identify the most impacted domain for each severity class to guide priority recommendations.
+ *
+ * @param array<int,array<string,int|string>> $domains Domain aggregates.
+ *
+ * @return array{
+ *     server:array{host:string,count:int}|null,
+ *     client:array{host:string,count:int}|null,
+ *     redirect:array{host:string,count:int}|null
+ * }
+ */
+function blc_identify_priority_focus_domains(array $domains) {
+    $focus = array(
+        'server'   => null,
+        'client'   => null,
+        'redirect' => null,
+    );
+
+    foreach ($domains as $domain) {
+        if (!is_array($domain) || empty($domain['host'])) {
+            continue;
+        }
+
+        $host = (string) $domain['host'];
+
+        $server_errors = isset($domain['server_errors']) ? max(0, (int) $domain['server_errors']) : 0;
+        if ($server_errors > 0 && ($focus['server'] === null || $server_errors > $focus['server']['count'])) {
+            $focus['server'] = array('host' => $host, 'count' => $server_errors);
+        }
+
+        $client_errors = isset($domain['client_errors']) ? max(0, (int) $domain['client_errors']) : 0;
+        if ($client_errors > 0 && ($focus['client'] === null || $client_errors > $focus['client']['count'])) {
+            $focus['client'] = array('host' => $host, 'count' => $client_errors);
+        }
+
+        $redirects = isset($domain['redirects']) ? max(0, (int) $domain['redirects']) : 0;
+        if ($redirects > 0 && ($focus['redirect'] === null || $redirects > $focus['redirect']['count'])) {
+            $focus['redirect'] = array('host' => $host, 'count' => $redirects);
+        }
+    }
+
+    return $focus;
+}
+
 if (!function_exists('blc_format_summary_interval_label')) {
     /**
      * Format a time interval into a human readable unit (seconds, minutes, hours, days, weeks).
@@ -1428,17 +1497,193 @@ if (!function_exists('blc_build_dashboard_summary_items')) {
  * }>
  */
 function blc_build_priority_action_queue(array $top_domains, $dashboard_base_url, array $count_keys) {
-    if ($top_domains === array()) {
-        return array();
-    }
-
     $actions      = array();
     $total_active = isset($count_keys['active_count']) ? max(0, (int) $count_keys['active_count']) : 0;
     $total_active = max(1, $total_active);
 
+    $server_error_total  = isset($count_keys['server_error_count']) ? max(0, (int) $count_keys['server_error_count']) : 0;
+    $client_error_total  = isset($count_keys['not_found_count']) ? max(0, (int) $count_keys['not_found_count']) : 0;
+    $redirect_total      = isset($count_keys['redirect_count']) ? max(0, (int) $count_keys['redirect_count']) : 0;
+    $needs_recheck_total = isset($count_keys['needs_recheck_count']) ? max(0, (int) $count_keys['needs_recheck_count']) : 0;
+
+    $max_actions = 5;
+    if (function_exists('apply_filters')) {
+        $max_actions = (int) apply_filters('blc_priority_actions_max_count', $max_actions);
+    }
+    if ($max_actions <= 0) {
+        $max_actions = 5;
+    }
+
+    $focus_domains = blc_identify_priority_focus_domains($top_domains);
+
+    $global_specs = array(
+        'server'  => array(
+            'total'        => $server_error_total,
+            'min_ratio'    => 0,
+            'min_count'    => 1,
+            'link_type'    => 'status_5xx',
+            'severity'     => array('class' => 'is-critical', 'label' => __('Critique', 'liens-morts-detector-jlg')),
+            'title'        => __('Stabiliser les erreurs serveur', 'liens-morts-detector-jlg'),
+            'description'  => static function($total, $focus = null) {
+                if ($focus !== null) {
+                    return sprintf(
+                        /* translators: 1: number of server errors, 2: number for the main domain, 3: domain name. */
+                        __('Résolvez %1$s erreur(s) 5xx restantes — dont %2$s sur %3$s — pour rétablir les pages critiques.', 'liens-morts-detector-jlg'),
+                        number_format_i18n($total),
+                        number_format_i18n($focus['count']),
+                        $focus['host']
+                    );
+                }
+
+                return sprintf(
+                    /* translators: %s: number of server errors. */
+                    __('Résolvez %s erreur(s) 5xx restantes pour rétablir les pages critiques.', 'liens-morts-detector-jlg'),
+                    number_format_i18n($total)
+                );
+            },
+        ),
+        'client'  => array(
+            'total'        => $client_error_total,
+            'min_ratio'    => 10,
+            'min_count'    => 5,
+            'link_type'    => 'status_404_410',
+            'severity'     => array('class' => 'is-high', 'label' => __('Prioritaire', 'liens-morts-detector-jlg')),
+            'title'        => __('Résorber les erreurs 4xx récurrentes', 'liens-morts-detector-jlg'),
+            'description'  => static function($total, $focus = null) {
+                if ($focus !== null) {
+                    return sprintf(
+                        /* translators: 1: number of client errors, 2: number for the main domain, 3: domain name. */
+                        __('Réparez %1$s lien(s) en erreur 4xx — dont %2$s sur %3$s — pour restaurer les contenus attendus ou configurer une redirection.', 'liens-morts-detector-jlg'),
+                        number_format_i18n($total),
+                        number_format_i18n($focus['count']),
+                        $focus['host']
+                    );
+                }
+
+                return sprintf(
+                    /* translators: %s: number of client errors. */
+                    __('Réparez %s lien(s) en erreur 4xx pour restaurer les contenus attendus ou configurer une redirection.', 'liens-morts-detector-jlg'),
+                    number_format_i18n($total)
+                );
+            },
+        ),
+        'redirect' => array(
+            'total'        => $redirect_total,
+            'min_ratio'    => 15,
+            'min_count'    => 5,
+            'link_type'    => 'status_redirects',
+            'severity'     => array('class' => 'is-medium', 'label' => __('À optimiser', 'liens-morts-detector-jlg')),
+            'title'        => __('Optimiser les redirections détectées', 'liens-morts-detector-jlg'),
+            'description'  => static function($total, $focus = null) {
+                if ($focus !== null) {
+                    return sprintf(
+                        /* translators: 1: number of redirects, 2: number for the main domain, 3: domain name. */
+                        __('Passez en revue %1$s redirection(s) — dont %2$s sur %3$s — afin de réduire les détours et préserver le référencement.', 'liens-morts-detector-jlg'),
+                        number_format_i18n($total),
+                        number_format_i18n($focus['count']),
+                        $focus['host']
+                    );
+                }
+
+                return sprintf(
+                    /* translators: %s: number of redirects. */
+                    __('Passez en revue %s redirection(s) pour réduire les détours et préserver le référencement.', 'liens-morts-detector-jlg'),
+                    number_format_i18n($total)
+                );
+            },
+        ),
+        'recheck' => array(
+            'total'        => $needs_recheck_total,
+            'min_ratio'    => 20,
+            'min_count'    => 5,
+            'link_type'    => 'needs_recheck',
+            'severity'     => array('class' => 'is-low', 'label' => __('À surveiller', 'liens-morts-detector-jlg')),
+            'title'        => __('Relancer les liens à re-tester', 'liens-morts-detector-jlg'),
+            'description'  => static function($total, $focus = null) {
+                return sprintf(
+                    /* translators: %s: number of links to recheck. */
+                    __('Planifiez une nouvelle vérification pour %s lien(s) en attente afin de confirmer la résolution ou de détecter les rechutes.', 'liens-morts-detector-jlg'),
+                    number_format_i18n($total)
+                );
+            },
+        ),
+    );
+
+    if (function_exists('apply_filters')) {
+        $global_specs = apply_filters('blc_priority_actions_global_specs', $global_specs, $count_keys, $top_domains);
+    }
+
+    foreach ($global_specs as $key => $spec) {
+        $total = isset($spec['total']) ? (int) $spec['total'] : 0;
+        if ($total <= 0) {
+            continue;
+        }
+
+        $percentage = ($total / $total_active) * 100;
+        $min_ratio  = isset($spec['min_ratio']) ? (float) $spec['min_ratio'] : 0.0;
+        $min_count  = isset($spec['min_count']) ? (int) $spec['min_count'] : 0;
+
+        if ($percentage < $min_ratio && $total < $min_count) {
+            continue;
+        }
+
+        $focus_key = ($key === 'client') ? 'client' : $key;
+        $focus     = isset($focus_domains[$focus_key]) ? $focus_domains[$focus_key] : null;
+
+        $description_callback = isset($spec['description']) && is_callable($spec['description'])
+            ? $spec['description']
+            : static function() {
+                return '';
+            };
+
+        if ($focus !== null) {
+            $description = $description_callback($total, $focus);
+        } else {
+            $description = $description_callback($total);
+        }
+
+        $meta_parts = array(
+            sprintf(
+                /* translators: %s: percentage of active broken links. */
+                __('Impact : %s %% des liens cassés actifs.', 'liens-morts-detector-jlg'),
+                number_format_i18n(min(100, max(0, $percentage)), 1)
+            ),
+        );
+
+        if ($focus !== null) {
+            $meta_parts[] = sprintf(
+                /* translators: %s: domain name. */
+                __('Focus : %s', 'liens-morts-detector-jlg'),
+                $focus['host']
+            );
+        }
+
+        $cta_args = array();
+        if (!empty($spec['link_type']) && 'all' !== $spec['link_type']) {
+            $cta_args['link_type'] = (string) $spec['link_type'];
+        }
+
+        $actions[] = array(
+            'title'          => isset($spec['title']) ? (string) $spec['title'] : '',
+            'description'    => $description,
+            'severity_label' => isset($spec['severity']['label']) ? (string) $spec['severity']['label'] : '',
+            'severity_class' => isset($spec['severity']['class']) ? (string) $spec['severity']['class'] : 'is-low',
+            'cta_url'        => blc_build_dashboard_filtered_url($dashboard_base_url, $cta_args),
+            'cta_label'      => __('Ouvrir la liste filtrée', 'liens-morts-detector-jlg'),
+            'meta'           => implode(' · ', array_filter($meta_parts)),
+        );
+
+        if (count($actions) >= $max_actions) {
+            return array_slice($actions, 0, $max_actions);
+        }
+    }
+
     $domain_slice = array_slice($top_domains, 0, 3);
 
     foreach ($domain_slice as $domain) {
+        if (count($actions) >= $max_actions) {
+            break;
+        }
         if (!is_array($domain) || empty($domain['host'])) {
             continue;
         }
@@ -1526,17 +1771,12 @@ function blc_build_priority_action_queue(array $top_domains, $dashboard_base_url
             number_format_i18n($percentage, 1)
         );
 
-        $cta_url = $dashboard_base_url;
-        if ($target_link_type !== 'all' && function_exists('add_query_arg')) {
-            $cta_url = add_query_arg('link_type', $target_link_type, $cta_url);
+        $cta_args = array('s' => $host);
+        if ($target_link_type !== 'all') {
+            $cta_args['link_type'] = $target_link_type;
         }
 
-        if (function_exists('add_query_arg')) {
-            $cta_url = add_query_arg('s', $host, $cta_url);
-        } else {
-            $separator = (false === strpos($cta_url, '?')) ? '?' : '&';
-            $cta_url  .= $separator . 's=' . rawurlencode($host);
-        }
+        $cta_url = blc_build_dashboard_filtered_url($dashboard_base_url, $cta_args);
 
         $actions[] = array(
             'title'          => sprintf(
@@ -1553,7 +1793,7 @@ function blc_build_priority_action_queue(array $top_domains, $dashboard_base_url
         );
     }
 
-    return $actions;
+    return array_slice($actions, 0, $max_actions);
 }
 
 /**
