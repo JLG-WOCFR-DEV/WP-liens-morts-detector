@@ -17,6 +17,10 @@ if (!function_exists('blc_get_notification_status_filter_definitions')) {
     require_once __DIR__ . '/blc-scanner.php';
 }
 
+if (!function_exists('blc_get_proxy_pool_instance')) {
+    require_once __DIR__ . '/Scanner/ProxyPool.php';
+}
+
 /**
  * Render inline help tooltip markup for a settings field.
  *
@@ -477,6 +481,49 @@ function blc_register_settings() {
         )
     );
 
+    register_setting(
+        $option_group,
+        'blc_proxy_pool_enabled',
+        array(
+            'type'              => 'boolean',
+            'sanitize_callback' => 'blc_sanitize_proxy_pool_enabled_option',
+            'default'           => false,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_proxy_pool_entries',
+        array(
+            'type'              => 'array',
+            'sanitize_callback' => 'blc_sanitize_proxy_pool_entries_option',
+            'default'           => array(),
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_proxy_pool_credentials',
+        array(
+            'type'              => 'array',
+            'sanitize_callback' => 'blc_sanitize_proxy_pool_credentials_option',
+            'default'           => array(),
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_proxy_pool_strategy',
+        array(
+            'type'              => 'array',
+            'sanitize_callback' => 'blc_sanitize_proxy_pool_strategy_option',
+            'default'           => array(
+                'mappings'  => array(),
+                'fallbacks' => array('default' => array('global')),
+            ),
+        )
+    );
+
     blc_register_settings_sections();
 }
 
@@ -585,6 +632,48 @@ function blc_register_settings_sections() {
             'label_for'   => 'blc_batch_size',
             'tooltip'     => __('Plus le lot est volumineux, plus le scan est rapide mais gourmand en mémoire.', 'liens-morts-detector-jlg'),
         )
+    );
+
+    add_settings_section(
+        'blc_proxy_pool_section',
+        __('Routage via proxy', 'liens-morts-detector-jlg'),
+        'blc_render_proxy_pool_section_intro',
+        $page
+    );
+
+    add_settings_field(
+        'blc_proxy_pool_enabled',
+        __('Activer le pool de proxys', 'liens-morts-detector-jlg'),
+        'blc_render_proxy_pool_enabled_field',
+        $page,
+        'blc_proxy_pool_section',
+        array(
+            'label_for' => 'blc_proxy_pool_enabled',
+        )
+    );
+
+    add_settings_field(
+        'blc_proxy_pool_entries',
+        __('Liste des proxys', 'liens-morts-detector-jlg'),
+        'blc_render_proxy_pool_entries_field',
+        $page,
+        'blc_proxy_pool_section'
+    );
+
+    add_settings_field(
+        'blc_proxy_pool_credentials',
+        __('Identifiants d’authentification', 'liens-morts-detector-jlg'),
+        'blc_render_proxy_pool_credentials_field',
+        $page,
+        'blc_proxy_pool_section'
+    );
+
+    add_settings_field(
+        'blc_proxy_pool_strategy',
+        __('Stratégie par région', 'liens-morts-detector-jlg'),
+        'blc_render_proxy_pool_strategy_field',
+        $page,
+        'blc_proxy_pool_section'
     );
 
     add_settings_field(
@@ -1500,6 +1589,120 @@ function blc_render_multiline_text_field($args) {
     if (!empty($args['description'])) {
         echo '<p class="description">' . esc_html($args['description']) . '</p>';
     }
+}
+
+function blc_render_proxy_pool_section_intro() {
+    echo '<p class="description">' . esc_html__('Configurez un pool de proxys sortants pour répartir les vérifications réseau, définir les régions préférées et mettre en quarantaine automatiquement les sorties instables.', 'liens-morts-detector-jlg') . '</p>';
+}
+
+function blc_render_proxy_pool_enabled_field() {
+    $enabled = (bool) get_option('blc_proxy_pool_enabled', false);
+
+    echo '<label class="blc-toggle">';
+    echo '<input type="checkbox" name="blc_proxy_pool_enabled" id="blc_proxy_pool_enabled" value="1"' . checked($enabled, true, false) . '>';
+    echo '<span class="blc-toggle__label">' . esc_html__('Activer la rotation dynamique selon la stratégie ci-dessous.', 'liens-morts-detector-jlg') . '</span>';
+    echo '</label>';
+}
+
+function blc_render_proxy_pool_entries_field() {
+    $entries = blc_get_proxy_pool_entries();
+    $lines   = array();
+
+    foreach ($entries as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+
+        $id       = isset($entry['id']) ? (string) $entry['id'] : '';
+        $url      = isset($entry['url']) ? (string) $entry['url'] : '';
+        $regions  = isset($entry['regions']) && is_array($entry['regions']) ? implode(',', $entry['regions']) : '';
+        $priority = isset($entry['priority']) ? (int) $entry['priority'] : 10;
+        $headers  = '';
+
+        if (isset($entry['headers']) && is_array($entry['headers']) && $entry['headers'] !== array()) {
+            $pairs = array();
+            foreach ($entry['headers'] as $name => $value) {
+                if (!is_string($name) || $name === '' || !is_scalar($value)) {
+                    continue;
+                }
+
+                $pairs[] = $name . '=' . (string) $value;
+            }
+
+            if ($pairs !== array()) {
+                $headers = implode(';', $pairs);
+            }
+        }
+
+        $line = $id . '|' . $url . '|' . $regions . '|' . $priority;
+        if ($headers !== '') {
+            $line .= '|' . $headers;
+        }
+
+        $lines[] = $line;
+    }
+
+    $value = implode("\n", $lines);
+
+    echo '<textarea name="blc_proxy_pool_entries" id="blc_proxy_pool_entries" rows="5" class="large-text code" placeholder="' . esc_attr__('eu-1|http://10.0.0.1:8080|eu|100|X-Tier=gold', 'liens-morts-detector-jlg') . '">' . esc_textarea($value) . '</textarea>';
+    echo '<p class="description">' . esc_html__('Format : identifiant|URL du proxy|liste de régions (optionnel)|priorité|en-têtes additionnels. Une entrée par ligne, les régions sont séparées par des virgules.', 'liens-morts-detector-jlg') . '</p>';
+}
+
+function blc_render_proxy_pool_credentials_field() {
+    $existing = blc_get_proxy_pool_credentials();
+    $registered = array();
+    foreach ($existing as $id => $secret) {
+        $registered[] = (string) $id;
+    }
+
+    echo '<textarea name="blc_proxy_pool_credentials" id="blc_proxy_pool_credentials" rows="4" class="large-text code" placeholder="' . esc_attr__('eu-1=utilisateur:motdepasse', 'liens-morts-detector-jlg') . '"></textarea>';
+
+    if ($registered !== array()) {
+        echo '<p class="description">' . sprintf(
+            /* translators: %s is the comma separated list of proxy identifiers. */
+            esc_html__('Identifiants stockés pour : %s. Saisissez « proxy-id=nouveau:secret » pour mettre à jour, ou « proxy-id= » pour supprimer.', 'liens-morts-detector-jlg'),
+            esc_html(implode(', ', $registered))
+        ) . '</p>';
+    } else {
+        echo '<p class="description">' . esc_html__('Saisissez une ligne par proxy : identifiant=login:motdepasse. Les valeurs sont chiffrées avant stockage.', 'liens-morts-detector-jlg') . '</p>';
+    }
+}
+
+function blc_render_proxy_pool_strategy_field() {
+    $strategy = blc_get_proxy_pool_strategy();
+    $lines    = array();
+
+    if (isset($strategy['mappings']) && is_array($strategy['mappings'])) {
+        foreach ($strategy['mappings'] as $mapping) {
+            if (!is_array($mapping)) {
+                continue;
+            }
+
+            $pattern = isset($mapping['pattern']) ? (string) $mapping['pattern'] : '';
+            $region  = isset($mapping['region']) ? (string) $mapping['region'] : '';
+
+            if ($pattern === '' || $region === '') {
+                continue;
+            }
+
+            $lines[] = sprintf('map %s => %s', $pattern, $region);
+        }
+    }
+
+    if (isset($strategy['fallbacks']) && is_array($strategy['fallbacks'])) {
+        foreach ($strategy['fallbacks'] as $region => $sequence) {
+            if (!is_array($sequence)) {
+                continue;
+            }
+
+            $lines[] = sprintf('fallback %s => %s', (string) $region, implode(', ', $sequence));
+        }
+    }
+
+    $value = implode("\n", $lines);
+
+    echo '<textarea name="blc_proxy_pool_strategy" id="blc_proxy_pool_strategy" rows="5" class="large-text code" placeholder="' . esc_attr__('map *.fr => eu' . "\n" . 'fallback eu => eu,global', 'liens-morts-detector-jlg') . '">' . esc_textarea($value) . '</textarea>';
+    echo '<p class="description">' . esc_html__('Utilisez « map motif => région » pour associer un domaine à une zone, et « fallback région => ordre1,ordre2 » pour définir l’ordre de bascule. La région « global » est ajoutée automatiquement en dernier recours.', 'liens-morts-detector-jlg') . '</p>';
 }
 
 /**
@@ -3374,5 +3577,211 @@ function blc_sanitize_queue_concurrency_option($value) {
     }
 
     return $int;
+}
+
+function blc_sanitize_proxy_pool_enabled_option($value) {
+    return !empty($value);
+}
+
+function blc_sanitize_proxy_pool_entries_option($value) {
+    if (!is_string($value)) {
+        return array();
+    }
+
+    $lines = preg_split('/\r\n|\r|\n/', $value);
+    if ($lines === false) {
+        $lines = array();
+    }
+
+    $entries = array();
+
+    foreach ($lines as $line) {
+        $trimmed = trim((string) $line);
+        if ($trimmed === '' || strpos($trimmed, '#') === 0) {
+            continue;
+        }
+
+        $parts = array_map('trim', explode('|', $trimmed));
+
+        $id  = isset($parts[0]) ? sanitize_key($parts[0]) : '';
+        $url = isset($parts[1]) ? esc_url_raw($parts[1]) : '';
+
+        if ($id === '' || $url === '') {
+            continue;
+        }
+
+        $regions = array();
+        if (isset($parts[2]) && $parts[2] !== '') {
+            $rawRegions = preg_split('/[,\s]+/', $parts[2]);
+            if ($rawRegions !== false) {
+                foreach ($rawRegions as $region) {
+                    $region = sanitize_key($region);
+                    if ($region === '') {
+                        continue;
+                    }
+
+                    $regions[$region] = $region;
+                }
+            }
+        }
+
+        $priority = isset($parts[3]) && is_numeric($parts[3]) ? (int) $parts[3] : 10;
+        if ($priority <= 0) {
+            $priority = 10;
+        }
+
+        $headers = array();
+        if (isset($parts[4]) && $parts[4] !== '') {
+            $rawHeaders = preg_split('/[;,]+/', $parts[4]);
+            if ($rawHeaders !== false) {
+                foreach ($rawHeaders as $header) {
+                    $header = trim($header);
+                    if ($header === '') {
+                        continue;
+                    }
+
+                    $headerParts = explode('=', $header, 2);
+                    $name  = isset($headerParts[0]) ? trim($headerParts[0]) : '';
+                    $value = isset($headerParts[1]) ? trim($headerParts[1]) : '';
+
+                    if ($name === '' || $value === '') {
+                        continue;
+                    }
+
+                    $headers[$name] = $value;
+                }
+            }
+        }
+
+        $entries[] = array(
+            'id'       => $id,
+            'url'      => $url,
+            'regions'  => array_values($regions),
+            'priority' => $priority,
+            'headers'  => $headers,
+        );
+    }
+
+    return $entries;
+}
+
+function blc_sanitize_proxy_pool_credentials_option($value) {
+    $existing = get_option('blc_proxy_pool_credentials', array());
+    if (!is_array($existing)) {
+        $existing = array();
+    }
+
+    if (!is_string($value)) {
+        return $existing;
+    }
+
+    $lines = preg_split('/\r\n|\r|\n/', $value);
+    if ($lines === false) {
+        return $existing;
+    }
+
+    foreach ($lines as $line) {
+        $trimmed = trim((string) $line);
+        if ($trimmed === '' || strpos($trimmed, '#') === 0) {
+            continue;
+        }
+
+        $parts = explode('=', $trimmed, 2);
+        $id    = isset($parts[0]) ? sanitize_key(trim($parts[0])) : '';
+
+        if ($id === '') {
+            continue;
+        }
+
+        $secret = isset($parts[1]) ? trim($parts[1]) : '';
+
+        if ($secret === '') {
+            unset($existing[$id]);
+            continue;
+        }
+
+        $existing[$id] = blc_encrypt_secret($secret);
+    }
+
+    return $existing;
+}
+
+function blc_sanitize_proxy_pool_strategy_option($value) {
+    if (!is_string($value)) {
+        return array(
+            'mappings'  => array(),
+            'fallbacks' => array('default' => array('global')),
+        );
+    }
+
+    $lines = preg_split('/\r\n|\r|\n/', $value);
+    if ($lines === false) {
+        $lines = array();
+    }
+
+    $mappings  = array();
+    $fallbacks = array();
+
+    foreach ($lines as $line) {
+        $trimmed = trim((string) $line);
+        if ($trimmed === '' || strpos($trimmed, '#') === 0) {
+            continue;
+        }
+
+        if (preg_match('/^map\s+(.+?)\s*=>\s*([a-z0-9_\-]+)/i', $trimmed, $matches)) {
+            $pattern = strtolower(trim($matches[1]));
+            $region  = sanitize_key($matches[2]);
+
+            if ($pattern === '' || $region === '') {
+                continue;
+            }
+
+            $mappings[] = array('pattern' => $pattern, 'region' => $region);
+            continue;
+        }
+
+        if (preg_match('/^fallback\s+([a-z0-9_\-]+)\s*=>\s*(.+)$/i', $trimmed, $matches)) {
+            $region = sanitize_key($matches[1]);
+            if ($region === '') {
+                continue;
+            }
+
+            $targets = preg_split('/[,>]+/', strtolower($matches[2]));
+            $normalized = array();
+            if ($targets !== false) {
+                foreach ($targets as $target) {
+                    $target = sanitize_key($target);
+                    if ($target === '') {
+                        continue;
+                    }
+
+                    $normalized[$target] = $target;
+                }
+            }
+
+            if (!isset($normalized['global'])) {
+                $normalized['global'] = 'global';
+            }
+
+            $fallbacks[$region] = array_values($normalized);
+        }
+    }
+
+    if (!isset($fallbacks['default'])) {
+        $fallbacks['default'] = array('global');
+    } else {
+        $fallbacks['default'] = array_values(array_unique($fallbacks['default']));
+        if ($fallbacks['default'] === array()) {
+            $fallbacks['default'][] = 'global';
+        }
+        if (!in_array('global', $fallbacks['default'], true)) {
+            $fallbacks['default'][] = 'global';
+        }
+    }
+
+    return array(
+        'mappings'  => $mappings,
+        'fallbacks' => $fallbacks,
+    );
 }
 

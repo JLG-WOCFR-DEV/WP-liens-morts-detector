@@ -82,7 +82,10 @@ final class LinkScanControllerTest extends ScannerTestCase
         $this->assertCount(1, $this->scheduledEvents, 'A follow-up batch should be scheduled during the rest window.');
         $scheduled = $this->scheduledEvents[0];
         $this->assertSame('blc_check_batch', $scheduled['hook']);
-        $this->assertSame([0, true, false], $scheduled['args']);
+        $this->assertSame(
+            [0, true, false, ['soft_404' => [], 'queue_concurrency' => 1]],
+            $scheduled['args']
+        );
         $this->assertSame(
             strtotime('2023-01-01 20:00:00 UTC'),
             $scheduled['timestamp'],
