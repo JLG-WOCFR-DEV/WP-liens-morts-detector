@@ -1065,12 +1065,17 @@ class BLC_Links_List_Table extends WP_List_Table {
 
         global $wpdb;
         $table_name  = $wpdb->prefix . 'blc_broken_links';
+        $links_alias = 'links';
         $posts_table = $wpdb->posts;
-        $join_clause = "LEFT JOIN {$posts_table} AS posts ON {$table_name}.post_id = posts.ID";
+        $from_clause = "FROM {$table_name} AS {$links_alias}";
+        $join_clause = "LEFT JOIN {$posts_table} AS posts ON {$links_alias}.post_id = posts.ID";
         $internal_condition = $this->build_internal_url_condition();
-        $internal_sql       = $internal_condition['sql'];
+        $qualify_url_column = static function ($sql) use ($links_alias) {
+            return preg_replace('/(?<![A-Za-z0-9_])url(?![A-Za-z0-9_])/u', $links_alias . '.url', $sql);
+        };
+        $internal_sql       = $qualify_url_column($internal_condition['sql']);
         $internal_params    = $internal_condition['params'];
-        $external_sql       = $internal_condition['not_sql'];
+        $external_sql       = $qualify_url_column($internal_condition['not_sql']);
         $external_params    = $internal_condition['not_params'];
 
         $is_ignored_view = ($current_view === 'ignored');
@@ -1093,17 +1098,17 @@ class BLC_Links_List_Table extends WP_List_Table {
         $params = [];
 
         if (count($type_filter) === 1) {
-            $where[] = 'type = %s';
+            $where[] = "{$links_alias}.type = %s";
             $params[] = $type_filter[0];
         } else {
             $type_placeholders = implode(',', array_fill(0, count($type_filter), '%s'));
-            $where[] = "type IN ($type_placeholders)";
+            $where[] = "{$links_alias}.type IN ($type_placeholders)";
             $params = array_merge($params, $type_filter);
         }
 
         if ($search_term !== '') {
             $like = '%' . $wpdb->esc_like($search_term) . '%';
-            $where[] = '(url LIKE %s OR anchor LIKE %s OR post_title LIKE %s)';
+            $where[] = "({$links_alias}.url LIKE %s OR {$links_alias}.anchor LIKE %s OR {$links_alias}.post_title LIKE %s)";
             $params  = array_merge($params, [$like, $like, $like]);
         }
 
@@ -1113,28 +1118,34 @@ class BLC_Links_List_Table extends WP_List_Table {
         }
 
         if ($is_ignored_view) {
-            $where[] = 'ignored_at IS NOT NULL';
+            $where[] = "{$links_alias}.ignored_at IS NOT NULL";
         } else {
-            $where[] = 'ignored_at IS NULL';
+            $where[] = "{$links_alias}.ignored_at IS NULL";
         }
 
         if ($current_view === 'internal') {
-            $where[] = '(is_internal = 1 OR (is_internal IS NULL AND ' . $internal_sql . '))';
+            $where[] = "({$links_alias}.is_internal = 1 OR ({$links_alias}.is_internal IS NULL AND {$internal_sql}))";
             $params  = array_merge($params, $internal_params);
         } elseif ($current_view === 'external') {
-            $external_clause = '(is_internal = 0 OR (is_internal IS NULL AND (' . $external_sql . " OR url IS NULL OR url = ''" . ')))';
+            $external_clause = strtr(
+                "({links}.is_internal = 0 OR ({links}.is_internal IS NULL AND ({external_sql} OR {links}.url IS NULL OR {links}.url = '')))",
+                [
+                    '{links}' => $links_alias,
+                    '{external_sql}' => $external_sql,
+                ]
+            );
             $where[] = $external_clause;
             $params  = array_merge($params, $external_params);
         }
 
-        $needs_recheck_clause = '(last_checked_at IS NULL OR last_checked_at = %s OR last_checked_at <= %s)';
+        $needs_recheck_clause = "({$links_alias}.last_checked_at IS NULL OR {$links_alias}.last_checked_at = %s OR {$links_alias}.last_checked_at <= %s)";
 
         if ($current_view === 'status_404_410') {
-            $where[] = 'http_status IN (404, 410)';
+            $where[] = "{$links_alias}.http_status IN (404, 410)";
         } elseif ($current_view === 'status_5xx') {
-            $where[] = '(http_status BETWEEN 500 AND 599)';
+            $where[] = "({$links_alias}.http_status BETWEEN 500 AND 599)";
         } elseif ($current_view === 'status_redirects') {
-            $where[] = '(http_status BETWEEN 300 AND 399)';
+            $where[] = "({$links_alias}.http_status BETWEEN 300 AND 399)";
         } elseif ($current_view === 'needs_recheck') {
             $where[] = $needs_recheck_clause;
             $params = array_merge($params, [$this->get_unchecked_sentinel_value(), $this->get_recheck_threshold_gmt()]);
@@ -1143,7 +1154,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         $where_clause = implode(' AND ', $where);
 
         $total_query = $wpdb->prepare(
-            "SELECT COUNT(*) FROM {$table_name} {$join_clause} WHERE $where_clause",
+            "SELECT COUNT(*) {$from_clause} {$join_clause} WHERE $where_clause",
             $params
         );
         $total_items = (int) $wpdb->get_var($total_query);
@@ -1161,14 +1172,18 @@ class BLC_Links_List_Table extends WP_List_Table {
             }
 
             if ($db_column !== '') {
-                $whitelisted_columns[$column_key] = $db_column;
+                if (strpos($db_column, '.') === false && strpos($db_column, '(') === false) {
+                    $whitelisted_columns[$column_key] = "{$links_alias}.{$db_column}";
+                } else {
+                    $whitelisted_columns[$column_key] = $db_column;
+                }
             }
         }
 
         // Colonnes internes utilisées pour les tris par défaut.
-        $whitelisted_columns['id'] = 'id';
+        $whitelisted_columns['id'] = "{$links_alias}.id";
         if ($is_ignored_view) {
-            $whitelisted_columns['ignored_at'] = 'ignored_at';
+            $whitelisted_columns['ignored_at'] = "{$links_alias}.ignored_at";
         }
 
         $sort_request = $this->get_current_sort_request();
@@ -1179,19 +1194,19 @@ class BLC_Links_List_Table extends WP_List_Table {
             $primary_order_column = $whitelisted_columns[$requested_orderby];
             $order_clauses = [sprintf('%s %s', $primary_order_column, $order_direction)];
 
-            if ($primary_order_column !== 'id') {
-                $order_clauses[] = 'id DESC';
+            if ($primary_order_column !== "{$links_alias}.id") {
+                $order_clauses[] = "{$links_alias}.id DESC";
             }
 
             $order_by = implode(', ', $order_clauses);
         } else {
-            $fallback_order = $is_ignored_view ? ['ignored_at DESC', 'id DESC'] : ['id DESC'];
+            $fallback_order = $is_ignored_view ? ["{$links_alias}.ignored_at DESC", "{$links_alias}.id DESC"] : ["{$links_alias}.id DESC"];
             $order_by = implode(', ', $fallback_order);
         }
 
         $data_query = $wpdb->prepare(
-            "SELECT id, occurrence_index, url, anchor, redirect_target_url, context_html, context_excerpt, post_id, post_title, http_status, last_checked_at, ignored_at, posts.post_type AS post_type
-             FROM {$table_name}
+            "SELECT {$links_alias}.id AS id, {$links_alias}.occurrence_index, {$links_alias}.url, {$links_alias}.anchor, {$links_alias}.redirect_target_url, {$links_alias}.context_html, {$links_alias}.context_excerpt, {$links_alias}.post_id, {$links_alias}.post_title, {$links_alias}.http_status, {$links_alias}.last_checked_at, {$links_alias}.ignored_at, posts.post_type AS post_type
+             {$from_clause}
              {$join_clause}
              WHERE $where_clause
              ORDER BY $order_by
