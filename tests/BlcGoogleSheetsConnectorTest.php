@@ -67,6 +67,7 @@ class BlcGoogleSheetsConnectorTest extends TestCase
 
         require_once __DIR__ . '/translation-stubs.php';
         require_once __DIR__ . '/wp-option-stubs.php';
+        require_once __DIR__ . '/stubs/rest-request-stub.php';
 
         if (!defined('ABSPATH')) {
             define('ABSPATH', __DIR__ . '/../');
@@ -224,6 +225,85 @@ class BlcGoogleSheetsConnectorTest extends TestCase
         $this->assertSame('Liens!A1', $payload['data'][0]['range']);
         $this->assertSame(['dataset', 'url'], $payload['data'][0]['values'][0]);
         $this->assertSame(['link', 'https://example.com'], $payload['data'][0]['values'][1]);
+    }
+
+    public function test_rest_get_settings_masks_google_credentials(): void
+    {
+        $this->options['blc_google_sheets_settings'] = [
+            'enabled'       => true,
+            'spreadsheet_id'=> 'spreadsheet-123',
+            'client_id'     => 'client-1',
+            'client_secret' => 'secret-1',
+            'access_token'  => 'token-1',
+            'refresh_token' => 'refresh-1',
+        ];
+
+        $response = \blc_rest_get_google_sheets_settings();
+
+        $this->assertNull($response['client_secret']);
+        $this->assertNull($response['access_token']);
+        $this->assertNull($response['refresh_token']);
+        $this->assertTrue($response['has_client_secret']);
+        $this->assertTrue($response['has_access_token']);
+        $this->assertTrue($response['has_refresh_token']);
+    }
+
+    public function test_rest_update_settings_preserves_client_secret_when_omitted(): void
+    {
+        $this->options['blc_google_sheets_settings'] = [
+            'enabled'       => true,
+            'spreadsheet_id'=> 'spreadsheet-123',
+            'client_id'     => 'client-1',
+            'client_secret' => 'secret-1',
+        ];
+
+        $request = new \WP_REST_Request(
+            ['spreadsheet_id' => 'updated-sheet'],
+            ['spreadsheet_id' => 'updated-sheet']
+        );
+
+        $response = \blc_rest_update_google_sheets_settings($request);
+
+        $settings = \blc_get_google_sheets_settings();
+
+        $this->assertSame('updated-sheet', $settings['spreadsheet_id']);
+        $this->assertSame('secret-1', $settings['client_secret']);
+        $this->assertNull($response['client_secret']);
+        $this->assertTrue($response['has_client_secret']);
+    }
+
+    public function test_rest_store_token_masks_response(): void
+    {
+        $this->options['blc_google_sheets_settings'] = [
+            'enabled'       => true,
+            'spreadsheet_id'=> 'spreadsheet-123',
+            'client_id'     => 'client-1',
+            'client_secret' => 'secret-1',
+        ];
+
+        $request = new \WP_REST_Request(
+            [
+                'access_token'  => 'new-token',
+                'refresh_token' => 'refresh-2',
+                'expires_in'    => 1800,
+            ],
+            [
+                'access_token'  => 'new-token',
+                'refresh_token' => 'refresh-2',
+                'expires_in'    => 1800,
+            ]
+        );
+
+        $response = \blc_rest_store_google_sheets_token($request);
+
+        $settings = \blc_get_google_sheets_settings();
+
+        $this->assertSame('new-token', $settings['access_token']);
+        $this->assertSame('refresh-2', $settings['refresh_token']);
+        $this->assertNull($response['access_token']);
+        $this->assertNull($response['refresh_token']);
+        $this->assertTrue($response['has_access_token']);
+        $this->assertTrue($response['has_refresh_token']);
     }
 }
 

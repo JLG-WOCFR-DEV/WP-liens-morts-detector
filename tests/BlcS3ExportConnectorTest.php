@@ -69,6 +69,7 @@ class BlcS3ExportConnectorTest extends TestCase
 
         require_once __DIR__ . '/translation-stubs.php';
         require_once __DIR__ . '/wp-option-stubs.php';
+        require_once __DIR__ . '/stubs/rest-request-stub.php';
 
         if (!defined('ABSPATH')) {
             define('ABSPATH', __DIR__ . '/../');
@@ -190,6 +191,93 @@ class BlcS3ExportConnectorTest extends TestCase
 
         $this->assertSame('s3_error', $settings['last_error_code']);
         $this->assertSame('Unable to upload', $settings['last_error']);
+    }
+
+    public function test_rest_get_settings_masks_s3_credentials(): void
+    {
+        $this->options['blc_s3_export_settings'] = [
+            'enabled'           => true,
+            'bucket'            => 'reports-bucket',
+            'region'            => 'eu-west-3',
+            'access_key_id'     => 'AKIAIOSAMPLE',
+            'secret_access_key' => 'very-secret',
+            'session_token'     => 'temporary-token',
+        ];
+
+        $response = \blc_rest_get_s3_settings();
+
+        $this->assertNull($response['access_key_id']);
+        $this->assertNull($response['secret_access_key']);
+        $this->assertNull($response['session_token']);
+        $this->assertTrue($response['has_access_key_id']);
+        $this->assertTrue($response['has_secret_access_key']);
+        $this->assertTrue($response['has_session_token']);
+    }
+
+    public function test_rest_update_settings_preserves_credentials_when_omitted(): void
+    {
+        $this->options['blc_s3_export_settings'] = [
+            'enabled'           => true,
+            'bucket'            => 'reports-bucket',
+            'region'            => 'eu-west-3',
+            'access_key_id'     => 'AKIAIOSAMPLE',
+            'secret_access_key' => 'very-secret',
+        ];
+
+        $request = new \WP_REST_Request(
+            ['bucket' => 'updated-bucket'],
+            ['bucket' => 'updated-bucket']
+        );
+
+        $response = \blc_rest_update_s3_settings($request);
+
+        $settings = \blc_get_s3_settings();
+
+        $this->assertSame('updated-bucket', $settings['bucket']);
+        $this->assertSame('AKIAIOSAMPLE', $settings['access_key_id']);
+        $this->assertSame('very-secret', $settings['secret_access_key']);
+        $this->assertTrue($response['has_access_key_id']);
+        $this->assertTrue($response['has_secret_access_key']);
+        $this->assertNull($response['access_key_id']);
+        $this->assertNull($response['secret_access_key']);
+    }
+
+    public function test_rest_update_settings_accepts_new_credentials(): void
+    {
+        $this->options['blc_s3_export_settings'] = [
+            'enabled'           => true,
+            'bucket'            => 'reports-bucket',
+            'region'            => 'eu-west-3',
+            'access_key_id'     => 'AKIAIOSAMPLE',
+            'secret_access_key' => 'very-secret',
+        ];
+
+        $request = new \WP_REST_Request(
+            [
+                'access_key_id'     => 'NEWKEY',
+                'secret_access_key' => 'new-secret',
+                'session_token'     => 'new-token',
+            ],
+            [
+                'access_key_id'     => 'NEWKEY',
+                'secret_access_key' => 'new-secret',
+                'session_token'     => 'new-token',
+            ]
+        );
+
+        $response = \blc_rest_update_s3_settings($request);
+
+        $settings = \blc_get_s3_settings();
+
+        $this->assertSame('NEWKEY', $settings['access_key_id']);
+        $this->assertSame('new-secret', $settings['secret_access_key']);
+        $this->assertSame('new-token', $settings['session_token']);
+        $this->assertTrue($response['has_access_key_id']);
+        $this->assertTrue($response['has_secret_access_key']);
+        $this->assertTrue($response['has_session_token']);
+        $this->assertNull($response['access_key_id']);
+        $this->assertNull($response['secret_access_key']);
+        $this->assertNull($response['session_token']);
     }
 }
 

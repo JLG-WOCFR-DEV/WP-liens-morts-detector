@@ -192,6 +192,41 @@ jQuery(document).ready(function($) {
     })();
 
     window.blcAdmin = window.blcAdmin || {};
+    window.blcAdmin.integrations = window.blcAdmin.integrations || {};
+
+    window.blcAdmin.integrations.hasStoredCredential = function(settings, key) {
+        if (!settings || typeof key !== 'string') {
+            return false;
+        }
+
+        var flag = 'has_' + key;
+        if (Object.prototype.hasOwnProperty.call(settings, flag)) {
+            return !!settings[flag];
+        }
+
+        var value = settings[key];
+
+        return typeof value === 'string' && value !== '';
+    };
+
+    window.blcAdmin.integrations.getMaskedValue = function(settings, key, placeholder) {
+        var hasFlag = false;
+
+        if (settings && typeof key === 'string') {
+            var flag = 'has_' + key;
+            hasFlag = Object.prototype.hasOwnProperty.call(settings, flag);
+        }
+
+        if (hasFlag && window.blcAdmin.integrations.hasStoredCredential(settings, key)) {
+            return typeof placeholder === 'string' && placeholder !== '' ? placeholder : '••••••••';
+        }
+
+        if (settings && typeof settings[key] === 'string') {
+            return settings[key];
+        }
+
+        return '';
+    };
 
     var toast = (function() {
         var $container = null;
