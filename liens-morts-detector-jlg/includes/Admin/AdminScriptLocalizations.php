@@ -14,6 +14,7 @@ class AdminScriptLocalizations
         return array(
             'blcAdminMessages'        => $this->getMessages(),
             'blcAdminUi'              => $this->getUiConfig($context),
+            'blcAdminSettings'        => $this->getSettingsConfig($context),
             'blcAdminScanConfig'      => $this->getLinkScanConfig($context),
             'blcAdminNotifications'   => $this->getNotificationConfig(),
             'blcAdminImageScanConfig' => $this->getImageScanConfig($context),
@@ -113,6 +114,42 @@ class AdminScriptLocalizations
             'presetClass' => isset($context['presetClass']) ? (string) $context['presetClass'] : '',
             'enhanced'    => true,
             'accessibility' => $this->getAccessibilityConfig($context),
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     *
+     * @return array<string, mixed>
+     */
+    private function getSettingsConfig(array $context)
+    {
+        $mode = isset($context['settingsMode']) ? (string) $context['settingsMode'] : 'simple';
+        if (!in_array($mode, array('simple', 'advanced'), true)) {
+            $mode = 'simple';
+        }
+
+        $ajaxUrl = function_exists('admin_url') ? esc_url_raw(admin_url('admin-ajax.php')) : '';
+        $nonce   = function_exists('wp_create_nonce') ? wp_create_nonce('blc_settings_mode') : '';
+
+        return array(
+            'mode' => $mode,
+            'ajax' => array(
+                'url'    => $ajaxUrl,
+                'action' => 'blc_update_settings_mode',
+                'nonce'  => $nonce,
+            ),
+            'i18n' => array(
+                'modeSimple'            => __('Mode simple', 'liens-morts-detector-jlg'),
+                'modeAdvanced'          => __('Mode avancé', 'liens-morts-detector-jlg'),
+                'statusSimple'          => __('Mode simple activé — seuls les réglages essentiels sont visibles.', 'liens-morts-detector-jlg'),
+                'statusAdvanced'        => __('Mode avancé activé — toutes les sections sont affichées.', 'liens-morts-detector-jlg'),
+                'switchToAdvanced'      => __('Passer en mode avancé', 'liens-morts-detector-jlg'),
+                'switchToSimple'        => __('Revenir au mode simple', 'liens-morts-detector-jlg'),
+                'announcementSimple'    => __('Mode simple activé. Les réglages avancés sont masqués.', 'liens-morts-detector-jlg'),
+                'announcementAdvanced'  => __('Mode avancé activé. Les réglages supplémentaires sont visibles.', 'liens-morts-detector-jlg'),
+                'error'                 => __('Impossible d’enregistrer votre préférence pour le moment.', 'liens-morts-detector-jlg'),
+            ),
         );
     }
 

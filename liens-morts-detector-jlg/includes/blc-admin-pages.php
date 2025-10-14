@@ -23,6 +23,10 @@ if (!defined('BLC_SAVED_LINK_VIEWS_META_KEY')) {
     define('BLC_SAVED_LINK_VIEWS_META_KEY', 'blc_saved_link_views');
 }
 
+if (!defined('BLC_SETTINGS_MODE_META_KEY')) {
+    define('BLC_SETTINGS_MODE_META_KEY', 'blc_settings_mode');
+}
+
 /**
  * Returns the maximum number of saved views allowed per user.
  *
@@ -4039,11 +4043,56 @@ function blc_settings_page() {
         wp_die(esc_html__('Permissions insuffisantes pour modifier les réglages.', 'liens-morts-detector-jlg'));
     }
 
+    $settings_mode    = blc_get_settings_mode();
+    $is_advanced_mode = ($settings_mode === 'advanced');
+
     ?>
     <div class="wrap">
         <?php blc_render_dashboard_tabs('settings'); ?>
         <h1><?php esc_html_e('Réglages', 'liens-morts-detector-jlg'); ?></h1>
         <?php settings_errors(); ?>
+        <div
+            class="blc-settings-mode"
+            data-blc-settings-mode-toggle
+            data-current-mode="<?php echo esc_attr($settings_mode); ?>"
+        >
+            <div class="blc-settings-mode__intro">
+                <h2 id="blc-settings-mode-title" class="blc-settings-mode__title"><?php esc_html_e('Niveau de configuration', 'liens-morts-detector-jlg'); ?></h2>
+                <p id="blc-settings-mode-description" class="blc-settings-mode__description">
+                    <?php esc_html_e('Choisissez la quantité de réglages à afficher en fonction de votre aisance technique.', 'liens-morts-detector-jlg'); ?>
+                </p>
+            </div>
+            <div class="blc-settings-mode__control">
+                <span id="blc-settings-mode-state" class="blc-settings-mode__state" data-blc-settings-mode-state>
+                    <?php
+                    if ($is_advanced_mode) {
+                        esc_html_e('Mode avancé activé — toutes les sections sont affichées.', 'liens-morts-detector-jlg');
+                    } else {
+                        esc_html_e('Mode simple activé — seuls les réglages essentiels sont visibles.', 'liens-morts-detector-jlg');
+                    }
+                    ?>
+                </span>
+                <button
+                    type="button"
+                    class="button blc-settings-mode__switch"
+                    role="switch"
+                    aria-checked="<?php echo $is_advanced_mode ? 'true' : 'false'; ?>"
+                    aria-labelledby="blc-settings-mode-title blc-settings-mode-state"
+                    aria-describedby="blc-settings-mode-description"
+                    data-blc-settings-mode-control
+                >
+                    <span data-blc-settings-mode-action>
+                        <?php
+                        if ($is_advanced_mode) {
+                            esc_html_e('Revenir au mode simple', 'liens-morts-detector-jlg');
+                        } else {
+                            esc_html_e('Passer en mode avancé', 'liens-morts-detector-jlg');
+                        }
+                        ?>
+                    </span>
+                </button>
+            </div>
+        </div>
         <form method="post" action="options.php" class="blc-settings-form">
             <?php
             settings_fields('blc_settings');
@@ -4169,6 +4218,88 @@ function blc_normalize_links_table_request($source = null) {
     return $normalized;
 }
 
+/**
+ * Normalize the requested settings mode.
+ *
+ * @param string $mode
+ *
+ * @return string
+ */
+function blc_normalize_settings_mode($mode) {
+    $allowed_modes = array('simple', 'advanced');
+    $normalized    = is_string($mode) ? $mode : '';
+
+    if (function_exists('sanitize_key')) {
+        $normalized = sanitize_key($normalized);
+    } else {
+        $normalized = strtolower(preg_replace('/[^a-z0-9_\-]/i', '', (string) $normalized));
+    }
+
+    if (!in_array($normalized, $allowed_modes, true)) {
+        return 'simple';
+    }
+
+    return $normalized;
+}
+
+/**
+ * Retrieve the preferred settings display mode for a user.
+ *
+ * @param int $user_id Optional user identifier.
+ *
+ * @return string Either "simple" or "advanced".
+ */
+function blc_get_settings_mode($user_id = 0) {
+    $default = 'simple';
+
+    if (!function_exists('get_current_user_id') || !function_exists('get_user_meta')) {
+        return $default;
+    }
+
+    if ($user_id <= 0) {
+        $user_id = (int) get_current_user_id();
+    }
+
+    if ($user_id <= 0) {
+        return $default;
+    }
+
+    $stored = get_user_meta($user_id, BLC_SETTINGS_MODE_META_KEY, true);
+    if (!is_string($stored)) {
+        $stored = (string) $stored;
+    }
+
+    return blc_normalize_settings_mode($stored);
+}
+
+/**
+ * Persist the preferred settings display mode for a user.
+ *
+ * @param string $mode    Requested mode.
+ * @param int    $user_id Optional user identifier.
+ *
+ * @return string Saved mode.
+ */
+function blc_update_settings_mode($mode, $user_id = 0) {
+    $normalized = blc_normalize_settings_mode($mode);
+
+    if (!function_exists('get_current_user_id') || !function_exists('update_user_meta')) {
+        return $normalized;
+    }
+
+    if ($user_id <= 0) {
+        $user_id = (int) get_current_user_id();
+    }
+
+    if ($user_id <= 0) {
+        return $normalized;
+    }
+
+    update_user_meta($user_id, BLC_SETTINGS_MODE_META_KEY, $normalized);
+
+    return $normalized;
+}
+
 function blc_render_links_table_markup(BLC_Links_List_Table $list_table) {
     ob_start();
     ?>
@@ -4193,6 +4324,8 @@ function blc_render_settings_sections_grouped($page) {
     }
 
     $sections = $wp_settings_sections[$page];
+    $current_mode = blc_get_settings_mode();
+    $show_advanced = ($current_mode === 'advanced');
 
     $essential_section_ids = array(
         'blc_planification_section',
@@ -4212,7 +4345,7 @@ function blc_render_settings_sections_grouped($page) {
         $advanced_section_ids[] = $section_id;
     }
 
-    echo '<div class="blc-settings-groups">';
+    echo '<div class="blc-settings-groups" data-blc-settings-groups>';
 
     echo '<section class="blc-settings-group" aria-labelledby="blc-settings-essential-heading">';
     echo '<header class="blc-settings-group__header">';
@@ -4224,6 +4357,7 @@ function blc_render_settings_sections_grouped($page) {
     }
     echo '</section>';
 
+    $advanced_markup = '';
     if (!empty($advanced_section_ids)) {
         $advanced_groups = blc_get_advanced_settings_groups();
         $grouped_sections = array();
@@ -4263,6 +4397,7 @@ function blc_render_settings_sections_grouped($page) {
             $default_group = key($grouped_sections);
             $personas      = blc_get_settings_persona_presets();
 
+            ob_start();
             echo '<details class="blc-settings-group blc-settings-group--collapsible" aria-labelledby="blc-settings-advanced-heading">';
             echo '<summary class="blc-settings-group__summary">';
             echo '<span id="blc-settings-advanced-heading" class="blc-settings-group__title">' . esc_html__('Réglages avancés', 'liens-morts-detector-jlg') . '</span>';
@@ -4349,7 +4484,18 @@ function blc_render_settings_sections_grouped($page) {
             echo '</div>'; // .blc-settings-advanced
             echo '</div>';
             echo '</details>';
+            $advanced_markup = ob_get_clean();
         }
+    }
+
+    if ($advanced_markup !== '') {
+        echo '<div class="blc-settings-groups__advanced" data-blc-settings-advanced-placeholder>';
+        if ($show_advanced) {
+            echo $advanced_markup; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- already escaped in template.
+        }
+        echo '</div>';
+
+        echo '<template id="blc-settings-advanced-template">' . $advanced_markup . '</template>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
     }
 
     echo '</div>';
@@ -4388,6 +4534,36 @@ function blc_render_settings_section($page, $section_id) {
     }
 
     echo '</section>';
+}
+
+/**
+ * Persist the preferred settings mode via Ajax.
+ *
+ * @return void
+ */
+function blc_ajax_update_settings_mode() {
+    if (!blc_current_user_can_manage_settings()) {
+        wp_send_json_error(
+            array('message' => __('Permissions insuffisantes pour modifier ce réglage.', 'liens-morts-detector-jlg')),
+            403
+        );
+    }
+
+    check_ajax_referer('blc_settings_mode');
+
+    $mode = isset($_POST['mode']) ? (string) wp_unslash($_POST['mode']) : 'simple'; // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified via nonce above.
+    $saved_mode = blc_update_settings_mode($mode);
+
+    $announcement = ($saved_mode === 'advanced')
+        ? __('Mode avancé activé. Les réglages supplémentaires sont visibles.', 'liens-morts-detector-jlg')
+        : __('Mode simple activé. Les réglages avancés sont masqués.', 'liens-morts-detector-jlg');
+
+    wp_send_json_success(
+        array(
+            'mode'        => $saved_mode,
+            'announcement' => $announcement,
+        )
+    );
 }
 
 /**
@@ -4451,6 +4627,7 @@ add_action('wp_ajax_blc_get_image_scan_status', 'blc_ajax_get_image_scan_status'
 add_action('wp_ajax_blc_fetch_links_table', 'blc_ajax_fetch_links_table');
 add_action('wp_ajax_blc_save_links_view', 'blc_ajax_save_links_view');
 add_action('wp_ajax_blc_delete_links_view', 'blc_ajax_delete_links_view');
+add_action('wp_ajax_blc_update_settings_mode', 'blc_ajax_update_settings_mode');
 
 /**
  * AJAX handler to start a manual scan via admin-ajax.
