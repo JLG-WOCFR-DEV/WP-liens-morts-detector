@@ -643,15 +643,15 @@ if (!function_exists('blc_register_s3_rest_routes')) {
                             'required' => false,
                         ],
                         'access_key_id'     => [
-                            'type'     => 'string',
+                            'type'     => ['string', 'null'],
                             'required' => false,
                         ],
                         'secret_access_key' => [
-                            'type'     => 'string',
+                            'type'     => ['string', 'null'],
                             'required' => false,
                         ],
                         'session_token'     => [
-                            'type'     => 'string',
+                            'type'     => ['string', 'null'],
                             'required' => false,
                         ],
                         'object_prefix'     => [

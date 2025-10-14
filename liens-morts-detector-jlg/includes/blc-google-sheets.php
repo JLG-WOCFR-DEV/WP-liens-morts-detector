@@ -542,7 +542,7 @@ if (!function_exists('blc_register_google_sheets_rest_routes')) {
                             'required' => false,
                         ],
                         'client_secret'  => [
-                            'type'     => 'string',
+                            'type'     => ['string', 'null'],
                             'required' => false,
                         ],
                         'ranges'         => [
