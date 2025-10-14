@@ -24,6 +24,7 @@ Ce document recense des axes d'amélioration identifiés pour rapprocher l'expé
 - **Proposition** :
   - Mettre en place un assistant de configuration qui priorise les paramètres essentiels et propose des presets en fonction du type d'hébergement.
   - Ajouter des contrôles de cohérence (ex. vérifier la compatibilité entre timeouts et tailles de batch).
+- **Mise à jour** : la page « Réglages » mémorise désormais un mode simple/avancé par utilisateur et masque dynamiquement les sections expertes tant que le commutateur n’est pas activé, avec une annonce vocale via `wp.a11y` pour refléter le changement d’affichage.
 
 ## 4. Système visuel différenciant
 - **Constat** : la feuille de style actuelle reste proche de l'esthétique WordPress par défaut.

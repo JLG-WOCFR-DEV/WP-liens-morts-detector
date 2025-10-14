@@ -105,13 +105,24 @@ class AdminAssets
 
     private function enqueueScripts()
     {
+        $togglePath = $this->getPluginDir() . 'assets/js/settings-mode-toggle.js';
+        $toggleVersion = file_exists($togglePath) ? filemtime($togglePath) : time();
+
+        \wp_enqueue_script(
+            'blc-settings-mode-toggle',
+            $this->getPluginUrl('assets/js/settings-mode-toggle.js'),
+            array('jquery'),
+            $toggleVersion,
+            true
+        );
+
         $jsPath = $this->getPluginDir() . 'assets/js/blc-admin-scripts.js';
         $jsVersion = file_exists($jsPath) ? filemtime($jsPath) : time();
 
         \wp_enqueue_script(
             'blc-admin-js',
             $this->getPluginUrl('assets/js/blc-admin-scripts.js'),
-            array('jquery', 'wp-util'),
+            array('jquery', 'wp-util', 'blc-settings-mode-toggle'),
             $jsVersion,
             true
         );
@@ -166,6 +177,7 @@ class AdminAssets
             'imagePollInterval'  => max(2000, $imagePollInterval),
             'soft404Config'      => $soft404Config,
             'accessibilityPreferences' => $accessibilityPreferences,
+            'settingsMode'       => function_exists('blc_get_settings_mode') ? blc_get_settings_mode() : 'simple',
         );
     }
 

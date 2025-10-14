@@ -4439,14 +4439,25 @@ jQuery(document).ready(function($) {
         return applied;
     }
 
-    function initAdvancedSettings() {
-        var $containers = $('.blc-settings-advanced');
+    function initAdvancedSettings($scope) {
+        var $root = ($scope && $scope.length) ? $scope : $(document);
+        var $containers = $root.find('.blc-settings-advanced');
+
+        if ($root.is && $root.is('.blc-settings-advanced')) {
+            $containers = $containers.add($root);
+        }
+
         if (!$containers.length) {
             return;
         }
 
         $containers.each(function() {
             var $container = $(this);
+            if ($container.data('blcAdvancedInit')) {
+                return;
+            }
+
+            $container.data('blcAdvancedInit', true);
             var $tabs = $container.find('.blc-settings-advanced__tab');
             var $panels = $container.find('.blc-settings-advanced__panel');
             var $personas = $container.find('.blc-persona');
@@ -4553,6 +4564,32 @@ jQuery(document).ready(function($) {
                 });
             }
         });
+    }
+
+    var createSettingsModeToggle = (typeof window !== 'undefined' && window.blcSettingsModeToggleFactory)
+        ? window.blcSettingsModeToggleFactory
+        : null;
+    var initSettingsModeToggle = null;
+
+    if (typeof createSettingsModeToggle === 'function') {
+        initSettingsModeToggle = createSettingsModeToggle($, {
+            toast: toast,
+            accessibility: accessibility,
+            initAdvancedSettings: initAdvancedSettings
+        });
+    }
+
+    window.blcAdmin = window.blcAdmin || {};
+    window.blcAdmin.helpers = window.blcAdmin.helpers || {};
+
+    if (typeof initSettingsModeToggle === 'function') {
+        window.blcAdmin.initSettingsModeToggle = initSettingsModeToggle;
+        window.blcAdmin.helpers.initSettingsModeToggle = initSettingsModeToggle;
+    } else {
+        window.blcAdmin.initSettingsModeToggle = function() {
+            return false;
+        };
+        window.blcAdmin.helpers.initSettingsModeToggle = window.blcAdmin.initSettingsModeToggle;
     }
 
     function initLinksTableAjax() {
@@ -5544,6 +5581,7 @@ jQuery(document).ready(function($) {
 
     initFieldHelp();
     initAdvancedSettings();
+    initSettingsModeToggle();
     initLinksTableAjax();
 
     $(document).on('click', 'a[href*="page=blc-dashboard"]', function() {
