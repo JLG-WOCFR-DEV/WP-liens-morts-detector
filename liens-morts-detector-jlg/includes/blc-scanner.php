@@ -1119,11 +1119,24 @@ if (!function_exists('blc_reset_link_scan_status')) {
     /**
      * Clear the stored link scan status.
      *
+     * @param array<string, mixed>|mixed $context Optional additional context forwarded to observers.
+     *
      * @return void
      */
-    function blc_reset_link_scan_status() {
+    function blc_reset_link_scan_status($context = []) {
+        $context = is_array($context) ? $context : [];
+
+        $history_entry = null;
+        if (function_exists('blc_record_scan_reset')) {
+            $history_entry = blc_record_scan_reset('link', $context);
+        }
+
         delete_option('blc_link_scan_status');
         blc_link_scan_status_cache(null, true);
+
+        if (function_exists('do_action')) {
+            do_action('blc_link_scan_status_reset', $history_entry, $context);
+        }
     }
 }
 
@@ -1312,6 +1325,82 @@ if (!function_exists('blc_update_image_scan_history_entry')) {
 
         $changes['job_id'] = $job_id;
         blc_append_image_scan_history_entry($changes);
+    }
+}
+
+if (!function_exists('blc_record_scan_reset')) {
+    /**
+     * Record a scan reset event in the persisted history.
+     *
+     * @param string               $dataset_type Either "link" or "image".
+     * @param array<string, mixed> $context      Additional metadata about the reset trigger.
+     *
+     * @return array<string, mixed>|null The recorded history entry when successful, null otherwise.
+     */
+    function blc_record_scan_reset($dataset_type, array $context = []) {
+        $dataset_type = is_string($dataset_type) ? strtolower($dataset_type) : '';
+
+        if ($dataset_type !== '' && function_exists('sanitize_key')) {
+            $dataset_type = sanitize_key($dataset_type);
+        }
+
+        $appenders = [
+            'link'  => 'blc_append_link_scan_history_entry',
+            'image' => 'blc_append_image_scan_history_entry',
+        ];
+
+        if ($dataset_type === '' || !isset($appenders[$dataset_type])) {
+            return null;
+        }
+
+        $user = [
+            'id'           => 0,
+            'login'        => '',
+            'display_name' => '',
+        ];
+
+        if (function_exists('wp_get_current_user')) {
+            $current_user = wp_get_current_user();
+
+            if (is_object($current_user)) {
+                if (isset($current_user->ID)) {
+                    $user['id'] = (int) $current_user->ID;
+                } elseif (function_exists('get_current_user_id')) {
+                    $user['id'] = (int) get_current_user_id();
+                }
+
+                if (isset($current_user->user_login)) {
+                    $user['login'] = (string) $current_user->user_login;
+                }
+
+                if (isset($current_user->display_name)) {
+                    $user['display_name'] = (string) $current_user->display_name;
+                } elseif (isset($current_user->user_nicename)) {
+                    $user['display_name'] = (string) $current_user->user_nicename;
+                }
+            }
+        } elseif (function_exists('get_current_user_id')) {
+            $user['id'] = (int) get_current_user_id();
+        }
+
+        $history_entry = [
+            'event'        => 'reset',
+            'reason'       => 'reset',
+            'dataset_type' => $dataset_type,
+            'timestamp'    => time(),
+            'user'         => $user,
+            'context'      => $context,
+        ];
+
+        $appender = $appenders[$dataset_type];
+
+        if (is_callable($appender)) {
+            call_user_func($appender, $history_entry);
+
+            return $history_entry;
+        }
+
+        return null;
     }
 }
 
@@ -1618,11 +1707,24 @@ if (!function_exists('blc_reset_image_scan_status')) {
     /**
      * Clear the stored image scan status.
      *
+     * @param array<string, mixed>|mixed $context Optional additional context forwarded to observers.
+     *
      * @return void
      */
-    function blc_reset_image_scan_status() {
+    function blc_reset_image_scan_status($context = []) {
+        $context = is_array($context) ? $context : [];
+
+        $history_entry = null;
+        if (function_exists('blc_record_scan_reset')) {
+            $history_entry = blc_record_scan_reset('image', $context);
+        }
+
         delete_option('blc_image_scan_status');
         blc_image_scan_status_cache(null, true);
+
+        if (function_exists('do_action')) {
+            do_action('blc_image_scan_status_reset', $history_entry, $context);
+        }
     }
 }
 

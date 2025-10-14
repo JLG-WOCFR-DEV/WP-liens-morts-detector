@@ -41,6 +41,13 @@ class LinkScanStatusTest extends TestCase
         Functions\when('apply_filters')->alias(static fn($hook, $value) => $value);
         Functions\when('do_action')->justReturn(null);
         Functions\when('rest_ensure_response')->alias(static fn($value) => $value);
+        Functions\when('wp_get_current_user')->alias(static function () {
+            return (object) [
+                'ID'           => 0,
+                'user_login'   => '',
+                'display_name' => '',
+            ];
+        });
 
         $testCase = $this;
         Functions\when('get_option')->alias(function ($name, $default = false) use ($testCase) {
@@ -67,6 +74,8 @@ class LinkScanStatusTest extends TestCase
         if (function_exists('\\blc_reset_image_scan_status')) {
             \blc_reset_image_scan_status();
         }
+
+        $this->getOptionCalls = 0;
     }
 
     protected function tearDown(): void
@@ -449,13 +458,94 @@ class LinkScanStatusTest extends TestCase
         $this->assertArrayHasKey('lock_active', $payload);
     }
 
-    public function test_reset_link_scan_status_deletes_option(): void
+    public function test_reset_link_scan_status_records_history_and_fires_hook(): void
     {
         $this->options['blc_link_scan_status'] = ['state' => 'completed'];
 
-        \blc_reset_link_scan_status();
+        Functions\when('time')->justReturn(1_700_000_000);
+        Functions\when('wp_get_current_user')->alias(static function () {
+            return (object) [
+                'ID'           => 7,
+                'user_login'   => 'auditor',
+                'display_name' => 'Audit Bot',
+            ];
+        });
+
+        $fired_actions = [];
+        Functions\when('do_action')->alias(static function ($hook, ...$arguments) use (&$fired_actions) {
+            $fired_actions[] = [$hook, $arguments];
+        });
+
+        $context = ['triggered_by' => 'unit-test'];
+
+        \blc_reset_link_scan_status($context);
 
         $this->assertArrayNotHasKey('blc_link_scan_status', $this->options);
+
+        $history = $this->options['blc_link_scan_history'] ?? [];
+        $this->assertNotEmpty($history);
+        $entry = $history[0];
+
+        $this->assertSame('reset', $entry['event']);
+        $this->assertSame('reset', $entry['reason']);
+        $this->assertSame('link', $entry['dataset_type']);
+        $this->assertSame(1_700_000_000, $entry['timestamp']);
+        $this->assertSame($context, $entry['context']);
+        $this->assertSame([
+            'id'           => 7,
+            'login'        => 'auditor',
+            'display_name' => 'Audit Bot',
+        ], $entry['user']);
+
+        $this->assertNotEmpty($fired_actions);
+        $this->assertSame('blc_link_scan_status_reset', $fired_actions[0][0]);
+        $this->assertSame($entry, $fired_actions[0][1][0]);
+        $this->assertSame($context, $fired_actions[0][1][1]);
+    }
+
+    public function test_reset_image_scan_status_records_history_and_fires_hook(): void
+    {
+        $this->options['blc_image_scan_status'] = ['state' => 'running'];
+
+        Functions\when('time')->justReturn(1_700_000_500);
+        Functions\when('wp_get_current_user')->alias(static function () {
+            return (object) [
+                'ID'           => 42,
+                'user_login'   => 'media-admin',
+                'display_name' => 'Media Admin',
+            ];
+        });
+
+        $fired_actions = [];
+        Functions\when('do_action')->alias(static function ($hook, ...$arguments) use (&$fired_actions) {
+            $fired_actions[] = [$hook, $arguments];
+        });
+
+        $context = ['triggered_by' => 'dashboard'];
+
+        \blc_reset_image_scan_status($context);
+
+        $this->assertArrayNotHasKey('blc_image_scan_status', $this->options);
+
+        $history = $this->options['blc_image_scan_history'] ?? [];
+        $this->assertNotEmpty($history);
+        $entry = $history[0];
+
+        $this->assertSame('reset', $entry['event']);
+        $this->assertSame('reset', $entry['reason']);
+        $this->assertSame('image', $entry['dataset_type']);
+        $this->assertSame(1_700_000_500, $entry['timestamp']);
+        $this->assertSame($context, $entry['context']);
+        $this->assertSame([
+            'id'           => 42,
+            'login'        => 'media-admin',
+            'display_name' => 'Media Admin',
+        ], $entry['user']);
+
+        $this->assertNotEmpty($fired_actions);
+        $this->assertSame('blc_image_scan_status_reset', $fired_actions[0][0]);
+        $this->assertSame($entry, $fired_actions[0][1][0]);
+        $this->assertSame($context, $fired_actions[0][1][1]);
     }
 }
 
