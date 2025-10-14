@@ -863,6 +863,21 @@ if (!function_exists('blc_calculate_link_scan_history_insights')) {
                 continue;
             }
 
+            $event_raw = isset($entry['event']) ? (string) $entry['event'] : '';
+            $event     = '';
+
+            if ($event_raw !== '') {
+                if (function_exists('sanitize_key')) {
+                    $event = sanitize_key($event_raw);
+                } else {
+                    $event = strtolower(preg_replace('/[^a-z0-9_\-]/', '', $event_raw));
+                }
+            }
+
+            if ($event !== '' && $event !== 'scan') {
+                continue;
+            }
+
             $total_runs++;
 
             $state_raw = isset($entry['state']) ? (string) $entry['state'] : '';
