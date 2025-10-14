@@ -169,6 +169,30 @@ if (!function_exists('blc_update_s3_settings')) {
     }
 }
 
+if (!function_exists('blc_s3_prepare_settings_for_response')) {
+    /**
+     * Prepare settings returned by REST endpoints by masking credentials.
+     *
+     * @param array<string,mixed> $settings
+     *
+     * @return array<string,mixed>
+     */
+    function blc_s3_prepare_settings_for_response(array $settings)
+    {
+        $prepared = $settings;
+
+        $prepared['has_access_key_id'] = $settings['access_key_id'] !== '';
+        $prepared['has_secret_access_key'] = $settings['secret_access_key'] !== '';
+        $prepared['has_session_token'] = $settings['session_token'] !== '';
+
+        $prepared['access_key_id'] = null;
+        $prepared['secret_access_key'] = null;
+        $prepared['session_token'] = null;
+
+        return $prepared;
+    }
+}
+
 if (!function_exists('blc_is_s3_integration_enabled')) {
     /**
      * Determine if the S3 connector is configured.
@@ -669,7 +693,7 @@ if (!function_exists('blc_rest_get_s3_settings')) {
      */
     function blc_rest_get_s3_settings()
     {
-        return rest_ensure_response(blc_get_s3_settings());
+        return rest_ensure_response(blc_s3_prepare_settings_for_response(blc_get_s3_settings()));
     }
 }
 
@@ -699,22 +723,26 @@ if (!function_exists('blc_rest_update_s3_settings')) {
         }
 
         foreach (['bucket', 'region'] as $key) {
-            if (isset($params[$key])) {
+            if (array_key_exists($key, $params)) {
                 $current[$key] = blc_s3_sanitize_text($params[$key]);
             }
         }
 
-        if (isset($params['endpoint'])) {
+        if (array_key_exists('endpoint', $params)) {
             $current['endpoint'] = blc_s3_sanitize_text($params['endpoint'], ['allow_url' => true]);
         }
 
         foreach (['access_key_id', 'secret_access_key', 'session_token'] as $credential_key) {
-            if (isset($params[$credential_key])) {
+            if (array_key_exists($credential_key, $params)) {
+                if ($params[$credential_key] === null) {
+                    continue;
+                }
+
                 $current[$credential_key] = blc_s3_sanitize_credential($params[$credential_key]);
             }
         }
 
-        if (isset($params['object_prefix'])) {
+        if (array_key_exists('object_prefix', $params)) {
             $current['object_prefix'] = blc_s3_normalize_object_prefix($params['object_prefix']);
         }
 
@@ -729,7 +757,7 @@ if (!function_exists('blc_rest_update_s3_settings')) {
 
         $updated = blc_update_s3_settings($current);
 
-        return rest_ensure_response($updated);
+        return rest_ensure_response(blc_s3_prepare_settings_for_response($updated));
     }
 }
 

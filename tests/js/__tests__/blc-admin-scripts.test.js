@@ -180,6 +180,17 @@ describe('blc-admin-scripts accessibility helper', () => {
         expect(helpers.close).toHaveBeenCalledWith(secondButton);
         expect(document.activeElement).toBe(secondButton);
     });
+
+    it('exposes helpers to work with masked credentials', () => {
+        const integrations = window.blcAdmin.integrations;
+
+        expect(integrations.hasStoredCredential({ has_access_key_id: true }, 'access_key_id')).toBe(true);
+        expect(integrations.hasStoredCredential({ access_key_id: 'value' }, 'access_key_id')).toBe(true);
+        expect(integrations.hasStoredCredential({ access_key_id: '' }, 'access_key_id')).toBe(false);
+        expect(integrations.getMaskedValue({ has_access_key_id: true }, 'access_key_id', '***')).toBe('***');
+        expect(integrations.getMaskedValue({ access_key_id: 'value' }, 'access_key_id', '***')).toBe('value');
+        expect(integrations.getMaskedValue({}, 'access_key_id', '***')).toBe('');
+    });
 });
 
 describe('blc-admin-scripts test notification button', () => {

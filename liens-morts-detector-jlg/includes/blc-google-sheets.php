@@ -130,6 +130,30 @@ if (!function_exists('blc_update_google_sheets_settings')) {
     }
 }
 
+if (!function_exists('blc_google_sheets_prepare_settings_for_response')) {
+    /**
+     * Prepare Google Sheets settings returned by REST endpoints by masking secrets.
+     *
+     * @param array<string,mixed> $settings
+     *
+     * @return array<string,mixed>
+     */
+    function blc_google_sheets_prepare_settings_for_response(array $settings)
+    {
+        $prepared = $settings;
+
+        $prepared['has_client_secret'] = $settings['client_secret'] !== '';
+        $prepared['has_access_token'] = $settings['access_token'] !== '';
+        $prepared['has_refresh_token'] = $settings['refresh_token'] !== '';
+
+        $prepared['client_secret'] = null;
+        $prepared['access_token'] = null;
+        $prepared['refresh_token'] = null;
+
+        return $prepared;
+    }
+}
+
 if (!function_exists('blc_is_google_sheets_integration_enabled')) {
     /**
      * Determine if the Google Sheets connector is configured.
@@ -588,7 +612,7 @@ if (!function_exists('blc_rest_get_google_sheets_settings')) {
      */
     function blc_rest_get_google_sheets_settings()
     {
-        return rest_ensure_response(blc_get_google_sheets_settings());
+        return rest_ensure_response(blc_google_sheets_prepare_settings_for_response(blc_get_google_sheets_settings()));
     }
 }
 
@@ -618,7 +642,11 @@ if (!function_exists('blc_rest_update_google_sheets_settings')) {
         }
 
         foreach (['spreadsheet_id', 'client_id', 'client_secret'] as $key) {
-            if (isset($params[$key])) {
+            if (array_key_exists($key, $params)) {
+                if ($key === 'client_secret' && $params[$key] === null) {
+                    continue;
+                }
+
                 $current[$key] = blc_google_sheets_sanitize_text($params[$key]);
             }
         }
@@ -636,7 +664,7 @@ if (!function_exists('blc_rest_update_google_sheets_settings')) {
 
         $updated = blc_update_google_sheets_settings($current);
 
-        return rest_ensure_response($updated);
+        return rest_ensure_response(blc_google_sheets_prepare_settings_for_response($updated));
     }
 }
 
@@ -685,7 +713,7 @@ if (!function_exists('blc_rest_store_google_sheets_token')) {
 
         $updated = blc_update_google_sheets_settings($settings);
 
-        return rest_ensure_response($updated);
+        return rest_ensure_response(blc_google_sheets_prepare_settings_for_response($updated));
     }
 }
 
