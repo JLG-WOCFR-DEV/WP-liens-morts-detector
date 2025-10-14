@@ -162,6 +162,24 @@ add_action('blc_link_mass_update_performed', function (array $context) {
 });
 ```
 
+### `blc_link_scan_status_reset` et `blc_image_scan_status_reset`
+Ces actions sont déclenchées lorsqu’un administrateur remet à zéro l’état du scanner (liens ou images). Une entrée est automatiquement ajoutée dans l’historique persistant (`blc_link_scan_history` / `blc_image_scan_history`) avec le motif `reset`, l’horodatage et l’utilisateur à l’origine de l’action. Les tableaux de bord peuvent ainsi suivre les remises à zéro manuelles, corréler l’évènement avec une reprise de scan et notifier les équipes de support.
+
+```php
+add_action('blc_link_scan_status_reset', function (array $historyEntry, array $context) {
+    error_log(sprintf(
+        '[BLC] Réinitialisation du scan liens (%s) par %s',
+        gmdate('c', $historyEntry['timestamp']),
+        $historyEntry['user']['display_name'] ?: $historyEntry['user']['login']
+    ));
+});
+
+add_action('blc_image_scan_status_reset', function (array $historyEntry) {
+    // Exemple : pousser l’évènement dans un tableau de bord interne.
+    my_dashboard()->pushEvent('blc_image_reset', $historyEntry);
+});
+```
+
 ## Pistes d'amélioration
 
 - **Intégration de rapports automatisés** : proposer un export planifié (PDF/CSV ou envoi vers Google Sheets) afin de partager les résultats des scans avec des équipes éditoriales sans accès à l’administration.

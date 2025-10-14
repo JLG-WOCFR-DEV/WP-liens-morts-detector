@@ -52,6 +52,7 @@ Cette feuille de route décline les pistes d'amélioration listées dans le `REA
 1. Créer un composant `DashboardSummary` réutilisable avec données issues de `blc_get_link_scan_status_payload()`.
 2. Ajouter des tests d'accessibilité automatisés (axe-core) et corriger les problèmes détectés.
 3. Documenter une charte UX (taille des cibles tactiles, contrastes, animations).
+4. Aligner la timeline sur les événements `blc_link_scan_status_reset` / `blc_image_scan_status_reset` afin d'afficher les remises à zéro manuelles directement dans les dashboards.
 
 > ✅ Le composant `DashboardSummary` affiche désormais l’état du scan, la progression et le rythme d’analyse à partir de `blc_get_link_scan_status_payload()` et se met à jour en temps réel, avec un habillage visuel dédié. 【F:liens-morts-detector-jlg/includes/blc-admin-pages.php†L688-L780】【F:liens-morts-detector-jlg/assets/js/blc-admin-scripts.js†L2554-L3726】【F:liens-morts-detector-jlg/assets/css/blc-admin-styles.css†L120-L236】
 
