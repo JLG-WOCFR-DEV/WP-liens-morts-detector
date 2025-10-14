@@ -643,19 +643,16 @@ if (!function_exists('blc_register_s3_rest_routes')) {
                             'required' => false,
                         ],
                         'access_key_id'     => [
-                            'type'      => 'string',
-                            'required'  => false,
-                            'nullable'  => true,
+                            'type'     => ['string', 'null'],
+                            'required' => false,
                         ],
                         'secret_access_key' => [
-                            'type'      => 'string',
-                            'required'  => false,
-                            'nullable'  => true,
+                            'type'     => ['string', 'null'],
+                            'required' => false,
                         ],
                         'session_token'     => [
-                            'type'      => 'string',
-                            'required'  => false,
-                            'nullable'  => true,
+                            'type'     => ['string', 'null'],
+                            'required' => false,
                         ],
                         'object_prefix'     => [
                             'type'     => 'string',
