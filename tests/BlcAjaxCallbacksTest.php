@@ -30,7 +30,7 @@ namespace {
                 return $this->message;
             }
 
-            public function get_error_data()
+            public function get_error_data($code = '')
             {
                 return $this->data;
             }
