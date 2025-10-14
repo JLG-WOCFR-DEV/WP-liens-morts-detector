@@ -97,6 +97,37 @@ class BlcScanHistoryPageTest extends TestCase
         $this->assertSame('completed', $insights['last_job_summary']['state']);
     }
 
+    public function test_calculate_link_scan_history_insights_ignores_reset_events(): void
+    {
+        $history = [
+            [
+                'event'        => 'reset',
+                'dataset_type' => 'link',
+                'timestamp'    => 1700000000,
+                'context'      => [
+                    'trigger' => 'manual',
+                ],
+            ],
+            [
+                'job_id'          => 'blc_789',
+                'state'           => 'completed',
+                'scheduled_at'    => 1700001000,
+                'started_at'      => 1700001300,
+                'ended_at'        => 1700001600,
+                'processed_items' => 60,
+                'total_items'     => 60,
+            ],
+        ];
+
+        $insights = blc_calculate_link_scan_history_insights($history);
+
+        $this->assertSame(1, $insights['total_runs']);
+        $this->assertSame(1, $insights['completed_runs']);
+        $this->assertSame(0, $insights['failed_runs']);
+        $this->assertSame('blc_789', $insights['last_job_summary']['job_id']);
+        $this->assertSame('completed', $insights['last_job_summary']['state']);
+    }
+
     public function test_history_page_renders_tables_and_summary(): void
     {
         OptionsStore::$options['blc_link_scan_history'] = [
