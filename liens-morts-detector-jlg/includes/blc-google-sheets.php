@@ -542,8 +542,9 @@ if (!function_exists('blc_register_google_sheets_rest_routes')) {
                             'required' => false,
                         ],
                         'client_secret'  => [
-                            'type'     => 'string',
-                            'required' => false,
+                            'type'      => 'string',
+                            'required'  => false,
+                            'nullable'  => true,
                         ],
                         'ranges'         => [
                             'type'     => 'object',
