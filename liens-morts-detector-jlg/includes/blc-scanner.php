@@ -863,9 +863,10 @@ if (!function_exists('blc_calculate_link_scan_history_insights')) {
                 continue;
             }
 
-            $event = '';
-            if (isset($entry['event'])) {
-                $event_raw = (string) $entry['event'];
+            $event_raw = isset($entry['event']) ? (string) $entry['event'] : '';
+            $event     = '';
+
+            if ($event_raw !== '') {
                 if (function_exists('sanitize_key')) {
                     $event = sanitize_key($event_raw);
                 } else {
@@ -873,7 +874,7 @@ if (!function_exists('blc_calculate_link_scan_history_insights')) {
                 }
             }
 
-            if ($event === 'reset') {
+            if ($event !== '' && $event !== 'scan') {
                 continue;
             }
 
