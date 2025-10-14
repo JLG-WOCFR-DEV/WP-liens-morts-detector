@@ -54,6 +54,26 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 - La taille des lots analysés peut être ajustée pour s’adapter aux capacités de l’hébergement (de manière optionnelle via l’interface ou un filtre).
 - L’analyse des images distantes (CDN, sous-domaines médias) peut être activée dans les réglages. Cette vérification reste basée sur les fichiers présents dans `wp-content/uploads` et peut rallonger la durée du scan ou consommer davantage de quotas côté CDN.
 
+## Tests automatisés
+
+### JavaScript (Jest)
+- `npm test` exécute l’intégralité de la suite Jest existante.
+
+### End-to-end (Playwright)
+1. Installer les navigateurs Playwright une fois : `npx playwright install --with-deps chromium`.
+2. Exporter les variables d’environnement nécessaires à l’authentification WordPress :
+   - `WP_E2E_BASE_URL` : URL racine de l’installation locale (`https://wp.test` par exemple).
+   - `WP_E2E_USERNAME` et `WP_E2E_PASSWORD` : identifiants d’un compte ayant accès au back-office.
+   - `WP_E2E_SAMPLE_LINK` : URL cassée présente dans le rapport et utilisée par le test.
+   - `WP_E2E_REPLACEMENT_URL` (optionnel) : URL de remplacement à appliquer pendant le scénario.
+   - `WP_E2E_STORAGE_STATE` (optionnel) : chemin du fichier de session Playwright si vous ne souhaitez pas utiliser la valeur par défaut `.playwright/wp-admin-state.json`.
+3. Lancer `npm run test:e2e` pour rejouer le parcours de correction d’un lot.
+
+> 💡 Lorsqu’elles sont définies, les variables `WP_E2E_*` permettent également à la configuration Playwright de générer automatiquement un état de session réutilisable via `tests/e2e/utils/global-setup.ts`. À défaut de configuration, la suite E2E est ignorée (et renvoie un succès) ce qui permet son exécution dans la CI même sans instance WordPress accessible.
+
+### Combinaison des suites
+- `npm run test:all` exécute successivement Jest puis Playwright.
+
 ## Détection des soft 404
 
 ### Principe des heuristiques
