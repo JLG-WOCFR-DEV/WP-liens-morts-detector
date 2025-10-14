@@ -1463,6 +1463,17 @@ class BLC_Links_List_Table extends WP_List_Table {
             return;
         }
 
+        if (!function_exists('blc_current_user_can_fix_links') || !blc_current_user_can_fix_links()) {
+            $notice = [
+                'message'      => __('Permissions insuffisantes pour effectuer cette action groupée.', 'liens-morts-detector-jlg'),
+                'type'         => 'error',
+                'announcement' => __('Action groupée annulée : permissions insuffisantes.', 'liens-morts-detector-jlg'),
+            ];
+
+            $this->redirect_after_bulk($notice);
+            return;
+        }
+
         $ids = $this->get_requested_bulk_ids();
 
         check_admin_referer('bulk-' . $this->_args['plural']);

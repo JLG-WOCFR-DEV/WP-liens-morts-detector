@@ -1,6 +1,42 @@
 <?php
 
 namespace {
+    if (!class_exists('WP_Error')) {
+        class WP_Error
+        {
+            /** @var string */
+            private $code;
+
+            /** @var string */
+            private $message;
+
+            /** @var mixed */
+            private $data;
+
+            public function __construct($code = '', $message = '', $data = null)
+            {
+                $this->code    = (string) $code;
+                $this->message = (string) $message;
+                $this->data    = $data;
+            }
+
+            public function get_error_code()
+            {
+                return $this->code;
+            }
+
+            public function get_error_message()
+            {
+                return $this->message;
+            }
+
+            public function get_error_data()
+            {
+                return $this->data;
+            }
+        }
+    }
+
     if (!function_exists('__')) {
         function __($text, $domain = null)
         {
@@ -396,6 +432,33 @@ class BlcAjaxCallbacksTest extends TestCase
         blc_ajax_edit_link_callback();
     }
 
+    public function test_perform_link_update_requires_fix_links_capability_even_if_user_can_edit_post(): void
+    {
+        Functions\when('blc_current_user_can_fix_links')->justReturn(false);
+        Functions\when('current_user_can')->alias(static function ($capability) {
+            return $capability === 'edit_post';
+        });
+
+        global $wpdb;
+        $wpdb = (object) ['prefix' => 'wp_'];
+
+        Functions\when('get_post')->justReturn(null);
+
+        $result = \blc_perform_link_update([
+            'post_id' => 21,
+            'row_id' => 21,
+            'row' => ['url' => 'http://example.com'],
+            'old_url' => 'http://example.com',
+            'new_url' => 'http://example.org',
+        ]);
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('blc_forbidden', $result->get_error_code());
+        $data = $result->get_error_data('blc_forbidden');
+        $this->assertIsArray($data);
+        $this->assertSame(BLC_HTTP_FORBIDDEN, $data['status'] ?? null);
+    }
+
     public function unlinkMissingParamProvider(): array
     {
         return [
@@ -453,6 +516,23 @@ class BlcAjaxCallbacksTest extends TestCase
         });
 
         $this->expectExceptionMessage('error');
+        blc_ajax_unlink_callback();
+    }
+
+    public function test_ajax_unlink_requires_fix_links_capability_even_if_user_can_edit_post(): void
+    {
+        Functions\when('blc_current_user_can_fix_links')->justReturn(false);
+        Functions\when('current_user_can')->alias(static function ($capability) {
+            return $capability === 'edit_post';
+        });
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => 'Permissions insuffisantes.',
+        ], BLC_HTTP_FORBIDDEN)->andReturnUsing(static function () {
+            throw new \RuntimeException('unlink-forbidden');
+        });
+
+        $this->expectExceptionMessage('unlink-forbidden');
         blc_ajax_unlink_callback();
     }
 
@@ -2152,6 +2232,40 @@ class BlcAjaxCallbacksTest extends TestCase
         $this->assertSame('blc_broken_links', $wpdb->delete_args[0]);
         $this->assertSame(['id' => 8], $wpdb->delete_args[1]);
         $this->assertSame(['%d'], $wpdb->delete_args[2]);
+    }
+
+    public function test_ajax_ignore_requires_fix_links_capability_even_if_user_can_edit_post(): void
+    {
+        Functions\when('blc_current_user_can_fix_links')->justReturn(false);
+        Functions\when('current_user_can')->alias(static function ($capability) {
+            return $capability === 'edit_post';
+        });
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => 'Permissions insuffisantes.',
+        ], BLC_HTTP_FORBIDDEN)->andReturnUsing(static function () {
+            throw new \RuntimeException('ignore-forbidden');
+        });
+
+        $this->expectExceptionMessage('ignore-forbidden');
+        blc_ajax_ignore_link_callback();
+    }
+
+    public function test_ajax_recheck_requires_fix_links_capability_even_if_user_can_edit_post(): void
+    {
+        Functions\when('blc_current_user_can_fix_links')->justReturn(false);
+        Functions\when('current_user_can')->alias(static function ($capability) {
+            return $capability === 'edit_post';
+        });
+        Functions\when('check_ajax_referer')->justReturn(true);
+        Functions\expect('wp_send_json_error')->once()->with([
+            'message' => 'Permissions insuffisantes.',
+        ], BLC_HTTP_FORBIDDEN)->andReturnUsing(static function () {
+            throw new \RuntimeException('recheck-forbidden');
+        });
+
+        $this->expectExceptionMessage('recheck-forbidden');
+        blc_ajax_recheck_link_callback();
     }
 }
 

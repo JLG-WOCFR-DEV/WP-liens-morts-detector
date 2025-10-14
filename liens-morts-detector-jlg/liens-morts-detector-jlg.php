@@ -462,6 +462,10 @@ function blc_require_post_params(array $required_params) {
  * @return array|WP_Error
  */
 function blc_perform_link_update(array $args) {
+    if (!function_exists('blc_current_user_can_fix_links') || !blc_current_user_can_fix_links()) {
+        return new WP_Error('blc_forbidden', __('Permissions insuffisantes.', 'liens-morts-detector-jlg'), ['status' => BLC_HTTP_FORBIDDEN]);
+    }
+
     global $wpdb;
 
     $defaults = [
@@ -1272,6 +1276,10 @@ function blc_ajax_apply_detected_redirect_callback() {
 // Gère la dissociation d'un lien
 add_action('wp_ajax_blc_unlink', 'blc_ajax_unlink_callback');
 function blc_ajax_unlink_callback() {
+    if (!function_exists('blc_current_user_can_fix_links') || !blc_current_user_can_fix_links()) {
+        wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')], BLC_HTTP_FORBIDDEN);
+    }
+
     check_ajax_referer('blc_unlink_nonce');
 
     $params = blc_require_post_params(['post_id', 'row_id', 'url_to_unlink']);
@@ -1401,6 +1409,10 @@ function blc_ajax_unlink_callback() {
 
 add_action('wp_ajax_blc_ignore_link', 'blc_ajax_ignore_link_callback');
 function blc_ajax_ignore_link_callback() {
+    if (!function_exists('blc_current_user_can_fix_links') || !blc_current_user_can_fix_links()) {
+        wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')], BLC_HTTP_FORBIDDEN);
+    }
+
     check_ajax_referer('blc_ignore_link_nonce');
 
     $params = blc_require_post_params(['post_id', 'row_id', 'mode']);
@@ -1529,6 +1541,10 @@ function blc_ajax_ignore_link_callback() {
 
 add_action('wp_ajax_blc_recheck_link', 'blc_ajax_recheck_link_callback');
 function blc_ajax_recheck_link_callback() {
+    if (!function_exists('blc_current_user_can_fix_links') || !blc_current_user_can_fix_links()) {
+        wp_send_json_error(['message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg')], BLC_HTTP_FORBIDDEN);
+    }
+
     check_ajax_referer('blc_recheck_link_nonce');
 
     $params = blc_require_post_params(['post_id', 'row_id']);
