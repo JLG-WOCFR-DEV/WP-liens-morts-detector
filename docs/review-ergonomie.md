@@ -40,6 +40,8 @@
 - Ajouter des marqueurs textuels (ex. « Actif ») ou icônes contrastées dans les onglets/cartes, et vérifier systématiquement le contraste (≥4.5:1) en clair et en sombre.
 - Lors de l’ouverture de la modale, appliquer `aria-hidden="true"` (ou `inert`) sur le conteneur principal et restaurer l’attribut à la fermeture pour empêcher la navigation au lecteur d’écran. Envisager un backdrop `<div role="presentation">` pour annoncer la prise de focus.
 
+> ✅ Les onglets principaux et les cartes de filtres affichent désormais un badge « Actif » assorti d’une annonce dédiée (`screen-reader-text`), ce qui garantit une distinction perceptible sans dépendre uniquement des couleurs.
+
 ## Fiabilité
 **Constat :**
 - En cas d’échec de planification (`wp_schedule_single_event`), le statut est mis à jour mais l’utilisateur n’a pas de guidage pour résoudre (ex : vérifier DISABLE_WP_CRON, trigger manuel). Les solutions pro fournissent généralement un check-list contextualisé.【F:liens-morts-detector-jlg/includes/blc-admin-pages.php†L205-L274】
