@@ -4371,6 +4371,107 @@ jQuery(document).ready(function($) {
         var $openWrapper = null;
         var speak = (accessibility && typeof accessibility.speak === 'function') ? accessibility.speak : function() {};
 
+        function getTooltipId($wrapper) {
+            if (!$wrapper || !$wrapper.length) {
+                return '';
+            }
+
+            var $bubble = $wrapper.find('.blc-field-help__bubble');
+            if (!$bubble.length) {
+                return '';
+            }
+
+            return String($bubble.attr('id') || '');
+        }
+
+        function elementHasTooltipReference($element, tooltipId) {
+            if (!$element || !$element.length || !tooltipId) {
+                return false;
+            }
+
+            var describedbyAttr = ($element.attr('aria-describedby') || '').trim();
+            if (describedbyAttr) {
+                var tokens = describedbyAttr.split(/\s+/);
+                if (tokens.indexOf(tooltipId) !== -1) {
+                    return true;
+                }
+            }
+
+            if ($element.is('label')) {
+                var htmlFor = $element.attr('for');
+                if (htmlFor) {
+                    var forElement = document.getElementById(htmlFor);
+                    if (forElement && elementHasTooltipReference($(forElement), tooltipId)) {
+                        return true;
+                    }
+                }
+
+                var foundMatch = false;
+                $element.find('[aria-describedby]').each(function() {
+                    if (elementHasTooltipReference($(this), tooltipId)) {
+                        foundMatch = true;
+                        return false;
+                    }
+                });
+
+                if (foundMatch) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        function isElementAssociatedWithWrapper(element, $wrapper) {
+            if (!$wrapper || !$wrapper.length || !element) {
+                return false;
+            }
+
+            var $element = $(element);
+            if (!$element.length) {
+                return false;
+            }
+
+            if ($element.closest('.blc-field-help-wrapper').get(0) === $wrapper.get(0)) {
+                return true;
+            }
+
+            var tooltipId = getTooltipId($wrapper);
+            if (!tooltipId) {
+                return false;
+            }
+
+            if (elementHasTooltipReference($element, tooltipId)) {
+                return true;
+            }
+
+            var isAssociated = false;
+
+            $element.parents().each(function() {
+                var $parent = $(this);
+
+                if ($parent.closest('.blc-field-help-wrapper').get(0) === $wrapper.get(0)) {
+                    isAssociated = true;
+                    return false;
+                }
+
+                if (elementHasTooltipReference($parent, tooltipId)) {
+                    isAssociated = true;
+                    return false;
+                }
+            });
+
+            if (isAssociated) {
+                return true;
+            }
+
+            if ($element.is('label')) {
+                return elementHasTooltipReference($element, tooltipId);
+            }
+
+            return false;
+        }
+
         function closeWrapper($wrapper) {
             if (!$wrapper || !$wrapper.length) {
                 return;
@@ -4385,36 +4486,77 @@ jQuery(document).ready(function($) {
             $openWrapper = null;
         }
 
+        function openWrapper($wrapper, $button) {
+            if (!$wrapper || !$wrapper.length || !$button || !$button.length) {
+                return;
+            }
+
+            if ($openWrapper && $openWrapper.length && $openWrapper.get(0) !== $wrapper.get(0)) {
+                closeWrapper($openWrapper);
+            }
+
+            $wrapper.addClass('is-active');
+            $button.addClass('is-active').attr('aria-expanded', 'true');
+
+            var $bubble = $wrapper.find('.blc-field-help__bubble');
+            if ($bubble.length) {
+                var announcement = ($bubble.text() || '').trim();
+                if (announcement) {
+                    speak(announcement, 'polite');
+                }
+            }
+
+            $openWrapper = $wrapper;
+        }
+
+        function toggleWrapper($button, forceOpen) {
+            if (!$button || !$button.length) {
+                return false;
+            }
+
+            var $wrapper = $button.closest('.blc-field-help-wrapper');
+            if (!$wrapper.length) {
+                return false;
+            }
+
+            if (typeof forceOpen === 'boolean') {
+                if (forceOpen) {
+                    if (!$wrapper.hasClass('is-active')) {
+                        openWrapper($wrapper, $button);
+                        return true;
+                    }
+
+                    if ($openWrapper && $openWrapper.length && $openWrapper.get(0) !== $wrapper.get(0)) {
+                        openWrapper($wrapper, $button);
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                if ($wrapper.hasClass('is-active')) {
+                    closeWrapper($wrapper);
+                    return true;
+                }
+
+                return false;
+            }
+
+            if ($wrapper.hasClass('is-active')) {
+                closeWrapper($wrapper);
+                return true;
+            }
+
+            openWrapper($wrapper, $button);
+            return true;
+        }
+
         $(document).on('click', '.blc-field-help', function(event) {
             event.preventDefault();
             event.stopPropagation();
 
             var $button = $(this);
-            var $wrapper = $button.closest('.blc-field-help-wrapper');
-
-            if (!$wrapper.length) {
-                return;
-            }
-
-            if ($openWrapper && $openWrapper.get(0) !== $wrapper.get(0)) {
-                closeWrapper($openWrapper);
-            }
-
-            var isActive = $wrapper.hasClass('is-active');
-            if (isActive) {
-                closeWrapper($wrapper);
-            } else {
-                $wrapper.addClass('is-active');
-                $button.addClass('is-active').attr('aria-expanded', 'true');
-                var $bubble = $wrapper.find('.blc-field-help__bubble');
-                if ($bubble.length) {
-                    var announcement = ($bubble.text() || '').trim();
-                    if (announcement) {
-                        speak(announcement, 'polite');
-                    }
-                }
-                $openWrapper = $wrapper;
-            }
+            toggleWrapper($button);
         });
 
         $(document).on('click', function(event) {
@@ -4422,7 +4564,7 @@ jQuery(document).ready(function($) {
                 return;
             }
 
-            if ($(event.target).closest('.blc-field-help-wrapper').length) {
+            if (isElementAssociatedWithWrapper(event.target, $openWrapper)) {
                 return;
             }
 
@@ -4435,11 +4577,88 @@ jQuery(document).ready(function($) {
             }
         });
 
-        $(document).on('focusout', '.blc-field-help', function() {
-            if ($openWrapper) {
-                closeWrapper($openWrapper);
+        $(document).on('focusout', '.blc-field-help', function(event) {
+            if (!$openWrapper || !$openWrapper.length) {
+                return;
             }
+
+            var nextTarget = event.relatedTarget || document.activeElement || null;
+
+            if (isElementAssociatedWithWrapper(nextTarget, $openWrapper)) {
+                return;
+            }
+
+            if (!nextTarget) {
+                window.setTimeout(function() {
+                    if (!$openWrapper || !$openWrapper.length) {
+                        return;
+                    }
+
+                    if (isElementAssociatedWithWrapper(document.activeElement, $openWrapper)) {
+                        return;
+                    }
+
+                    closeWrapper($openWrapper);
+                }, 0);
+                return;
+            }
+
+            closeWrapper($openWrapper);
         });
+
+        $(document).on('focusin', function(event) {
+            if (!$openWrapper || !$openWrapper.length) {
+                return;
+            }
+
+            if (isElementAssociatedWithWrapper(event.target, $openWrapper)) {
+                return;
+            }
+
+            closeWrapper($openWrapper);
+        });
+
+        window.blcAdmin = window.blcAdmin || {};
+        window.blcAdmin.helpers = window.blcAdmin.helpers || {};
+
+        function resolveButton(target) {
+            var $button;
+
+            if (target && target.jquery) {
+                $button = target;
+            } else {
+                $button = $(target);
+            }
+
+            if (!$button.length) {
+                return $();
+            }
+
+            if (!$button.hasClass('blc-field-help')) {
+                $button = $button.find('.blc-field-help').first();
+            }
+
+            return $button;
+        }
+
+        window.blcAdmin.helpers.getOpenFieldHelp = function() {
+            return $openWrapper && $openWrapper.length ? $openWrapper.get(0) : null;
+        };
+
+        window.blcAdmin.helpers.toggleFieldHelp = function(target, forceOpen) {
+            var $button = resolveButton(target);
+
+            if (!$button.length) {
+                return false;
+            }
+
+            return toggleWrapper($button, forceOpen);
+        };
+
+        return {
+            getOpenFieldHelp: window.blcAdmin.helpers.getOpenFieldHelp,
+            toggleFieldHelp: window.blcAdmin.helpers.toggleFieldHelp
+        };
     }
 
     function applyPersonaSettings(settings, $scope) {
@@ -4630,6 +4849,7 @@ jQuery(document).ready(function($) {
 
     window.blcAdmin = window.blcAdmin || {};
     window.blcAdmin.helpers = window.blcAdmin.helpers || {};
+    var fieldHelpApi = null;
 
     if (typeof initSettingsModeToggle === 'function') {
         window.blcAdmin.initSettingsModeToggle = initSettingsModeToggle;
@@ -5628,10 +5848,20 @@ jQuery(document).ready(function($) {
         });
     }
 
-    initFieldHelp();
+    fieldHelpApi = initFieldHelp();
     initAdvancedSettings();
     initSettingsModeToggle();
     initLinksTableAjax();
+
+    window.blcAdmin.helpers = window.blcAdmin.helpers || {};
+
+    if (fieldHelpApi && typeof fieldHelpApi.getOpenFieldHelp === 'function') {
+        window.blcAdmin.helpers.getOpenFieldHelp = fieldHelpApi.getOpenFieldHelp;
+    }
+
+    if (fieldHelpApi && typeof fieldHelpApi.toggleFieldHelp === 'function') {
+        window.blcAdmin.helpers.toggleFieldHelp = fieldHelpApi.toggleFieldHelp;
+    }
 
     $(document).on('click', 'a[href*="page=blc-dashboard"]', function() {
         var href = $(this).attr('href');
