@@ -2713,7 +2713,7 @@ body.blc-modal-open {
     line-height: 1.4;
     box-shadow: 0 22px 40px -26px rgba(15, 118, 110, 0.7);
     opacity: 0;
-    visibility: hidden;
+    pointer-events: none;
     transform: translateY(-6px);
     transition: opacity 0.2s ease, transform 0.2s ease;
     z-index: 30;
@@ -2721,7 +2721,7 @@ body.blc-modal-open {
 
 .blc-field-help-wrapper.is-active .blc-field-help__bubble {
     opacity: 1;
-    visibility: visible;
+    pointer-events: auto;
     transform: translateY(0);
 }
 
