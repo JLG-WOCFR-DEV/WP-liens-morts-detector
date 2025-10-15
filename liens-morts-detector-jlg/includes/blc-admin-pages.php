@@ -726,8 +726,15 @@ function blc_render_dashboard_tabs($active_tab) {
             esc_url($tab_url),
             $aria_current
         );
+        $active_badge = '';
+        $active_sr_hint = '';
 
-        echo '<li class="blc-admin-tabs__item"><a' . $link_attributes . '>' . esc_html($tab['label']) . '</a></li>';
+        if ($is_active) {
+            $active_badge = '<span class="blc-admin-tabs__state" aria-hidden="true">' . esc_html__('Actif', 'liens-morts-detector-jlg') . '</span>';
+            $active_sr_hint = '<span class="screen-reader-text">' . esc_html__('(onglet actif)', 'liens-morts-detector-jlg') . '</span>';
+        }
+
+        echo '<li class="blc-admin-tabs__item"><a' . $link_attributes . '>' . esc_html($tab['label']) . $active_sr_hint . $active_badge . '</a></li>';
     }
 
     echo '</ul></nav>';
@@ -3262,8 +3269,20 @@ function blc_dashboard_links_page() {
                 $card_classes = array(
                     'blc-stat',
                     'blc-stat--' . $card['slug'],
-                    $is_active_card ? 'is-active' : '',
                 );
+
+                if ($is_active_card) {
+                    $card_classes[] = 'is-active';
+                    $card_classes[] = 'blc-stat--has-status';
+                    $aria_label .= ' ' . __('(filtre actif)', 'liens-morts-detector-jlg');
+                }
+
+                $active_badge = $is_active_card
+                    ? '<span class="blc-stat__status" aria-hidden="true">' . esc_html__('Actif', 'liens-morts-detector-jlg') . '</span>'
+                    : '';
+                $active_sr_hint = $is_active_card
+                    ? '<span class="screen-reader-text">' . esc_html__('(filtre actif)', 'liens-morts-detector-jlg') . '</span>'
+                    : '';
                 ?>
                 <a
                     class="<?php echo esc_attr(implode(' ', array_filter(array_map('sanitize_html_class', $card_classes)))); ?>"
@@ -3272,11 +3291,13 @@ function blc_dashboard_links_page() {
                     aria-label="<?php echo esc_attr($aria_label); ?>"
                     <?php echo $is_active_card ? ' aria-current="page"' : ''; ?>
                 >
+                    <?php echo $active_badge; ?>
                     <span class="blc-stat-value"><?php echo esc_html($card['value']); ?></span>
                     <span class="blc-stat-label"><?php echo esc_html($card['label']); ?></span>
                     <?php if (!empty($card['cta_label'])) : ?>
                         <span class="blc-stat-cta"><?php echo esc_html($card['cta_label']); ?></span>
                     <?php endif; ?>
+                    <?php echo $active_sr_hint; ?>
                 </a>
             <?php endforeach; ?>
         </div>
