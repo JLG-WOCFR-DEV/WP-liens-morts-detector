@@ -29,17 +29,22 @@ if (!function_exists('blc_get_proxy_pool_instance')) {
  *
  * @return void
  */
-function blc_render_field_help($field_id, $tooltip) {
+function blc_render_field_help($field_id, $tooltip, $field_label = '') {
     $tooltip = is_string($tooltip) ? trim($tooltip) : '';
+    $field_id = is_string($field_id) ? trim($field_id) : '';
+    $field_label = is_string($field_label) ? trim(wp_strip_all_tags($field_label)) : '';
 
     if ($tooltip === '' || $field_id === '') {
         return;
     }
 
     $tooltip_id = $field_id . '-tooltip';
+    $button_label = $field_label !== ''
+        ? sprintf(__('Aide : %s', 'liens-morts-detector-jlg'), $field_label)
+        : __('Afficher l’aide', 'liens-morts-detector-jlg');
 
     echo '<span class="blc-field-help-wrapper">';
-    echo '<button type="button" class="blc-field-help" aria-label="' . esc_attr__('Afficher l’aide', 'liens-morts-detector-jlg') . '" aria-expanded="false" aria-controls="' . esc_attr($tooltip_id) . '">';
+    echo '<button type="button" class="blc-field-help" aria-label="' . esc_attr($button_label) . '" aria-expanded="false" aria-controls="' . esc_attr($tooltip_id) . '">';
     echo '<span class="dashicons dashicons-editor-help" aria-hidden="true"></span>';
     echo '</button>';
     echo '<span id="' . esc_attr($tooltip_id) . '" class="blc-field-help__bubble" role="tooltip">' . esc_html($tooltip) . '</span>';
@@ -657,6 +662,7 @@ function blc_register_settings_sections() {
             'description' => __('Pause après la vérification de chaque URL. (Défaut : 200)', 'liens-morts-detector-jlg'),
             'label_for'   => 'blc_link_delay',
             'tooltip'     => __('Réduisez ce délai pour accélérer les scans, mais attention aux hébergements limitant les requêtes simultanées.', 'liens-morts-detector-jlg'),
+            'field_label' => __('Délai entre chaque lien', 'liens-morts-detector-jlg'),
         )
     );
 
@@ -675,6 +681,7 @@ function blc_register_settings_sections() {
             'description' => __('Pause entre chaque lot d’articles analysés. (Défaut : 60)', 'liens-morts-detector-jlg'),
             'label_for'   => 'blc_batch_delay',
             'tooltip'     => __('Allongez la pause pour laisser WordPress respirer sur des serveurs mutualisés.', 'liens-morts-detector-jlg'),
+            'field_label' => __('Délai entre chaque lot', 'liens-morts-detector-jlg'),
         )
     );
 
@@ -694,6 +701,7 @@ function blc_register_settings_sections() {
             'description' => __('Nombre d’articles traités par lot lors d’une analyse des liens. (Défaut : 20)', 'liens-morts-detector-jlg'),
             'label_for'   => 'blc_batch_size',
             'tooltip'     => __('Plus le lot est volumineux, plus le scan est rapide mais gourmand en mémoire.', 'liens-morts-detector-jlg'),
+            'field_label' => __('Taille des lots', 'liens-morts-detector-jlg'),
         )
     );
 
@@ -751,6 +759,7 @@ function blc_register_settings_sections() {
             'constraints' => 'head',
             'label_for'   => 'blc_head_request_timeout',
             'tooltip'     => __('Diminuez pour ignorer rapidement les sites lents, augmentez si vos cibles mettent du temps à répondre.', 'liens-morts-detector-jlg'),
+            'field_label' => __('Timeout des requêtes HEAD', 'liens-morts-detector-jlg'),
         )
     );
 
@@ -766,6 +775,7 @@ function blc_register_settings_sections() {
             'constraints' => 'get',
             'label_for'   => 'blc_get_request_timeout',
             'tooltip'     => __('Utilisé lorsque la requête HEAD échoue : adaptez-le selon la réactivité moyenne de vos URLs.', 'liens-morts-detector-jlg'),
+            'field_label' => __('Timeout des requêtes GET', 'liens-morts-detector-jlg'),
         )
     );
 
@@ -841,6 +851,7 @@ function blc_register_settings_sections() {
             'description' => __('Nombre maximum de workers WP-CLI/externes exécutés en parallèle.', 'liens-morts-detector-jlg'),
             'label_for'   => 'blc_queue_concurrency',
             'tooltip'     => __('Ajustez selon la capacité de votre backend Redis ou SQS.', 'liens-morts-detector-jlg'),
+            'field_label' => __('Travailleurs simultanés', 'liens-morts-detector-jlg'),
         )
     );
 
@@ -859,6 +870,7 @@ function blc_register_settings_sections() {
             'description' => __('Considère une page suspecte si le texte est plus court que ce seuil. (Défaut : 512)', 'liens-morts-detector-jlg'),
             'label_for'   => 'blc_soft_404_min_length',
             'tooltip'     => __('Les pages dont le contenu passe sous ce seuil seront signalées comme soft 404.', 'liens-morts-detector-jlg'),
+            'field_label' => __('Longueur minimale du contenu', 'liens-morts-detector-jlg'),
         )
     );
 
@@ -876,6 +888,7 @@ function blc_register_settings_sections() {
             'description' => __('Ajuste l’influence du titre dans les heuristiques. (Défaut : 1)', 'liens-morts-detector-jlg'),
             'label_for'   => 'blc_soft_404_title_weight',
             'tooltip'     => __('Augmentez pour renforcer le rôle du titre lorsque celui-ci contient des messages d’erreur explicites.', 'liens-morts-detector-jlg'),
+            'field_label' => __('Pondération du titre', 'liens-morts-detector-jlg'),
         )
     );
 
@@ -892,6 +905,7 @@ function blc_register_settings_sections() {
             'description' => __('Une valeur par ligne. Les correspondances sont insensibles à la casse. Utilisez /motif/i pour un motif regex.', 'liens-morts-detector-jlg'),
             'label_for'   => 'blc_soft_404_title_indicators',
             'tooltip'     => __('Titre contenant ces expressions ⇒ page suspecte. Ajoutez vos variantes maison.', 'liens-morts-detector-jlg'),
+            'field_label' => __('Titres suspects', 'liens-morts-detector-jlg'),
         )
     );
 
@@ -908,6 +922,7 @@ function blc_register_settings_sections() {
             'description' => __('Déclenche une alerte si le corps de la page contient ces expressions (insensible à la casse, regex acceptées).', 'liens-morts-detector-jlg'),
             'label_for'   => 'blc_soft_404_body_indicators',
             'tooltip'     => __('Texte repéré dans le corps ⇒ soft 404 probable. Utilisez des motifs adaptés à vos gabarits d’erreur.', 'liens-morts-detector-jlg'),
+            'field_label' => __('Gabarits de contenu', 'liens-morts-detector-jlg'),
         )
     );
 
@@ -924,6 +939,7 @@ function blc_register_settings_sections() {
             'description' => __('Empêche la détection si ces motifs apparaissent (utile pour vos propres pages 200 légitimes).', 'liens-morts-detector-jlg'),
             'label_for'   => 'blc_soft_404_ignore_patterns',
             'tooltip'     => __('Ajoutez ici les phrases qui déclenchent de faux positifs afin de les ignorer.', 'liens-morts-detector-jlg'),
+            'field_label' => __('Motifs à ignorer', 'liens-morts-detector-jlg'),
         )
     );
 
@@ -964,7 +980,8 @@ function blc_register_settings_sections() {
         $page,
         'blc_scan_section',
         array(
-            'tooltip' => __('Choisissez précision maximale ou vitesse selon la charge que votre serveur peut encaisser.', 'liens-morts-detector-jlg'),
+            'tooltip'      => __('Choisissez précision maximale ou vitesse selon la charge que votre serveur peut encaisser.', 'liens-morts-detector-jlg'),
+            'field_label'  => __('Stratégie de vérification', 'liens-morts-detector-jlg'),
         )
     );
 
@@ -977,6 +994,7 @@ function blc_register_settings_sections() {
         array(
             'label_for' => 'blc_excluded_domains',
             'tooltip'   => __('Domaines ou URLs ignorés par le scanner, pratique pour vos partenaires ou redirections temporaires.', 'liens-morts-detector-jlg'),
+            'field_label' => __('Liste d\'exclusion', 'liens-morts-detector-jlg'),
         )
     );
 
@@ -996,6 +1014,7 @@ function blc_register_settings_sections() {
         array(
             'label_for' => 'blc_image_scan_schedule_enabled',
             'tooltip'   => __('Définissez quand lancer les scans d’images distantes sans intervention manuelle.', 'liens-morts-detector-jlg'),
+            'field_label' => __('Planification automatique des images', 'liens-morts-detector-jlg'),
         )
     );
 
@@ -1006,7 +1025,8 @@ function blc_register_settings_sections() {
         $page,
         'blc_images_section',
         array(
-            'tooltip' => __('Activez-le pour tester aussi les fichiers servis via CDN ou sous-domaines médias.', 'liens-morts-detector-jlg'),
+            'tooltip'     => __('Activez-le pour tester aussi les fichiers servis via CDN ou sous-domaines médias.', 'liens-morts-detector-jlg'),
+            'field_label' => __('Analyse des images CDN', 'liens-morts-detector-jlg'),
         )
     );
 
@@ -1086,7 +1106,8 @@ function blc_register_settings_sections() {
         $page,
         'blc_debug_section',
         array(
-            'tooltip' => __('À activer temporairement pour consigner les requêtes problématiques dans debug.log.', 'liens-morts-detector-jlg'),
+            'tooltip'     => __('À activer temporairement pour consigner les requêtes problématiques dans debug.log.', 'liens-morts-detector-jlg'),
+            'field_label' => __('Mode Débogage', 'liens-morts-detector-jlg'),
         )
     );
 }
@@ -1573,6 +1594,7 @@ function blc_render_number_field($args) {
     }
 
     $default = isset($args['default']) ? $args['default'] : null;
+    $field_label = isset($args['field_label']) ? (string) $args['field_label'] : '';
 
     if (isset($args['value'])) {
         $value = $args['value'];
@@ -1616,6 +1638,17 @@ function blc_render_number_field($args) {
         }
     }
 
+    $additional_describedby = isset($args['aria_describedby']) ? trim((string) $args['aria_describedby']) : '';
+    $describedby_tokens = array();
+
+    if ($additional_describedby !== '') {
+        $describedby_tokens[] = $additional_describedby;
+    }
+
+    if (!empty($args['tooltip'])) {
+        $describedby_tokens[] = $option_name . '-tooltip';
+    }
+
     $attributes = array(
         'type="number"',
         'name="' . esc_attr($option_name) . '"',
@@ -1632,6 +1665,10 @@ function blc_render_number_field($args) {
         $attributes[] = 'max="' . esc_attr($max) . '"';
     }
 
+    if (!empty($describedby_tokens)) {
+        $attributes[] = 'aria-describedby="' . esc_attr(implode(' ', array_unique($describedby_tokens))) . '"';
+    }
+
     echo '<input ' . implode(' ', $attributes) . '>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 
     if ('' !== $unit) {
@@ -1639,7 +1676,7 @@ function blc_render_number_field($args) {
     }
 
     if (!empty($args['tooltip'])) {
-        blc_render_field_help($option_name, (string) $args['tooltip']);
+        blc_render_field_help($option_name, (string) $args['tooltip'], $field_label);
     }
 
     if (!empty($args['description'])) {
@@ -1672,18 +1709,33 @@ function blc_render_multiline_text_field($args) {
     }
 
     $placeholder = isset($args['placeholder']) && is_string($args['placeholder']) ? $args['placeholder'] : '';
+    $field_label = isset($args['field_label']) ? (string) $args['field_label'] : '';
+
+    $describedby_tokens = array();
+    if (!empty($args['tooltip'])) {
+        $describedby_tokens[] = $option_name . '-tooltip';
+    }
+
+    $textarea_attributes = array(
+        'id="' . esc_attr($option_name) . '"',
+        'name="' . esc_attr($option_name) . '"',
+        'rows="' . esc_attr($rows) . '"',
+        'class="large-text code"',
+        'placeholder="' . esc_attr($placeholder) . '"',
+    );
+
+    if (!empty($describedby_tokens)) {
+        $textarea_attributes[] = 'aria-describedby="' . esc_attr(implode(' ', array_unique($describedby_tokens))) . '"';
+    }
 
     printf(
-        '<textarea id="%1$s" name="%2$s" rows="%3$d" class="large-text code" placeholder="%4$s">%5$s</textarea>',
-        esc_attr($option_name),
-        esc_attr($option_name),
-        $rows,
-        esc_attr($placeholder),
+        '<textarea %1$s>%2$s</textarea>',
+        implode(' ', $textarea_attributes),
         esc_textarea($value)
     );
 
     if (!empty($args['tooltip'])) {
-        blc_render_field_help($option_name, (string) $args['tooltip']);
+        blc_render_field_help($option_name, (string) $args['tooltip'], $field_label);
     }
 
     if (!empty($args['description'])) {
@@ -1844,6 +1896,7 @@ function blc_render_timeout_field($args) {
             'description' => isset($args['description']) ? $args['description'] : '',
             'value'       => $value,
             'tooltip'     => isset($args['tooltip']) ? $args['tooltip'] : '',
+            'field_label' => isset($args['field_label']) ? (string) $args['field_label'] : '',
         )
     );
 }
@@ -1861,7 +1914,8 @@ function blc_render_queue_driver_field()
     }
 
     echo '<div class="blc-field-with-help">';
-    echo '<select id="blc_queue_driver" name="blc_queue_driver">';
+    $tooltip_id = 'blc_queue_driver-tooltip';
+    echo '<select id="blc_queue_driver" name="blc_queue_driver" aria-describedby="' . esc_attr($tooltip_id) . '">';
     foreach ($options as $option_value => $label) {
         printf(
             '<option value="%1$s" %2$s>%3$s</option>',
@@ -1871,7 +1925,11 @@ function blc_render_queue_driver_field()
         );
     }
     echo '</select>';
-    blc_render_field_help('blc_queue_driver', __('Choisissez WP-Cron pour rester sur le comportement natif ou Redis pour externaliser la file (Streams/Listes).', 'liens-morts-detector-jlg'));
+    blc_render_field_help(
+        'blc_queue_driver',
+        __('Choisissez WP-Cron pour rester sur le comportement natif ou Redis pour externaliser la file (Streams/Listes).', 'liens-morts-detector-jlg'),
+        __('Pilote de file', 'liens-morts-detector-jlg')
+    );
     echo '</div>';
     echo '<p class="description">' . esc_html__('Les pilotes externes nécessitent un worker WP-CLI ou un service dédié.', 'liens-morts-detector-jlg') . '</p>';
 }
@@ -1880,8 +1938,13 @@ function blc_render_queue_host_field()
 {
     $value = get_option('blc_queue_redis_host', '127.0.0.1');
     echo '<div class="blc-field-with-help">';
-    echo '<input type="text" class="regular-text" id="blc_queue_redis_host" name="blc_queue_redis_host" value="' . esc_attr($value) . '" autocomplete="off">';
-    blc_render_field_help('blc_queue_redis_host', __('Adresse de votre serveur Redis (hôte ou IP).', 'liens-morts-detector-jlg'));
+    $tooltip_id = 'blc_queue_redis_host-tooltip';
+    echo '<input type="text" class="regular-text" id="blc_queue_redis_host" name="blc_queue_redis_host" value="' . esc_attr($value) . '" autocomplete="off" aria-describedby="' . esc_attr($tooltip_id) . '">';
+    blc_render_field_help(
+        'blc_queue_redis_host',
+        __('Adresse de votre serveur Redis (hôte ou IP).', 'liens-morts-detector-jlg'),
+        __('Hôte Redis', 'liens-morts-detector-jlg')
+    );
     echo '</div>';
     echo '<p class="description">' . esc_html__('Par exemple : 127.0.0.1 ou redis.internal.', 'liens-morts-detector-jlg') . '</p>';
 }
@@ -1890,8 +1953,13 @@ function blc_render_queue_port_field()
 {
     $value = (int) get_option('blc_queue_redis_port', 6379);
     echo '<div class="blc-field-with-help">';
-    echo '<input type="number" min="1" max="65535" id="blc_queue_redis_port" name="blc_queue_redis_port" value="' . esc_attr($value) . '">';
-    blc_render_field_help('blc_queue_redis_port', __('Port TCP utilisé par Redis (défaut : 6379).', 'liens-morts-detector-jlg'));
+    $tooltip_id = 'blc_queue_redis_port-tooltip';
+    echo '<input type="number" min="1" max="65535" id="blc_queue_redis_port" name="blc_queue_redis_port" value="' . esc_attr($value) . '" aria-describedby="' . esc_attr($tooltip_id) . '">';
+    blc_render_field_help(
+        'blc_queue_redis_port',
+        __('Port TCP utilisé par Redis (défaut : 6379).', 'liens-morts-detector-jlg'),
+        __('Port Redis', 'liens-morts-detector-jlg')
+    );
     echo '</div>';
 }
 
@@ -1899,8 +1967,13 @@ function blc_render_queue_password_field()
 {
     $value = (string) get_option('blc_queue_redis_password', '');
     echo '<div class="blc-field-with-help">';
-    echo '<input type="password" class="regular-text" id="blc_queue_redis_password" name="blc_queue_redis_password" value="' . esc_attr($value) . '" autocomplete="new-password">';
-    blc_render_field_help('blc_queue_redis_password', __('Laissez vide si votre instance Redis n’utilise pas d’authentification.', 'liens-morts-detector-jlg'));
+    $tooltip_id = 'blc_queue_redis_password-tooltip';
+    echo '<input type="password" class="regular-text" id="blc_queue_redis_password" name="blc_queue_redis_password" value="' . esc_attr($value) . '" autocomplete="new-password" aria-describedby="' . esc_attr($tooltip_id) . '">';
+    blc_render_field_help(
+        'blc_queue_redis_password',
+        __('Laissez vide si votre instance Redis n’utilise pas d’authentification.', 'liens-morts-detector-jlg'),
+        __('Mot de passe', 'liens-morts-detector-jlg')
+    );
     echo '</div>';
 }
 
@@ -2051,13 +2124,16 @@ function blc_render_post_types_field() {
 function blc_render_scan_method_field($args = array()) {
     $scan_method = get_option('blc_scan_method', 'precise');
     $tooltip = isset($args['tooltip']) ? (string) $args['tooltip'] : '';
+    $field_label = isset($args['field_label']) ? (string) $args['field_label'] : __('Stratégie de vérification', 'liens-morts-detector-jlg');
+    $fieldset_attributes = array();
     if ($tooltip !== '') {
         echo '<div class="blc-fieldset-help">';
-        blc_render_field_help('blc_scan_method', $tooltip);
+        blc_render_field_help('blc_scan_method', $tooltip, $field_label);
         echo '</div>';
+        $fieldset_attributes[] = 'aria-describedby="blc_scan_method-tooltip"';
     }
     ?>
-    <fieldset>
+    <fieldset<?php echo $fieldset_attributes ? ' ' . implode(' ', $fieldset_attributes) : ''; ?>>
         <div class="blc-scan-method-option">
             <label>
                 <input
@@ -2095,11 +2171,21 @@ function blc_render_scan_method_field($args = array()) {
  */
 function blc_render_excluded_domains_field($args = array()) {
     $excluded_domains = get_option('blc_excluded_domains', "x.com\ntwitter.com\nlinkedin.com");
+    $field_label = isset($args['field_label']) ? (string) $args['field_label'] : __('Liste d\'exclusion', 'liens-morts-detector-jlg');
+    $textarea_attributes = array(
+        'name="blc_excluded_domains"',
+        'id="blc_excluded_domains"',
+        'rows="5"',
+        'class="large-text"',
+    );
+    if (!empty($args['tooltip'])) {
+        $textarea_attributes[] = 'aria-describedby="blc_excluded_domains-tooltip"';
+    }
     ?>
-    <textarea name="blc_excluded_domains" id="blc_excluded_domains" rows="5" class="large-text"><?php echo esc_textarea($excluded_domains); ?></textarea>
+    <textarea <?php echo implode(' ', $textarea_attributes); ?>><?php echo esc_textarea($excluded_domains); ?></textarea>
     <?php
     if (!empty($args['tooltip'])) {
-        blc_render_field_help('blc_excluded_domains', (string) $args['tooltip']);
+        blc_render_field_help('blc_excluded_domains', (string) $args['tooltip'], $field_label);
     }
     ?>
     <p class="description"><?php esc_html_e('Domaines à ignorer pendant l’analyse. Un domaine par ligne (ex: amazon.fr).', 'liens-morts-detector-jlg'); ?></p>
@@ -2135,13 +2221,18 @@ function blc_render_image_scan_schedule_field($args = array()) {
             'weekly' => __('Hebdomadaire', 'liens-morts-detector-jlg'),
         );
     }
+    $field_label = isset($args['field_label']) ? (string) $args['field_label'] : __('Planification automatique des images', 'liens-morts-detector-jlg');
+    $fieldset_attributes = array('id="blc_image_scan_schedule_fieldset"', 'class="blc-frequency-field"');
+    if (!empty($args['tooltip'])) {
+        $fieldset_attributes[] = 'aria-describedby="blc_image_scan_schedule-tooltip"';
+    }
     if (!empty($args['tooltip'])) {
         echo '<div class="blc-fieldset-help">';
-        blc_render_field_help('blc_image_scan_schedule', (string) $args['tooltip']);
+        blc_render_field_help('blc_image_scan_schedule', (string) $args['tooltip'], $field_label);
         echo '</div>';
     }
     ?>
-    <fieldset id="blc_image_scan_schedule_fieldset" class="blc-frequency-field">
+    <fieldset <?php echo implode(' ', $fieldset_attributes); ?>>
         <legend class="screen-reader-text"><?php esc_html_e('Planification automatique des images', 'liens-morts-detector-jlg'); ?></legend>
         <label for="blc_image_scan_schedule_enabled" class="blc-toggle">
             <input type="checkbox" name="blc_image_scan_schedule_enabled" id="blc_image_scan_schedule_enabled" value="1" <?php checked($automatic_enabled, true); ?>>
@@ -2215,13 +2306,16 @@ function blc_render_image_scan_schedule_field($args = array()) {
  */
 function blc_render_remote_image_scan_field($args = array()) {
     $remote_image_scan_enabled = (bool) get_option('blc_remote_image_scan_enabled', false);
+    $field_label = isset($args['field_label']) ? (string) $args['field_label'] : __('Analyse des images CDN', 'liens-morts-detector-jlg');
+    $fieldset_attributes = array();
     if (!empty($args['tooltip'])) {
         echo '<div class="blc-fieldset-help">';
-        blc_render_field_help('blc_remote_image_scan_enabled', (string) $args['tooltip']);
+        blc_render_field_help('blc_remote_image_scan_enabled', (string) $args['tooltip'], $field_label);
         echo '</div>';
+        $fieldset_attributes[] = 'aria-describedby="blc_remote_image_scan_enabled-tooltip"';
     }
     ?>
-    <fieldset>
+    <fieldset<?php echo $fieldset_attributes ? ' ' . implode(' ', $fieldset_attributes) : ''; ?>>
         <label for="blc_remote_image_scan_enabled">
             <input type="checkbox" name="blc_remote_image_scan_enabled" id="blc_remote_image_scan_enabled" value="1" <?php checked($remote_image_scan_enabled, true); ?>>
             <?php esc_html_e('Vérifier aussi les images servies depuis un domaine ou un CDN distinct.', 'liens-morts-detector-jlg'); ?>
@@ -2370,13 +2464,16 @@ function blc_render_notification_channels_field() {
  */
 function blc_render_debug_mode_field($args = array()) {
     $debug_mode = (bool) get_option('blc_debug_mode', false);
+    $field_label = isset($args['field_label']) ? (string) $args['field_label'] : __('Mode Débogage', 'liens-morts-detector-jlg');
+    $fieldset_attributes = array();
     if (!empty($args['tooltip'])) {
         echo '<div class="blc-fieldset-help">';
-        blc_render_field_help('blc_debug_mode', (string) $args['tooltip']);
+        blc_render_field_help('blc_debug_mode', (string) $args['tooltip'], $field_label);
         echo '</div>';
+        $fieldset_attributes[] = 'aria-describedby="blc_debug_mode-tooltip"';
     }
     ?>
-    <fieldset>
+    <fieldset<?php echo $fieldset_attributes ? ' ' . implode(' ', $fieldset_attributes) : ''; ?>>
         <label for="blc_debug_mode">
             <input type="checkbox" name="blc_debug_mode" id="blc_debug_mode" value="1" <?php checked($debug_mode, true); ?>>
             <?php esc_html_e('Activer le journal de débogage', 'liens-morts-detector-jlg'); ?>
