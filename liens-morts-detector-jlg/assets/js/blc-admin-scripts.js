@@ -4369,6 +4369,7 @@ jQuery(document).ready(function($) {
 
     function initFieldHelp() {
         var $openWrapper = null;
+        var speak = (accessibility && typeof accessibility.speak === 'function') ? accessibility.speak : function() {};
 
         function closeWrapper($wrapper) {
             if (!$wrapper || !$wrapper.length) {
@@ -4405,6 +4406,13 @@ jQuery(document).ready(function($) {
             } else {
                 $wrapper.addClass('is-active');
                 $button.addClass('is-active').attr('aria-expanded', 'true');
+                var $bubble = $wrapper.find('.blc-field-help__bubble');
+                if ($bubble.length) {
+                    var announcement = ($bubble.text() || '').trim();
+                    if (announcement) {
+                        speak(announcement, 'polite');
+                    }
+                }
                 $openWrapper = $wrapper;
             }
         });
@@ -4423,6 +4431,12 @@ jQuery(document).ready(function($) {
 
         $(document).on('keydown', function(event) {
             if (event.key === 'Escape' && $openWrapper) {
+                closeWrapper($openWrapper);
+            }
+        });
+
+        $(document).on('focusout', '.blc-field-help', function() {
+            if ($openWrapper) {
                 closeWrapper($openWrapper);
             }
         });
