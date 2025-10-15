@@ -8,6 +8,7 @@
     "test:all": "npm run test && npm run test:e2e"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.10.2",
     "@babel/core": "^7.24.0",
     "@playwright/test": "^1.56.0",
     "@wordpress/jest-preset-default": "^12.31.0",
