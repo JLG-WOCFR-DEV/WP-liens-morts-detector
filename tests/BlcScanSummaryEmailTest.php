@@ -113,6 +113,9 @@ class BlcScanSummaryEmailTest extends TestCase
         Functions\when('apply_filters')->alias(static function ($hook, $value, ...$args) {
             return $value;
         });
+        Functions\when('number_format_i18n')->alias(static function ($number, $decimals = 0) {
+            return number_format((float) $number, $decimals, ',', ' ');
+        });
     }
 
     protected function tearDown(): void
@@ -161,10 +164,15 @@ class BlcScanSummaryEmailTest extends TestCase
         $this->assertSame(2, $summary['previous_count']);
         $this->assertCount(2, $summary['top_issues']);
         $this->assertSame($default_filters, $summary['status_filters']);
+        $this->assertArrayHasKey('threshold_alerts', $summary);
+        $this->assertCount(1, $summary['threshold_alerts']);
+        $this->assertSame('Ratio de liens cassés critique', $summary['threshold_alerts'][0]['label']);
 
         $message = $summary['message'];
         $this->assertStringContainsString('- Liens cassés détectés : 5', $message);
         $this->assertStringContainsString('- Évolution depuis le précédent scan : +3 (précédent : 2)', $message);
+        $this->assertStringContainsString('Alertes seuils détectées :', $message);
+        $this->assertStringContainsString('- [Alerte] Ratio de liens cassés critique : 100 % (seuil 5,0 %)', $message);
         $this->assertStringContainsString('Liens les plus problématiques :', $message);
         $this->assertStringContainsString('- https://example.com/404 — statut HTTP : 404 — occurrences : 3 — contenu : Article 1', $message);
         $this->assertStringContainsString('- https://example.com/timeout — statut HTTP : inconnu — occurrences : 2', $message);
@@ -194,6 +202,7 @@ class BlcScanSummaryEmailTest extends TestCase
         $this->assertNull($summary['previous_count']);
         $this->assertNull($summary['difference']);
         $this->assertSame([], $summary['top_issues']);
+        $this->assertSame([], $summary['threshold_alerts']);
 
         $message = $summary['message'];
         $this->assertStringContainsString('- Images cassées détectées : 1', $message);

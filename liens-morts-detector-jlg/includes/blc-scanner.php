@@ -3,6 +3,7 @@
 if (!defined('ABSPATH')) exit;
 
 
+require_once __DIR__ . '/blc-surveillance.php';
 require_once __DIR__ . '/Scanner/HttpClientInterface.php';
 require_once __DIR__ . '/Scanner/ProxyPool.php';
 require_once __DIR__ . '/Scanner/RemoteRequestClient.php';
@@ -2843,6 +2844,102 @@ function blc_is_notification_channel_enabled($dataset_type) {
     return false;
 }
 
+if (!function_exists('blc_format_surveillance_alert_line')) {
+    /**
+     * Format a triggered surveillance alert as a human readable summary line.
+     *
+     * @param array<string,mixed> $alert Alert payload produced by the threshold evaluator.
+     *
+     * @return string
+     */
+    function blc_format_surveillance_alert_line(array $alert) {
+        $value      = isset($alert['value']) ? $alert['value'] : 0;
+        $threshold  = isset($alert['threshold']) ? $alert['threshold'] : 0;
+        $value_type = isset($alert['value_type']) ? (string) $alert['value_type'] : 'count';
+
+        $format_number = static function ($number, $decimals = 0) {
+            $number = (float) $number;
+
+            if (function_exists('number_format_i18n')) {
+                return number_format_i18n($number, $decimals);
+            }
+
+            return number_format($number, $decimals, '.', ',');
+        };
+
+        if ($value_type === 'ratio') {
+            $value_decimals     = (abs((float) $value) >= 10) ? 0 : 1;
+            $threshold_decimals = (abs((float) $threshold) >= 10) ? 0 : 1;
+            $value_formatted    = sprintf(
+                /* translators: %s: formatted percentage value. */
+                __('%s %%', 'liens-morts-detector-jlg'),
+                $format_number($value, $value_decimals)
+            );
+            $threshold_formatted = sprintf(
+                /* translators: %s: formatted percentage threshold. */
+                __('%s %%', 'liens-morts-detector-jlg'),
+                $format_number($threshold, $threshold_decimals)
+            );
+        } else {
+            $value_is_float      = abs((float) $value - (int) $value) > 0.000001;
+            $threshold_is_float  = abs((float) $threshold - (int) $threshold) > 0.000001;
+            $value_formatted     = $format_number($value, $value_is_float ? 1 : 0);
+            $threshold_formatted = $format_number($threshold, $threshold_is_float ? 1 : 0);
+        }
+
+        $label = isset($alert['label']) ? trim((string) $alert['label']) : '';
+
+        if ($label === '') {
+            $scope = isset($alert['scope']) ? (string) $alert['scope'] : 'global';
+            if ($scope === 'taxonomy') {
+                $taxonomy_label = isset($alert['taxonomy_label']) ? (string) $alert['taxonomy_label'] : '';
+                if ($taxonomy_label === '') {
+                    $taxonomy_label = isset($alert['taxonomy']) ? (string) $alert['taxonomy'] : __('Taxonomie', 'liens-morts-detector-jlg');
+                }
+
+                $term_name = isset($alert['term_name']) ? (string) $alert['term_name'] : '';
+                if ($term_name === '') {
+                    $term_id  = isset($alert['term_id']) ? (int) $alert['term_id'] : 0;
+                    $term_name = $term_id > 0
+                        ? sprintf(/* translators: %d: term identifier. */ __('Terme #%d', 'liens-morts-detector-jlg'), $term_id)
+                        : __('Terme inconnu', 'liens-morts-detector-jlg');
+                }
+
+                $label = sprintf(
+                    /* translators: 1: taxonomy label, 2: term label. */
+                    __('%1$s — %2$s', 'liens-morts-detector-jlg'),
+                    $taxonomy_label,
+                    $term_name
+                );
+            } else {
+                $label = __('Seuil global', 'liens-morts-detector-jlg');
+            }
+        }
+
+        $severity_label = '';
+        if (isset($alert['severity'])) {
+            $severity = strtolower((string) $alert['severity']);
+            if ($severity === 'critical') {
+                $severity_label = __('[Critique] ', 'liens-morts-detector-jlg');
+            } elseif ($severity === 'warning') {
+                $severity_label = __('[Alerte] ', 'liens-morts-detector-jlg');
+            } elseif ($severity === 'info') {
+                $severity_label = __('[Info] ', 'liens-morts-detector-jlg');
+            }
+        }
+
+        $label_with_severity = $severity_label . $label;
+
+        return sprintf(
+            /* translators: 1: alert label, 2: observed value, 3: configured threshold. */
+            __('- %1$s : %2$s (seuil %3$s)', 'liens-morts-detector-jlg'),
+            $label_with_severity,
+            $value_formatted,
+            $threshold_formatted
+        );
+    }
+}
+
 /**
  * Build the scan summary email payload for a dataset type.
  *
@@ -2865,6 +2962,63 @@ function blc_generate_scan_summary_email($dataset_type, $args = null) {
     if (!is_array($args)) {
         $args = array();
     }
+
+    $threshold_evaluation = array(
+        'alerts'      => array(),
+        'metrics'     => array(
+            'global'   => array(
+                'broken_ratio' => 0.0,
+                'broken_count' => 0,
+                'total_tracked'=> 0,
+            ),
+            'taxonomy' => array(),
+        ),
+        'definitions' => array(
+            'global'   => array(),
+            'taxonomy' => array(),
+        ),
+    );
+
+    if ($dataset_type === 'link' && function_exists('blc_evaluate_surveillance_thresholds')) {
+        $evaluated = blc_evaluate_surveillance_thresholds('link');
+        if (is_array($evaluated)) {
+            if (isset($evaluated['alerts']) && is_array($evaluated['alerts'])) {
+                $threshold_evaluation['alerts'] = $evaluated['alerts'];
+            }
+
+            if (isset($evaluated['metrics']) && is_array($evaluated['metrics'])) {
+                $threshold_evaluation['metrics'] = array_merge($threshold_evaluation['metrics'], $evaluated['metrics']);
+            }
+
+            if (isset($evaluated['definitions']) && is_array($evaluated['definitions'])) {
+                $threshold_evaluation['definitions'] = array_merge($threshold_evaluation['definitions'], $evaluated['definitions']);
+            }
+        }
+    }
+
+    $threshold_alerts = isset($threshold_evaluation['alerts']) && is_array($threshold_evaluation['alerts'])
+        ? $threshold_evaluation['alerts']
+        : array();
+
+    $threshold_metrics = isset($threshold_evaluation['metrics']) && is_array($threshold_evaluation['metrics'])
+        ? $threshold_evaluation['metrics']
+        : $threshold_evaluation['metrics'];
+
+    if (!isset($threshold_metrics['global']) || !is_array($threshold_metrics['global'])) {
+        $threshold_metrics['global'] = array(
+            'broken_ratio' => 0.0,
+            'broken_count' => 0,
+            'total_tracked'=> 0,
+        );
+    }
+
+    if (!isset($threshold_metrics['taxonomy']) || !is_array($threshold_metrics['taxonomy'])) {
+        $threshold_metrics['taxonomy'] = array();
+    }
+
+    $threshold_definitions = isset($threshold_evaluation['definitions']) && is_array($threshold_evaluation['definitions'])
+        ? $threshold_evaluation['definitions']
+        : array('global' => array(), 'taxonomy' => array());
 
     $table_name = $wpdb->prefix . 'blc_broken_links';
     $broken_count = 0;
@@ -3052,6 +3206,19 @@ function blc_generate_scan_summary_email($dataset_type, $args = null) {
         );
     }
 
+    if ($threshold_alerts !== array()) {
+        $message_lines[] = '';
+        $message_lines[] = __('Alertes seuils détectées :', 'liens-morts-detector-jlg');
+
+        foreach ($threshold_alerts as $alert) {
+            if (!is_array($alert)) {
+                continue;
+            }
+
+            $message_lines[] = blc_format_surveillance_alert_line($alert);
+        }
+    }
+
     if ($top_issues !== []) {
         $message_lines[] = '';
         $message_lines[] = $dataset_type === 'link'
@@ -3112,6 +3279,9 @@ function blc_generate_scan_summary_email($dataset_type, $args = null) {
         'difference'     => $difference,
         'status_filters' => $status_filters,
         'status_filters_signature' => $status_signature,
+        'threshold_alerts'         => $threshold_alerts,
+        'threshold_metrics'        => $threshold_metrics,
+        'threshold_definitions'    => $threshold_definitions,
     ];
 }
 
@@ -3120,47 +3290,49 @@ function blc_generate_scan_summary_email($dataset_type, $args = null) {
  *
  * @return array<string, array{label:string, sql:callable|string}>
  */
-function blc_get_notification_status_filter_definitions() {
-    $definitions = array(
-        'status_404_410'   => array(
-            'label' => __('404 / 410 (contenu introuvable)', 'liens-morts-detector-jlg'),
-            'sql'   => static function ($column) {
-                return sprintf('%1$s IN (404, 410)', $column);
-            },
-        ),
-        'status_5xx'       => array(
-            'label' => __('Erreurs serveur (5xx)', 'liens-morts-detector-jlg'),
-            'sql'   => static function ($column) {
-                return sprintf('(%1$s BETWEEN 500 AND 599)', $column);
-            },
-        ),
-        'status_redirects' => array(
-            'label' => __('Redirections (3xx)', 'liens-morts-detector-jlg'),
-            'sql'   => static function ($column) {
-                return sprintf('(%1$s BETWEEN 300 AND 399)', $column);
-            },
-        ),
-        'status_other'     => array(
-            'label' => __('Autres statuts (timeouts, 4xx hors 404/410, etc.)', 'liens-morts-detector-jlg'),
-            'sql'   => static function ($column) {
-                return sprintf(
-                    '(%1$s IS NULL OR %1$s = 0 OR %1$s = \'\' OR (%1$s NOT BETWEEN 300 AND 399 AND %1$s NOT BETWEEN 500 AND 599 AND %1$s NOT IN (404, 410)))',
-                    $column
-                );
-            },
-        ),
-    );
+if (!function_exists('blc_get_notification_status_filter_definitions')) {
+    function blc_get_notification_status_filter_definitions() {
+        $definitions = array(
+            'status_404_410'   => array(
+                'label' => __('404 / 410 (contenu introuvable)', 'liens-morts-detector-jlg'),
+                'sql'   => static function ($column) {
+                    return sprintf('%1$s IN (404, 410)', $column);
+                },
+            ),
+            'status_5xx'       => array(
+                'label' => __('Erreurs serveur (5xx)', 'liens-morts-detector-jlg'),
+                'sql'   => static function ($column) {
+                    return sprintf('(%1$s BETWEEN 500 AND 599)', $column);
+                },
+            ),
+            'status_redirects' => array(
+                'label' => __('Redirections (3xx)', 'liens-morts-detector-jlg'),
+                'sql'   => static function ($column) {
+                    return sprintf('(%1$s BETWEEN 300 AND 399)', $column);
+                },
+            ),
+            'status_other'     => array(
+                'label' => __('Autres statuts (timeouts, 4xx hors 404/410, etc.)', 'liens-morts-detector-jlg'),
+                'sql'   => static function ($column) {
+                    return sprintf(
+                        '(%1$s IS NULL OR %1$s = 0 OR %1$s = \'\' OR (%1$s NOT BETWEEN 300 AND 399 AND %1$s NOT BETWEEN 500 AND 599 AND %1$s NOT IN (404, 410)))',
+                        $column
+                    );
+                },
+            ),
+        );
 
-    if (function_exists('apply_filters')) {
-        /**
-         * Permet de personnaliser les catégories de statuts HTTP disponibles pour les notifications.
-         *
-         * @param array<string, array{label:string, sql:callable|string}> $definitions Définitions par défaut.
-         */
-        $definitions = apply_filters('blc_notification_status_filter_definitions', $definitions);
+        if (function_exists('apply_filters')) {
+            /**
+             * Permet de personnaliser les catégories de statuts HTTP disponibles pour les notifications.
+             *
+             * @param array<string, array{label:string, sql:callable|string}> $definitions Définitions par défaut.
+             */
+            $definitions = apply_filters('blc_notification_status_filter_definitions', $definitions);
+        }
+
+        return is_array($definitions) ? $definitions : array();
     }
-
-    return is_array($definitions) ? $definitions : array();
 }
 
 /**
