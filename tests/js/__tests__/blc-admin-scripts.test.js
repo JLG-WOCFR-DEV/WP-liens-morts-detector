@@ -317,7 +317,7 @@ describe('settings mode toggle', () => {
                 <div class="blc-settings-groups__advanced" data-blc-settings-advanced-placeholder></div>
             </div>
             <script type="text/template" id="blc-settings-advanced-template">
-                <details class="blc-settings-group blc-settings-group--collapsible">
+                <details class="blc-settings-group blc-settings-group--collapsible" open>
                     <summary class="blc-settings-group__summary">
                         <span class="blc-settings-group__title">Réglages avancés</span>
                         <span class="blc-settings-group__description">Optimisez les performances.</span>
@@ -431,6 +431,9 @@ describe('settings mode toggle', () => {
         expect(button.getAttribute('aria-checked')).toBe('true');
         expect(document.querySelector('[data-current-mode="advanced"]')).not.toBeNull();
         expect(placeholder.querySelector('.blc-settings-advanced')).not.toBeNull();
+        const advancedDetails = placeholder.querySelector('details');
+        expect(advancedDetails).not.toBeNull();
+        expect(advancedDetails.hasAttribute('open')).toBe(true);
         expect(initAdvancedSettingsSpy).toHaveBeenCalledTimes(1);
         expect(window.wp.a11y.speak).toHaveBeenCalledWith('Mode avancé activé. Les réglages supplémentaires sont visibles.', 'polite');
     });
