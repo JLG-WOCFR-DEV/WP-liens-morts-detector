@@ -4419,7 +4419,7 @@ function blc_render_settings_sections_grouped($page) {
             $personas      = blc_get_settings_persona_presets();
 
             ob_start();
-            echo '<details class="blc-settings-group blc-settings-group--collapsible" aria-labelledby="blc-settings-advanced-heading">';
+            echo '<details class="blc-settings-group blc-settings-group--collapsible" aria-labelledby="blc-settings-advanced-heading" open>';
             echo '<summary class="blc-settings-group__summary">';
             echo '<span id="blc-settings-advanced-heading" class="blc-settings-group__title">' . esc_html__('Réglages avancés', 'liens-morts-detector-jlg') . '</span>';
             echo '<span class="blc-settings-group__description">' . esc_html__('Optimisez les performances, heuristiques et intégrations externes.', 'liens-morts-detector-jlg') . '</span>';
