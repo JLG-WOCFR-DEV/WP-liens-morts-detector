@@ -43,11 +43,36 @@ function blc_render_field_help($field_id, $tooltip, $field_label = '') {
         ? sprintf(__('Aide : %s', 'liens-morts-detector-jlg'), $field_label)
         : __('Afficher l’aide', 'liens-morts-detector-jlg');
 
-    echo '<span class="blc-field-help-wrapper">';
-    echo '<button type="button" class="blc-field-help" aria-label="' . esc_attr($button_label) . '" aria-expanded="false" aria-controls="' . esc_attr($tooltip_id) . '">';
+    $wrapper_attributes = array('class="blc-field-help-wrapper"');
+
+    if ($field_id !== '') {
+        $wrapper_attributes[] = 'data-field-id="' . esc_attr($field_id) . '"';
+    }
+
+    echo '<span ' . implode(' ', $wrapper_attributes) . '>';
+
+    $button_attributes = array(
+        'type="button"',
+        'class="blc-field-help"',
+        'aria-label="' . esc_attr($button_label) . '"',
+        'aria-expanded="false"',
+        'aria-controls="' . esc_attr($tooltip_id) . '"',
+        'aria-describedby="' . esc_attr($tooltip_id) . '"'
+    );
+
+    echo '<button ' . implode(' ', $button_attributes) . '>';
     echo '<span class="dashicons dashicons-editor-help" aria-hidden="true"></span>';
     echo '</button>';
-    echo '<span id="' . esc_attr($tooltip_id) . '" class="blc-field-help__bubble" role="tooltip">' . esc_html($tooltip) . '</span>';
+    $bubble_attributes = array(
+        'id="' . esc_attr($tooltip_id) . '"',
+        'class="blc-field-help__bubble"',
+        'role="tooltip"',
+        'hidden',
+        'aria-hidden="true"',
+        'aria-live="polite"'
+    );
+
+    echo '<span ' . implode(' ', $bubble_attributes) . '>' . esc_html($tooltip) . '</span>';
     echo '</span>';
 }
 
