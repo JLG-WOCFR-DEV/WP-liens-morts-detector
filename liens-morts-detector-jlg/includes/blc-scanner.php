@@ -9,6 +9,8 @@ require_once __DIR__ . '/Scanner/ProxyPool.php';
 require_once __DIR__ . '/Scanner/RemoteRequestClient.php';
 require_once __DIR__ . '/Scanner/ImageUrlNormalizer.php';
 require_once __DIR__ . '/Scanner/ImageNormalizationContext.php';
+require_once __DIR__ . '/Scanner/QueueDrivers/WpCronQueueDriver.php';
+require_once __DIR__ . '/Scanner/QueueDrivers/RedisQueueDriver.php';
 
 if (!function_exists('blc_link_scan_status_cache')) {
     /**
