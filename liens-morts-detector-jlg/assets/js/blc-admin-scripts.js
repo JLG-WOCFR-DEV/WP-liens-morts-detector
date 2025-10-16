@@ -4483,6 +4483,12 @@ jQuery(document).ready(function($) {
                 $button.removeClass('is-active').attr('aria-expanded', 'false');
             }
 
+            var $bubble = $wrapper.find('.blc-field-help__bubble');
+            if ($bubble.length) {
+                $bubble.attr('aria-hidden', 'true');
+                $bubble.attr('hidden', 'hidden');
+            }
+
             $openWrapper = null;
         }
 
@@ -4500,6 +4506,8 @@ jQuery(document).ready(function($) {
 
             var $bubble = $wrapper.find('.blc-field-help__bubble');
             if ($bubble.length) {
+                $bubble.attr('aria-hidden', 'false');
+                $bubble.removeAttr('hidden');
                 var announcement = ($bubble.text() || '').trim();
                 if (announcement) {
                     speak(announcement, 'polite');
@@ -4577,33 +4585,23 @@ jQuery(document).ready(function($) {
             }
         });
 
-        $(document).on('focusout', '.blc-field-help', function(event) {
-            if (!$openWrapper || !$openWrapper.length) {
+        $(document).on('focusout', '.blc-field-help', function() {
+            var $wrapper = $(this).closest('.blc-field-help-wrapper');
+            if (!$wrapper.length) {
                 return;
             }
 
-            var nextTarget = event.relatedTarget || document.activeElement || null;
-
-            if (isElementAssociatedWithWrapper(nextTarget, $openWrapper)) {
-                return;
-            }
-
-            if (!nextTarget) {
-                window.setTimeout(function() {
-                    if (!$openWrapper || !$openWrapper.length) {
+            window.setTimeout(function() {
+                var activeElement = document.activeElement || null;
+                if (activeElement) {
+                    var $active = $(activeElement);
+                    if ($active.closest('.blc-field-help-wrapper').get(0) === $wrapper.get(0)) {
                         return;
                     }
+                }
 
-                    if (isElementAssociatedWithWrapper(document.activeElement, $openWrapper)) {
-                        return;
-                    }
-
-                    closeWrapper($openWrapper);
-                }, 0);
-                return;
-            }
-
-            closeWrapper($openWrapper);
+                closeWrapper($wrapper);
+            }, 0);
         });
 
         $(document).on('focusin', function(event) {
