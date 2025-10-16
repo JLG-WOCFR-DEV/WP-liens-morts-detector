@@ -791,6 +791,10 @@
     gap: 24px;
 }
 
+.blc-dashboard-insights__column {
+    min-width: 0;
+}
+
 @media (min-width: 960px) {
     .blc-dashboard-insights {
         grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
