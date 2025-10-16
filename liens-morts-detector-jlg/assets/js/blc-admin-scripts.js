@@ -4600,11 +4600,9 @@ jQuery(document).ready(function($) {
                     }
                 }
 
-                if (!$openWrapper || $openWrapper.get(0) !== $wrapper.get(0)) {
-                    return;
+                if ($openWrapper && $openWrapper.length && $openWrapper.get(0) === $wrapper.get(0)) {
+                    closeWrapper($openWrapper);
                 }
-
-                closeWrapper($wrapper);
             }, 0);
         });
 
