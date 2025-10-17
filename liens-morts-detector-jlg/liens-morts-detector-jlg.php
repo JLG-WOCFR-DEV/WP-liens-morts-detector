@@ -1162,6 +1162,12 @@ function blc_render_broken_link_row_html(array $row) {
 // Gère la modification d'une URL
 add_action('wp_ajax_blc_edit_link', 'blc_ajax_edit_link_callback');
 function blc_ajax_edit_link_callback() {
+    if (!function_exists('blc_current_user_can_fix_links') || !blc_current_user_can_fix_links()) {
+        wp_send_json_error([
+            'message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg'),
+        ], BLC_HTTP_FORBIDDEN);
+    }
+
     check_ajax_referer('blc_edit_link_nonce');
 
     $params = blc_require_post_params(['post_id', 'row_id', 'old_url', 'new_url']);
@@ -1208,6 +1214,12 @@ function blc_ajax_edit_link_callback() {
 
 add_action('wp_ajax_blc_apply_detected_redirect', 'blc_ajax_apply_detected_redirect_callback');
 function blc_ajax_apply_detected_redirect_callback() {
+    if (!function_exists('blc_current_user_can_fix_links') || !blc_current_user_can_fix_links()) {
+        wp_send_json_error([
+            'message' => __('Permissions insuffisantes.', 'liens-morts-detector-jlg'),
+        ], BLC_HTTP_FORBIDDEN);
+    }
+
     check_ajax_referer('blc_apply_detected_redirect_nonce');
 
     $params = blc_require_post_params(['post_id', 'row_id']);
