@@ -13,13 +13,7 @@ namespace {
     }
 
     if (!function_exists('blc_build_notification_webhook_payload')) {
-        function blc_build_notification_webhook_payload($channel, $message, $summary, $settings = array())
-        {
-            return array(
-                'channel' => $channel,
-                'text'    => $message,
-            );
-        }
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-notification-payloads.php';
     }
 
     if (!class_exists('WP_Error')) {
