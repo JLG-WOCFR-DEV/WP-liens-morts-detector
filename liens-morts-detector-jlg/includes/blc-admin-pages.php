@@ -2468,6 +2468,30 @@ function blc_get_history_state_class($state) {
 }
 
 /**
+ * Retrieve a localized label for a dataset displayed in the history page.
+ *
+ * @param string $dataset_type Dataset slug.
+ *
+ * @return string
+ */
+function blc_get_history_dataset_label($dataset_type) {
+    $dataset_type = is_string($dataset_type) ? $dataset_type : '';
+
+    if ($dataset_type !== '' && function_exists('sanitize_key')) {
+        $dataset_type = sanitize_key($dataset_type);
+    }
+
+    switch ($dataset_type) {
+        case 'link':
+            return __('Liens', 'liens-morts-detector-jlg');
+        case 'image':
+            return __('Images', 'liens-morts-detector-jlg');
+        default:
+            return '';
+    }
+}
+
+/**
  * Render the scan history dashboard and metrics explorer.
  */
 function blc_scan_history_page() {
@@ -2572,6 +2596,66 @@ function blc_scan_history_page() {
     $job_rows = [];
     foreach (array_slice($history_entries, 0, 10) as $entry) {
         if (!is_array($entry)) {
+            continue;
+        }
+
+        $event = isset($entry['event']) ? (string) $entry['event'] : '';
+        if ($event === 'reset') {
+            $timestamp = isset($entry['timestamp']) ? (int) $entry['timestamp'] : 0;
+            $timestamp_display = blc_format_scan_history_datetime($timestamp);
+
+            $user_data = isset($entry['user']) && is_array($entry['user']) ? $entry['user'] : [];
+            $user_name = '';
+            if (isset($user_data['display_name'])) {
+                $user_name = trim((string) $user_data['display_name']);
+            }
+            if ($user_name === '' && isset($user_data['login'])) {
+                $user_name = trim((string) $user_data['login']);
+            }
+            if ($user_name === '') {
+                $user_name = __('Utilisateur inconnu', 'liens-morts-detector-jlg');
+            }
+
+            $dataset_label = blc_get_history_dataset_label($entry['dataset_type'] ?? '');
+
+            $description = sprintf(
+                /* translators: 1: user display name, 2: formatted date. */
+                __('Déclenchée par %1$s le %2$s', 'liens-morts-detector-jlg'),
+                $user_name,
+                $timestamp_display
+            );
+
+            $announcement = ($dataset_label !== '')
+                ? sprintf(
+                    /* translators: 1: user display name, 2: formatted date, 3: dataset label. */
+                    __('Remise à zéro manuelle déclenchée par %1$s le %2$s pour le jeu de données %3$s.', 'liens-morts-detector-jlg'),
+                    $user_name,
+                    $timestamp_display,
+                    $dataset_label
+                )
+                : sprintf(
+                    /* translators: 1: user display name, 2: formatted date. */
+                    __('Remise à zéro manuelle déclenchée par %1$s le %2$s.', 'liens-morts-detector-jlg'),
+                    $user_name,
+                    $timestamp_display
+                );
+
+            $dataset_note = ($dataset_label !== '')
+                ? sprintf(
+                    /* translators: %s: dataset label. */
+                    __('Jeu de données : %s', 'liens-morts-detector-jlg'),
+                    $dataset_label
+                )
+                : '';
+
+            $job_rows[] = [
+                'type'         => 'reset',
+                'timestamp'    => $timestamp_display,
+                'description'  => $description,
+                'dataset_note' => $dataset_note,
+                'announcement' => $announcement,
+            ];
+
             continue;
         }
 
@@ -2779,6 +2863,22 @@ function blc_scan_history_page() {
                     </tr>
                 <?php else : ?>
                     <?php foreach ($job_rows as $row) :
+                        if (($row['type'] ?? '') === 'reset') :
+                            ?>
+                            <tr class="blc-history-reset-row">
+                                <td colspan="5">
+                                    <div class="blc-history-reset" role="status" aria-live="polite" aria-label="<?php echo esc_attr($row['announcement']); ?>">
+                                        <span class="blc-history-reset__title"><?php esc_html_e('Remise à zéro manuelle', 'liens-morts-detector-jlg'); ?></span>
+                                        <span class="blc-history-reset__meta"><?php echo esc_html($row['description']); ?></span>
+                                        <?php if (!empty($row['dataset_note'])) : ?>
+                                            <span class="blc-history-reset__note"><?php echo esc_html($row['dataset_note']); ?></span>
+                                        <?php endif; ?>
+                                    </div>
+                                </td>
+                            </tr>
+                            <?php
+                            continue;
+                        endif;
                         $job_id_display = $row['job_id'] !== '' ? $row['job_id'] : __('(inconnu)', 'liens-morts-detector-jlg');
                         ?>
                         <tr>

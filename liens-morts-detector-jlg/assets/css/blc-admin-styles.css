@@ -1127,6 +1127,43 @@
     margin-top: 12px;
 }
 
+.blc-history-reset-row td {
+    padding: 0;
+    border-top: none;
+    border-bottom: none;
+}
+
+.blc-history-reset {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 16px 20px;
+    background: var(--blc-history-reset-background, #fff7ed);
+    color: var(--blc-history-reset-color, #7c2d12);
+    border-left: 4px solid var(--blc-history-reset-accent, #d97706);
+    border-radius: 6px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+.blc-history-reset__title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: inherit;
+}
+
+.blc-history-reset__meta {
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.blc-history-reset__note {
+    font-size: 13px;
+    color: inherit;
+    opacity: 0.85;
+}
+
 .blc-history-table-section {
     margin-bottom: 32px;
 }
