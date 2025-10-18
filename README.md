@@ -56,6 +56,11 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 
 ## Tests automatisés
 
+### PHP (PHPUnit)
+- Installer les dépendances PHP : `composer install`.
+- Lancer la suite unitaire : `composer test:php` (génère également un rapport JUnit `phpunit.junit.xml`).
+- ✅ Cette suite est exécutée dans la CI et doit réussir avant toute fusion.
+
 ### JavaScript (Jest)
 - `npm test` exécute l’intégralité de la suite Jest existante.
 
@@ -81,7 +86,8 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 La charte d’interface détaille les styles, couleurs et attentes d’interaction à respecter : voir [`docs/charte-ux.md`](docs/charte-ux.md).
 
 ### Combinaison des suites
-- `npm run test:all` exécute successivement Jest puis Playwright.
+- `composer test:all` enchaîne les tests PHP, Jest puis Playwright.
+- `npm run test:all` reste disponible si seuls les tests JavaScript sont nécessaires.
 
 ## Détection des soft 404
 
