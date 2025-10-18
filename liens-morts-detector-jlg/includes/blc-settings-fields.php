@@ -4618,15 +4618,15 @@ function blc_sanitize_notification_recipients_option($value) {
  * @return array<string, string>
  */
 if (!function_exists('blc_get_notification_webhook_channel_choices')) {
-function blc_get_notification_webhook_channel_choices() {
-    return array(
-        'disabled' => __('Désactivé', 'liens-morts-detector-jlg'),
-        'generic'    => __('Webhook générique (JSON)', 'liens-morts-detector-jlg'),
-        'slack'      => __('Slack', 'liens-morts-detector-jlg'),
-        'teams'      => __('Microsoft Teams', 'liens-morts-detector-jlg'),
-        'mattermost' => __('Mattermost', 'liens-morts-detector-jlg'),
-    );
-}
+    function blc_get_notification_webhook_channel_choices() {
+        return array(
+            'disabled'   => __('Désactivé', 'liens-morts-detector-jlg'),
+            'generic'    => __('Webhook générique (JSON)', 'liens-morts-detector-jlg'),
+            'slack'      => __('Slack', 'liens-morts-detector-jlg'),
+            'teams'      => __('Microsoft Teams', 'liens-morts-detector-jlg'),
+            'mattermost' => __('Mattermost', 'liens-morts-detector-jlg'),
+        );
+    }
 }
 
 /**
@@ -4635,9 +4635,9 @@ function blc_get_notification_webhook_channel_choices() {
  * @return array<string, string>
  */
 if (!function_exists('blc_get_notification_status_filter_choices')) {
-function blc_get_notification_status_filter_choices() {
-    $definitions = blc_get_notification_status_filter_definitions();
-    $choices = array();
+    function blc_get_notification_status_filter_choices() {
+        $definitions = blc_get_notification_status_filter_definitions();
+        $choices = array();
 
         foreach ($definitions as $key => $definition) {
             if (!isset($definition['label'])) {
@@ -4650,7 +4650,6 @@ function blc_get_notification_status_filter_choices() {
         return $choices;
     }
 }
-}
 
 /**
  * Retourne la liste par défaut des catégories retenues dans les résumés.
@@ -4658,9 +4657,9 @@ function blc_get_notification_status_filter_choices() {
  * @return string[]
  */
 if (!function_exists('blc_get_default_notification_status_filters')) {
-function blc_get_default_notification_status_filters() {
-    return array_keys(blc_get_notification_status_filter_choices());
-}
+    function blc_get_default_notification_status_filters() {
+        return array_keys(blc_get_notification_status_filter_choices());
+    }
 }
 
 /**
@@ -4671,47 +4670,47 @@ function blc_get_default_notification_status_filters() {
  * @return string[]
  */
 if (!function_exists('blc_normalize_notification_status_filters')) {
-function blc_normalize_notification_status_filters($value) {
-    $choices = blc_get_notification_status_filter_choices();
+    function blc_normalize_notification_status_filters($value) {
+        $choices = blc_get_notification_status_filter_choices();
 
-    if (is_string($value)) {
-        $value = array($value);
-    } elseif (!is_array($value)) {
-        $value = array();
+        if (is_string($value)) {
+            $value = array($value);
+        } elseif (!is_array($value)) {
+            $value = array();
+        }
+
+        $selected = array();
+
+        foreach ($value as $candidate) {
+            if (!is_scalar($candidate)) {
+                continue;
+            }
+
+            $normalized = (string) $candidate;
+            if (function_exists('sanitize_key')) {
+                $normalized = sanitize_key($normalized);
+            } else {
+                $normalized = strtolower($normalized);
+                $normalized = preg_replace('/[^a-z0-9_\-]/', '', $normalized);
+            }
+
+            if ($normalized === '') {
+                continue;
+            }
+
+            if (!isset($choices[$normalized])) {
+                continue;
+            }
+
+            $selected[$normalized] = $normalized;
+        }
+
+        if ($selected === array()) {
+            return blc_get_default_notification_status_filters();
+        }
+
+        return array_values($selected);
     }
-
-    $selected = array();
-
-    foreach ($value as $candidate) {
-        if (!is_scalar($candidate)) {
-            continue;
-        }
-
-        $normalized = (string) $candidate;
-        if (function_exists('sanitize_key')) {
-            $normalized = sanitize_key($normalized);
-        } else {
-            $normalized = strtolower($normalized);
-            $normalized = preg_replace('/[^a-z0-9_\-]/', '', $normalized);
-        }
-
-        if ($normalized === '') {
-            continue;
-        }
-
-        if (!isset($choices[$normalized])) {
-            continue;
-        }
-
-        $selected[$normalized] = $normalized;
-    }
-
-    if ($selected === array()) {
-        return blc_get_default_notification_status_filters();
-    }
-
-    return array_values($selected);
-}
 }
 
 /**
@@ -4722,16 +4721,15 @@ function blc_normalize_notification_status_filters($value) {
  * @return string[]
  */
 if (!function_exists('blc_get_notification_status_filters')) {
-function blc_get_notification_status_filters($override = null) {
-    if (is_array($override)) {
-        return blc_normalize_notification_status_filters($override);
-    }
+    function blc_get_notification_status_filters($override = null) {
+        if (is_array($override)) {
+            return blc_normalize_notification_status_filters($override);
+        }
 
         $stored = get_option('blc_notification_status_filters', blc_get_default_notification_status_filters());
 
         return blc_normalize_notification_status_filters($stored);
     }
-}
 }
 
 /**
@@ -4742,9 +4740,9 @@ function blc_get_notification_status_filters($override = null) {
  * @return string[]
  */
 if (!function_exists('blc_sanitize_notification_status_filters_option')) {
-function blc_sanitize_notification_status_filters_option($value) {
-    return blc_normalize_notification_status_filters($value);
-}
+    function blc_sanitize_notification_status_filters_option($value) {
+        return blc_normalize_notification_status_filters($value);
+    }
 }
 
 /**
