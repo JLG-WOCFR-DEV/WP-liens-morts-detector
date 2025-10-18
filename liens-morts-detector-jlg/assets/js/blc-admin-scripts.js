@@ -5877,10 +5877,175 @@ jQuery(document).ready(function($) {
         });
     }
 
+    function initSurveillanceThresholds() {
+        var $container = $('#blc-surveillance-thresholds[data-blc-surveillance]');
+
+        if (!$container.length) {
+            return;
+        }
+
+        function syncApplyToAllState($checkbox) {
+            if (!$checkbox || !$checkbox.length) {
+                return;
+            }
+
+            var $cell = $checkbox.closest('td');
+            var $textarea = $cell.find('textarea');
+            var isChecked = $checkbox.is(':checked');
+
+            if ($textarea.length) {
+                $textarea.prop('readonly', isChecked);
+                $textarea.toggleClass('is-readonly', isChecked);
+            }
+        }
+
+        function computeNextIndex($body) {
+            var nextIndex = 0;
+
+            $body.children('[data-blc-surveillance-index]').each(function() {
+                var rawIndex = parseInt($(this).attr('data-blc-surveillance-index'), 10);
+                var isFiniteIndex = typeof Number !== 'undefined' && typeof Number.isFinite === 'function'
+                    ? Number.isFinite(rawIndex)
+                    : isFinite(rawIndex);
+
+                if (isFiniteIndex && rawIndex >= nextIndex) {
+                    nextIndex = rawIndex + 1;
+                }
+            });
+
+            return nextIndex;
+        }
+
+        function resolveTemplateHtml(templateId, index) {
+            if (!templateId) {
+                return '';
+            }
+
+            var template = document.getElementById(templateId);
+            if (!template) {
+                return '';
+            }
+
+            var html = template.innerHTML;
+            var pattern = /__index__/g;
+
+            return html.replace(pattern, String(index));
+        }
+
+        var tables = {};
+
+        $container.find('[data-blc-surveillance-table]').each(function() {
+            var $table = $(this);
+            var templateId = $table.attr('data-blc-template-id') || '';
+            var $body = $table.find('tbody[data-blc-surveillance-body]');
+
+            if (!templateId || !$body.length) {
+                return;
+            }
+
+            var scope = $body.attr('data-blc-surveillance-body') || '';
+            if (!scope) {
+                return;
+            }
+
+            var nextIndex = computeNextIndex($body);
+
+            tables[scope] = {
+                table: $table,
+                body: $body,
+                templateId: templateId,
+                emptyMessage: $table.attr('data-blc-empty-message') || ''
+            };
+
+            $table.data('blcNextIndex', nextIndex);
+
+            $body.find('input[name$="[apply_to_all_terms]"]').each(function() {
+                syncApplyToAllState($(this));
+            });
+
+            if ($body.find('[data-blc-surveillance-row]').length) {
+                $body.find('[data-blc-surveillance-empty]').remove();
+            }
+        });
+
+        if ($.isEmptyObject(tables)) {
+            return;
+        }
+
+        $container.on('click', '[data-blc-surveillance-add-row]', function(event) {
+            event.preventDefault();
+            var scope = $(this).attr('data-scope') || '';
+
+            if (!scope || !tables[scope]) {
+                return;
+            }
+
+            var tableInfo = tables[scope];
+            var nextIndex = parseInt(tableInfo.table.data('blcNextIndex'), 10);
+            var isFiniteIndex = typeof Number !== 'undefined' && typeof Number.isFinite === 'function'
+                ? Number.isFinite(nextIndex)
+                : isFinite(nextIndex);
+
+            if (!isFiniteIndex) {
+                nextIndex = computeNextIndex(tableInfo.body);
+            }
+
+            var html = resolveTemplateHtml(tableInfo.templateId, nextIndex);
+            if (!html) {
+                return;
+            }
+
+            var $row = $(html);
+
+            tableInfo.body.find('[data-blc-surveillance-empty]').remove();
+            tableInfo.body.append($row);
+            tableInfo.table.data('blcNextIndex', nextIndex + 1);
+
+            $row.find('input[name$="[apply_to_all_terms]"]').each(function() {
+                syncApplyToAllState($(this));
+            });
+        });
+
+        $container.on('click', '[data-blc-surveillance-remove-row]', function(event) {
+            event.preventDefault();
+            var $row = $(this).closest('[data-blc-surveillance-row]');
+            if (!$row.length) {
+                return;
+            }
+
+            var $body = $row.closest('tbody[data-blc-surveillance-body]');
+            var scope = $body.attr('data-blc-surveillance-body') || '';
+            var columnCount = $row.closest('table').find('thead th').length || 1;
+            $row.remove();
+
+            if (!scope || !tables[scope]) {
+                return;
+            }
+
+            if ($body.find('[data-blc-surveillance-row]').length) {
+                return;
+            }
+
+            var message = tables[scope].emptyMessage;
+            if (!message) {
+                return;
+            }
+
+            var $empty = $('<tr data-blc-surveillance-empty><td class="blc-surveillance-table__empty" colspan="' + columnCount + '"></td></tr>');
+            $empty.find('td').text(message);
+            $body.append($empty);
+        });
+
+        $container.on('change', 'input[name$="[apply_to_all_terms]"]', function() {
+            syncApplyToAllState($(this));
+        });
+    }
+
     fieldHelpApi = initFieldHelp();
     initAdvancedSettings();
     initSettingsModeToggle();
     initLinksTableAjax();
+    initSurveillanceThresholds();
 
     window.blcAdmin.helpers = window.blcAdmin.helpers || {};
 

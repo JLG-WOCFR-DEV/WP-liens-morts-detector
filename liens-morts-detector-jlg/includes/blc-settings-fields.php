@@ -17,6 +17,14 @@ if (!function_exists('blc_get_notification_status_filter_definitions')) {
     require_once __DIR__ . '/blc-scanner.php';
 }
 
+if (!function_exists('blc_get_surveillance_threshold_defaults')) {
+    require_once __DIR__ . '/blc-surveillance.php';
+}
+
+if (!function_exists('blc_get_surveillance_escalation_settings')) {
+    require_once __DIR__ . '/blc-surveillance-escalation.php';
+}
+
 if (!function_exists('blc_get_proxy_pool_instance')) {
     require_once __DIR__ . '/Scanner/ProxyPool.php';
 }
@@ -685,6 +693,56 @@ function blc_register_settings() {
                 'mappings'  => array(),
                 'fallbacks' => array('default' => array('global')),
             ),
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_surveillance_thresholds',
+        array(
+            'type'              => 'array',
+            'sanitize_callback' => 'blc_sanitize_surveillance_thresholds_option',
+            'default'           => blc_get_surveillance_threshold_defaults(),
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_surveillance_escalation_email_levels',
+        array(
+            'type'              => 'array',
+            'sanitize_callback' => 'blc_sanitize_surveillance_escalation_levels_option',
+            'default'           => array('warning', 'critical'),
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_surveillance_escalation_webhook_levels',
+        array(
+            'type'              => 'array',
+            'sanitize_callback' => 'blc_sanitize_surveillance_escalation_levels_option',
+            'default'           => array('critical'),
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_surveillance_escalation_cooldown_warning',
+        array(
+            'type'              => 'integer',
+            'sanitize_callback' => 'blc_sanitize_surveillance_cooldown_option',
+            'default'           => 1800,
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_surveillance_escalation_cooldown_critical',
+        array(
+            'type'              => 'integer',
+            'sanitize_callback' => 'blc_sanitize_surveillance_cooldown_option',
+            'default'           => 600,
         )
     );
 
@@ -3015,6 +3073,467 @@ function blc_render_notification_channels_field() {
 }
 
 /**
+ * Render the thresholds configuration table for proactive surveillance.
+ *
+ * @return void
+ */
+function blc_render_surveillance_thresholds_field() {
+    $stored_thresholds = get_option('blc_surveillance_thresholds', array());
+    $thresholds        = blc_normalize_surveillance_thresholds($stored_thresholds);
+    $defaults          = blc_get_surveillance_threshold_defaults();
+
+    if (empty($thresholds['global'])) {
+        $thresholds['global'] = $defaults['global'];
+    }
+
+    $taxonomy_choices = blc_get_surveillance_taxonomy_choices();
+
+    $global_rows   = $thresholds['global'];
+    $taxonomy_rows = $thresholds['taxonomy'];
+
+    $metric_options = array(
+        'broken_ratio' => __('Taux de liens cassés (%)', 'liens-morts-detector-jlg'),
+        'broken_count' => __('Nombre total de liens cassés', 'liens-morts-detector-jlg'),
+    );
+
+    $comparison_options = blc_get_surveillance_comparison_options();
+    $severity_options   = blc_get_surveillance_severity_options();
+
+    ?>
+    <div class="blc-surveillance-thresholds" id="blc-surveillance-thresholds" data-blc-surveillance>
+        <p class="description">
+            <?php esc_html_e('Définissez les seuils qui déclencheront des alertes lorsqu’un scan dépasse un ratio ou un volume critique.', 'liens-morts-detector-jlg'); ?>
+        </p>
+
+        <h4 class="blc-surveillance-thresholds__title"><?php esc_html_e('Seuils globaux', 'liens-morts-detector-jlg'); ?></h4>
+        <table class="widefat blc-surveillance-table" data-blc-surveillance-table data-blc-template-id="blc-surveillance-global-template">
+            <thead>
+                <tr>
+                    <th scope="col"><?php esc_html_e('Libellé', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Métrique', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Comparaison', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Seuil', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Sévérité', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col" class="blc-surveillance-table__actions"><span class="screen-reader-text"><?php esc_html_e('Actions', 'liens-morts-detector-jlg'); ?></span></th>
+                </tr>
+            </thead>
+            <tbody data-blc-surveillance-body="global">
+                <?php foreach ($global_rows as $index => $definition) :
+                    $row_index  = (int) $index;
+                    $row_id     = isset($definition['id']) ? (string) $definition['id'] : '';
+                    $row_label  = isset($definition['label']) ? (string) $definition['label'] : '';
+                    $row_metric = isset($definition['metric']) ? (string) $definition['metric'] : 'broken_ratio';
+                    $row_threshold = isset($definition['threshold']) ? (float) $definition['threshold'] : 0.0;
+                    $row_comparison = isset($definition['comparison']) ? (string) $definition['comparison'] : 'gte';
+                    $row_severity = isset($definition['severity']) ? (string) $definition['severity'] : 'warning';
+                    ?>
+                    <tr data-blc-surveillance-row data-blc-surveillance-index="<?php echo esc_attr($row_index); ?>">
+                        <td>
+                            <label class="screen-reader-text" for="blc_surveillance_global_<?php echo esc_attr($row_index); ?>_label">
+                                <?php esc_html_e('Libellé du seuil', 'liens-morts-detector-jlg'); ?>
+                            </label>
+                            <input
+                                type="text"
+                                id="blc_surveillance_global_<?php echo esc_attr($row_index); ?>_label"
+                                name="blc_surveillance_thresholds[global][<?php echo esc_attr($row_index); ?>][label]"
+                                class="regular-text"
+                                value="<?php echo esc_attr($row_label); ?>"
+                            >
+                            <input type="hidden" name="blc_surveillance_thresholds[global][<?php echo esc_attr($row_index); ?>][id]" value="<?php echo esc_attr($row_id); ?>">
+                        </td>
+                        <td>
+                            <label class="screen-reader-text" for="blc_surveillance_global_<?php echo esc_attr($row_index); ?>_metric">
+                                <?php esc_html_e('Métrique surveillée', 'liens-morts-detector-jlg'); ?>
+                            </label>
+                            <select
+                                id="blc_surveillance_global_<?php echo esc_attr($row_index); ?>_metric"
+                                name="blc_surveillance_thresholds[global][<?php echo esc_attr($row_index); ?>][metric]"
+                            >
+                                <?php foreach ($metric_options as $value => $label) : ?>
+                                    <option value="<?php echo esc_attr($value); ?>" <?php selected($row_metric, $value); ?>><?php echo esc_html($label); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </td>
+                        <td>
+                            <label class="screen-reader-text" for="blc_surveillance_global_<?php echo esc_attr($row_index); ?>_comparison">
+                                <?php esc_html_e('Type de comparaison', 'liens-morts-detector-jlg'); ?>
+                            </label>
+                            <select
+                                id="blc_surveillance_global_<?php echo esc_attr($row_index); ?>_comparison"
+                                name="blc_surveillance_thresholds[global][<?php echo esc_attr($row_index); ?>][comparison]"
+                            >
+                                <?php foreach ($comparison_options as $value => $label) : ?>
+                                    <option value="<?php echo esc_attr($value); ?>" <?php selected($row_comparison, $value); ?>><?php echo esc_html($label); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </td>
+                        <td>
+                            <label class="screen-reader-text" for="blc_surveillance_global_<?php echo esc_attr($row_index); ?>_threshold">
+                                <?php esc_html_e('Valeur du seuil', 'liens-morts-detector-jlg'); ?>
+                            </label>
+                            <input
+                                type="number"
+                                id="blc_surveillance_global_<?php echo esc_attr($row_index); ?>_threshold"
+                                name="blc_surveillance_thresholds[global][<?php echo esc_attr($row_index); ?>][threshold]"
+                                value="<?php echo esc_attr($row_threshold); ?>"
+                                class="small-text"
+                                step="0.1"
+                                min="0"
+                            >
+                        </td>
+                        <td>
+                            <label class="screen-reader-text" for="blc_surveillance_global_<?php echo esc_attr($row_index); ?>_severity">
+                                <?php esc_html_e('Sévérité associée', 'liens-morts-detector-jlg'); ?>
+                            </label>
+                            <select
+                                id="blc_surveillance_global_<?php echo esc_attr($row_index); ?>_severity"
+                                name="blc_surveillance_thresholds[global][<?php echo esc_attr($row_index); ?>][severity]"
+                            >
+                                <?php foreach ($severity_options as $value => $label) : ?>
+                                    <option value="<?php echo esc_attr($value); ?>" <?php selected($row_severity, $value); ?>><?php echo esc_html($label); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </td>
+                        <td class="blc-surveillance-table__actions">
+                            <button type="button" class="button-link button-link-delete" data-blc-surveillance-remove-row>
+                                <?php esc_html_e('Supprimer', 'liens-morts-detector-jlg'); ?>
+                            </button>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        <p class="blc-surveillance-actions">
+            <button type="button" class="button button-secondary" data-blc-surveillance-add-row data-scope="global">
+                <?php esc_html_e('Ajouter un seuil global', 'liens-morts-detector-jlg'); ?>
+            </button>
+        </p>
+
+        <h4 class="blc-surveillance-thresholds__title"><?php esc_html_e('Seuils par taxonomie', 'liens-morts-detector-jlg'); ?></h4>
+        <table
+            class="widefat blc-surveillance-table"
+            data-blc-surveillance-table
+            data-blc-template-id="blc-surveillance-taxonomy-template"
+            data-blc-empty-message="<?php echo esc_attr__('Aucune alerte par taxonomie n’est configurée pour le moment.', 'liens-morts-detector-jlg'); ?>"
+        >
+            <thead>
+                <tr>
+                    <th scope="col"><?php esc_html_e('Libellé', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Taxonomie', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Termes ciblés', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Comparaison', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Seuil', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col"><?php esc_html_e('Sévérité', 'liens-morts-detector-jlg'); ?></th>
+                    <th scope="col" class="blc-surveillance-table__actions"><span class="screen-reader-text"><?php esc_html_e('Actions', 'liens-morts-detector-jlg'); ?></span></th>
+                </tr>
+            </thead>
+            <tbody data-blc-surveillance-body="taxonomy">
+                <?php if (empty($taxonomy_rows)) : ?>
+                    <tr data-blc-surveillance-empty>
+                        <td colspan="7" class="blc-surveillance-table__empty">
+                            <?php esc_html_e('Aucune alerte par taxonomie n’est configurée pour le moment.', 'liens-morts-detector-jlg'); ?>
+                        </td>
+                    </tr>
+                <?php else :
+                    foreach ($taxonomy_rows as $index => $definition) :
+                        $row_index  = (int) $index;
+                        $row_id     = isset($definition['id']) ? (string) $definition['id'] : '';
+                        $row_label  = isset($definition['label']) ? (string) $definition['label'] : '';
+                        $row_taxonomy = isset($definition['taxonomy']) ? (string) $definition['taxonomy'] : '';
+                        $row_threshold = isset($definition['threshold']) ? (float) $definition['threshold'] : 0.0;
+                        $row_comparison = isset($definition['comparison']) ? (string) $definition['comparison'] : 'gte';
+                        $row_severity = isset($definition['severity']) ? (string) $definition['severity'] : 'warning';
+                        $term_ids = isset($definition['term_ids']) && is_array($definition['term_ids'])
+                            ? implode(', ', array_map('intval', $definition['term_ids']))
+                            : '';
+                        $apply_to_all = !empty($definition['apply_to_all_terms']);
+                        ?>
+                        <tr data-blc-surveillance-row data-blc-surveillance-index="<?php echo esc_attr($row_index); ?>">
+                            <td>
+                                <label class="screen-reader-text" for="blc_surveillance_taxonomy_<?php echo esc_attr($row_index); ?>_label">
+                                    <?php esc_html_e('Libellé du seuil', 'liens-morts-detector-jlg'); ?>
+                                </label>
+                                <input
+                                    type="text"
+                                    id="blc_surveillance_taxonomy_<?php echo esc_attr($row_index); ?>_label"
+                                    name="blc_surveillance_thresholds[taxonomy][<?php echo esc_attr($row_index); ?>][label]"
+                                    class="regular-text"
+                                    value="<?php echo esc_attr($row_label); ?>"
+                                >
+                                <input type="hidden" name="blc_surveillance_thresholds[taxonomy][<?php echo esc_attr($row_index); ?>][id]" value="<?php echo esc_attr($row_id); ?>">
+                            </td>
+                            <td>
+                                <label class="screen-reader-text" for="blc_surveillance_taxonomy_<?php echo esc_attr($row_index); ?>_taxonomy">
+                                    <?php esc_html_e('Taxonomie ciblée', 'liens-morts-detector-jlg'); ?>
+                                </label>
+                                <select
+                                    id="blc_surveillance_taxonomy_<?php echo esc_attr($row_index); ?>_taxonomy"
+                                    name="blc_surveillance_thresholds[taxonomy][<?php echo esc_attr($row_index); ?>][taxonomy]"
+                                >
+                                    <?php foreach ($taxonomy_choices as $value => $label) : ?>
+                                        <option value="<?php echo esc_attr($value); ?>" <?php selected($row_taxonomy, $value); ?>><?php echo esc_html($label); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </td>
+                            <td>
+                                <label class="screen-reader-text" for="blc_surveillance_taxonomy_<?php echo esc_attr($row_index); ?>_terms">
+                                    <?php esc_html_e('Termes surveillés', 'liens-morts-detector-jlg'); ?>
+                                </label>
+                                <textarea
+                                    id="blc_surveillance_taxonomy_<?php echo esc_attr($row_index); ?>_terms"
+                                    name="blc_surveillance_thresholds[taxonomy][<?php echo esc_attr($row_index); ?>][term_ids]"
+                                    rows="1"
+                                    class="regular-text"
+                                ><?php echo esc_textarea($term_ids); ?></textarea>
+                                <label class="blc-surveillance-inline-toggle">
+                                    <input
+                                        type="checkbox"
+                                        name="blc_surveillance_thresholds[taxonomy][<?php echo esc_attr($row_index); ?>][apply_to_all_terms]"
+                                        value="1"
+                                        <?php checked($apply_to_all, true); ?>
+                                    >
+                                    <?php esc_html_e('Surveiller tous les termes de la taxonomie', 'liens-morts-detector-jlg'); ?>
+                                </label>
+                            </td>
+                            <td>
+                                <label class="screen-reader-text" for="blc_surveillance_taxonomy_<?php echo esc_attr($row_index); ?>_comparison">
+                                    <?php esc_html_e('Type de comparaison', 'liens-morts-detector-jlg'); ?>
+                                </label>
+                                <select
+                                    id="blc_surveillance_taxonomy_<?php echo esc_attr($row_index); ?>_comparison"
+                                    name="blc_surveillance_thresholds[taxonomy][<?php echo esc_attr($row_index); ?>][comparison]"
+                                >
+                                    <?php foreach ($comparison_options as $value => $label) : ?>
+                                        <option value="<?php echo esc_attr($value); ?>" <?php selected($row_comparison, $value); ?>><?php echo esc_html($label); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </td>
+                            <td>
+                                <label class="screen-reader-text" for="blc_surveillance_taxonomy_<?php echo esc_attr($row_index); ?>_threshold">
+                                    <?php esc_html_e('Valeur du seuil', 'liens-morts-detector-jlg'); ?>
+                                </label>
+                                <input
+                                    type="number"
+                                    id="blc_surveillance_taxonomy_<?php echo esc_attr($row_index); ?>_threshold"
+                                    name="blc_surveillance_thresholds[taxonomy][<?php echo esc_attr($row_index); ?>][threshold]"
+                                    value="<?php echo esc_attr($row_threshold); ?>"
+                                    class="small-text"
+                                    step="1"
+                                    min="0"
+                                >
+                            </td>
+                            <td>
+                                <label class="screen-reader-text" for="blc_surveillance_taxonomy_<?php echo esc_attr($row_index); ?>_severity">
+                                    <?php esc_html_e('Sévérité associée', 'liens-morts-detector-jlg'); ?>
+                                </label>
+                                <select
+                                    id="blc_surveillance_taxonomy_<?php echo esc_attr($row_index); ?>_severity"
+                                    name="blc_surveillance_thresholds[taxonomy][<?php echo esc_attr($row_index); ?>][severity]"
+                                >
+                                    <?php foreach ($severity_options as $value => $label) : ?>
+                                        <option value="<?php echo esc_attr($value); ?>" <?php selected($row_severity, $value); ?>><?php echo esc_html($label); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </td>
+                            <td class="blc-surveillance-table__actions">
+                                <button type="button" class="button-link button-link-delete" data-blc-surveillance-remove-row>
+                                    <?php esc_html_e('Supprimer', 'liens-morts-detector-jlg'); ?>
+                                </button>
+                            </td>
+                        </tr>
+                    <?php endforeach;
+                endif; ?>
+            </tbody>
+        </table>
+        <p class="blc-surveillance-actions">
+            <button type="button" class="button button-secondary" data-blc-surveillance-add-row data-scope="taxonomy">
+                <?php esc_html_e('Ajouter un seuil par taxonomie', 'liens-morts-detector-jlg'); ?>
+            </button>
+        </p>
+
+        <template id="blc-surveillance-global-template">
+            <tr data-blc-surveillance-row data-blc-surveillance-index="__index__">
+                <td>
+                    <label class="screen-reader-text" for="blc_surveillance_global___index___label"><?php esc_html_e('Libellé du seuil', 'liens-morts-detector-jlg'); ?></label>
+                    <input type="text" id="blc_surveillance_global___index___label" name="blc_surveillance_thresholds[global][__index__][label]" class="regular-text" value="">
+                    <input type="hidden" name="blc_surveillance_thresholds[global][__index__][id]" value="">
+                </td>
+                <td>
+                    <label class="screen-reader-text" for="blc_surveillance_global___index___metric"><?php esc_html_e('Métrique surveillée', 'liens-morts-detector-jlg'); ?></label>
+                    <select id="blc_surveillance_global___index___metric" name="blc_surveillance_thresholds[global][__index__][metric]">
+                        <?php foreach ($metric_options as $value => $label) : ?>
+                            <option value="<?php echo esc_attr($value); ?>"><?php echo esc_html($label); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </td>
+                <td>
+                    <label class="screen-reader-text" for="blc_surveillance_global___index___comparison"><?php esc_html_e('Type de comparaison', 'liens-morts-detector-jlg'); ?></label>
+                    <select id="blc_surveillance_global___index___comparison" name="blc_surveillance_thresholds[global][__index__][comparison]">
+                        <?php foreach ($comparison_options as $value => $label) : ?>
+                            <option value="<?php echo esc_attr($value); ?>" <?php selected('gte', $value); ?>><?php echo esc_html($label); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </td>
+                <td>
+                    <label class="screen-reader-text" for="blc_surveillance_global___index___threshold"><?php esc_html_e('Valeur du seuil', 'liens-morts-detector-jlg'); ?></label>
+                    <input type="number" id="blc_surveillance_global___index___threshold" name="blc_surveillance_thresholds[global][__index__][threshold]" class="small-text" step="0.1" min="0" value="0">
+                </td>
+                <td>
+                    <label class="screen-reader-text" for="blc_surveillance_global___index___severity"><?php esc_html_e('Sévérité associée', 'liens-morts-detector-jlg'); ?></label>
+                    <select id="blc_surveillance_global___index___severity" name="blc_surveillance_thresholds[global][__index__][severity]">
+                        <?php foreach ($severity_options as $value => $label) : ?>
+                            <option value="<?php echo esc_attr($value); ?>"><?php echo esc_html($label); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </td>
+                <td class="blc-surveillance-table__actions">
+                    <button type="button" class="button-link button-link-delete" data-blc-surveillance-remove-row><?php esc_html_e('Supprimer', 'liens-morts-detector-jlg'); ?></button>
+                </td>
+            </tr>
+        </template>
+
+        <template id="blc-surveillance-taxonomy-template">
+            <tr data-blc-surveillance-row data-blc-surveillance-index="__index__">
+                <td>
+                    <label class="screen-reader-text" for="blc_surveillance_taxonomy___index___label"><?php esc_html_e('Libellé du seuil', 'liens-morts-detector-jlg'); ?></label>
+                    <input type="text" id="blc_surveillance_taxonomy___index___label" name="blc_surveillance_thresholds[taxonomy][__index__][label]" class="regular-text" value="">
+                    <input type="hidden" name="blc_surveillance_thresholds[taxonomy][__index__][id]" value="">
+                </td>
+                <td>
+                    <label class="screen-reader-text" for="blc_surveillance_taxonomy___index___taxonomy"><?php esc_html_e('Taxonomie ciblée', 'liens-morts-detector-jlg'); ?></label>
+                    <select id="blc_surveillance_taxonomy___index___taxonomy" name="blc_surveillance_thresholds[taxonomy][__index__][taxonomy]">
+                        <?php foreach ($taxonomy_choices as $value => $label) : ?>
+                            <option value="<?php echo esc_attr($value); ?>"><?php echo esc_html($label); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </td>
+                <td>
+                    <label class="screen-reader-text" for="blc_surveillance_taxonomy___index___terms"><?php esc_html_e('Termes surveillés', 'liens-morts-detector-jlg'); ?></label>
+                    <textarea id="blc_surveillance_taxonomy___index___terms" name="blc_surveillance_thresholds[taxonomy][__index__][term_ids]" rows="1" class="regular-text"></textarea>
+                    <label class="blc-surveillance-inline-toggle">
+                        <input type="checkbox" name="blc_surveillance_thresholds[taxonomy][__index__][apply_to_all_terms]" value="1">
+                        <?php esc_html_e('Surveiller tous les termes de la taxonomie', 'liens-morts-detector-jlg'); ?>
+                    </label>
+                </td>
+                <td>
+                    <label class="screen-reader-text" for="blc_surveillance_taxonomy___index___comparison"><?php esc_html_e('Type de comparaison', 'liens-morts-detector-jlg'); ?></label>
+                    <select id="blc_surveillance_taxonomy___index___comparison" name="blc_surveillance_thresholds[taxonomy][__index__][comparison]">
+                        <?php foreach ($comparison_options as $value => $label) : ?>
+                            <option value="<?php echo esc_attr($value); ?>" <?php selected('gte', $value); ?>><?php echo esc_html($label); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </td>
+                <td>
+                    <label class="screen-reader-text" for="blc_surveillance_taxonomy___index___threshold"><?php esc_html_e('Valeur du seuil', 'liens-morts-detector-jlg'); ?></label>
+                    <input type="number" id="blc_surveillance_taxonomy___index___threshold" name="blc_surveillance_thresholds[taxonomy][__index__][threshold]" class="small-text" step="1" min="0" value="0">
+                </td>
+                <td>
+                    <label class="screen-reader-text" for="blc_surveillance_taxonomy___index___severity"><?php esc_html_e('Sévérité associée', 'liens-morts-detector-jlg'); ?></label>
+                    <select id="blc_surveillance_taxonomy___index___severity" name="blc_surveillance_thresholds[taxonomy][__index__][severity]">
+                        <?php foreach ($severity_options as $value => $label) : ?>
+                            <option value="<?php echo esc_attr($value); ?>"><?php echo esc_html($label); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </td>
+                <td class="blc-surveillance-table__actions">
+                    <button type="button" class="button-link button-link-delete" data-blc-surveillance-remove-row><?php esc_html_e('Supprimer', 'liens-morts-detector-jlg'); ?></button>
+                </td>
+            </tr>
+        </template>
+    </div>
+    <?php
+}
+
+/**
+ * Render the escalation preferences for proactive surveillance.
+ *
+ * @return void
+ */
+function blc_render_surveillance_escalation_field() {
+    $settings          = blc_get_surveillance_escalation_settings();
+    $severity_options  = blc_get_surveillance_severity_options();
+    $email_levels      = isset($settings['email_levels']) ? (array) $settings['email_levels'] : array();
+    $webhook_levels    = isset($settings['webhook_levels']) ? (array) $settings['webhook_levels'] : array();
+    $warning_cooldown  = isset($settings['cooldowns']['warning']) ? (int) $settings['cooldowns']['warning'] : 1800;
+    $critical_cooldown = isset($settings['cooldowns']['critical']) ? (int) $settings['cooldowns']['critical'] : 600;
+
+    ?>
+    <fieldset class="blc-surveillance-escalation">
+        <legend class="screen-reader-text"><?php esc_html_e('Escalade des alertes de surveillance', 'liens-morts-detector-jlg'); ?></legend>
+        <p class="description">
+            <?php esc_html_e('Choisissez les canaux utilisés lorsque des alertes sont déclenchées et ajustez la fréquence minimale entre deux notifications pour éviter le bruit.', 'liens-morts-detector-jlg'); ?>
+        </p>
+
+        <div class="blc-surveillance-escalation__grid">
+            <div class="blc-surveillance-escalation__column">
+                <h4><?php esc_html_e('Canal e-mail', 'liens-morts-detector-jlg'); ?></h4>
+                <?php foreach ($severity_options as $severity => $label) :
+                    $input_id = 'blc_surveillance_escalation_email_' . $severity;
+                    ?>
+                    <label class="blc-surveillance-escalation__toggle" for="<?php echo esc_attr($input_id); ?>">
+                        <input
+                            type="checkbox"
+                            id="<?php echo esc_attr($input_id); ?>"
+                            name="blc_surveillance_escalation_email_levels[]"
+                            value="<?php echo esc_attr($severity); ?>"
+                            <?php checked(in_array($severity, $email_levels, true)); ?>
+                        >
+                        <span><?php echo esc_html($label); ?></span>
+                    </label>
+                <?php endforeach; ?>
+            </div>
+            <div class="blc-surveillance-escalation__column">
+                <h4><?php esc_html_e('Canal webhook', 'liens-morts-detector-jlg'); ?></h4>
+                <?php foreach ($severity_options as $severity => $label) :
+                    $input_id = 'blc_surveillance_escalation_webhook_' . $severity;
+                    ?>
+                    <label class="blc-surveillance-escalation__toggle" for="<?php echo esc_attr($input_id); ?>">
+                        <input
+                            type="checkbox"
+                            id="<?php echo esc_attr($input_id); ?>"
+                            name="blc_surveillance_escalation_webhook_levels[]"
+                            value="<?php echo esc_attr($severity); ?>"
+                            <?php checked(in_array($severity, $webhook_levels, true)); ?>
+                        >
+                        <span><?php echo esc_html($label); ?></span>
+                    </label>
+                <?php endforeach; ?>
+            </div>
+            <div class="blc-surveillance-escalation__column blc-surveillance-escalation__column--cooldowns">
+                <h4><?php esc_html_e('Temporisation minimale', 'liens-morts-detector-jlg'); ?></h4>
+                <label for="blc_surveillance_escalation_cooldown_warning" class="blc-surveillance-escalation__cooldown">
+                    <span><?php esc_html_e('Avertissement', 'liens-morts-detector-jlg'); ?></span>
+                    <input
+                        type="number"
+                        id="blc_surveillance_escalation_cooldown_warning"
+                        name="blc_surveillance_escalation_cooldown_warning"
+                        min="60"
+                        step="60"
+                        value="<?php echo esc_attr($warning_cooldown); ?>"
+                        class="small-text"
+                    >
+                    <span class="blc-surveillance-escalation__unit"><?php esc_html_e('secondes', 'liens-morts-detector-jlg'); ?></span>
+                </label>
+                <label for="blc_surveillance_escalation_cooldown_critical" class="blc-surveillance-escalation__cooldown">
+                    <span><?php esc_html_e('Critique', 'liens-morts-detector-jlg'); ?></span>
+                    <input
+                        type="number"
+                        id="blc_surveillance_escalation_cooldown_critical"
+                        name="blc_surveillance_escalation_cooldown_critical"
+                        min="60"
+                        step="60"
+                        value="<?php echo esc_attr($critical_cooldown); ?>"
+                        class="small-text"
+                    >
+                    <span class="blc-surveillance-escalation__unit"><?php esc_html_e('secondes', 'liens-morts-detector-jlg'); ?></span>
+                </label>
+            </div>
+        </div>
+    </fieldset>
+    <?php
+}
+
+/**
  * Affiche le champ permettant d'activer le mode débogage.
  *
  * @return void
@@ -4514,6 +5033,131 @@ function blc_normalize_notification_slack_title_template($value) {
 
 function blc_normalize_notification_slack_toggle($value) {
     return (bool) $value;
+}
+
+/**
+ * Retrieve the available taxonomy choices for surveillance thresholds.
+ *
+ * @return array<string,string>
+ */
+if (!function_exists('blc_get_surveillance_taxonomy_choices')) {
+function blc_get_surveillance_taxonomy_choices() {
+    $choices = array();
+
+    if (function_exists('get_taxonomies')) {
+        $taxonomies = get_taxonomies(array('public' => true), 'objects');
+
+        if (is_array($taxonomies)) {
+            foreach ($taxonomies as $taxonomy => $object) {
+                $label = isset($object->labels->singular_name) ? (string) $object->labels->singular_name : $taxonomy;
+                $choices[$taxonomy] = $label;
+            }
+        }
+    }
+
+    if ($choices === array()) {
+        $choices['category'] = __('Catégories', 'liens-morts-detector-jlg');
+        $choices['post_tag'] = __('Étiquettes', 'liens-morts-detector-jlg');
+    }
+
+    return $choices;
+}
+}
+
+/**
+ * Return the available comparison operators for surveillance thresholds.
+ *
+ * @return array<string,string>
+ */
+if (!function_exists('blc_get_surveillance_comparison_options')) {
+function blc_get_surveillance_comparison_options() {
+    return array(
+        'gte' => __('≥ (supérieur ou égal)', 'liens-morts-detector-jlg'),
+        'gt'  => __('> (strictement supérieur)', 'liens-morts-detector-jlg'),
+        'lte' => __('≤ (inférieur ou égal)', 'liens-morts-detector-jlg'),
+        'lt'  => __('< (strictement inférieur)', 'liens-morts-detector-jlg'),
+        'eq'  => __('= (égal à)', 'liens-morts-detector-jlg'),
+        'neq' => __('≠ (différent de)', 'liens-morts-detector-jlg'),
+    );
+}
+}
+
+/**
+ * Return the severity labels for surveillance alerts.
+ *
+ * @return array<string,string>
+ */
+if (!function_exists('blc_get_surveillance_severity_options')) {
+function blc_get_surveillance_severity_options() {
+    return array(
+        'warning'  => __('Avertissement', 'liens-morts-detector-jlg'),
+        'critical' => __('Critique', 'liens-morts-detector-jlg'),
+    );
+}
+}
+
+/**
+ * Sanitize the surveillance thresholds option payload.
+ *
+ * @param mixed $value Raw value.
+ *
+ * @return array<string,mixed>
+ */
+function blc_sanitize_surveillance_thresholds_option($value) {
+    return blc_normalize_surveillance_thresholds($value);
+}
+
+/**
+ * Sanitize the list of severity levels enabled for a channel.
+ *
+ * @param mixed $value Raw value.
+ *
+ * @return array<int,string>
+ */
+function blc_sanitize_surveillance_escalation_levels_option($value) {
+    $options = blc_get_surveillance_severity_options();
+
+    if (is_string($value)) {
+        $value = array($value);
+    }
+
+    if (!is_array($value)) {
+        $value = array();
+    }
+
+    $normalized = array();
+
+    foreach ($value as $candidate) {
+        if (!is_scalar($candidate)) {
+            continue;
+        }
+
+        $slug = sanitize_key((string) $candidate);
+        if ($slug === '' || !isset($options[$slug])) {
+            continue;
+        }
+
+        $normalized[$slug] = $slug;
+    }
+
+    return array_values($normalized);
+}
+
+/**
+ * Sanitize the cooldown (seconds) configured for a severity.
+ *
+ * @param mixed $value Raw value.
+ *
+ * @return int
+ */
+function blc_sanitize_surveillance_cooldown_option($value) {
+    $value = is_numeric($value) ? (int) $value : 0;
+
+    if ($value < 60) {
+        $value = 60;
+    }
+
+    return $value;
 }
 
 /**

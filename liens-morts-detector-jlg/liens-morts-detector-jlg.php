@@ -57,6 +57,7 @@ require_once BLC_PLUGIN_PATH . 'includes/blc-capabilities.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-activation.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-cron.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-surveillance.php';
+require_once BLC_PLUGIN_PATH . 'includes/blc-surveillance-escalation.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-scanner.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-reporting.php';
 require_once BLC_PLUGIN_PATH . 'includes/blc-google-sheets.php';
