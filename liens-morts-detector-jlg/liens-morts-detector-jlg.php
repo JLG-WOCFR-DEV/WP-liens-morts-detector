@@ -347,33 +347,35 @@ function blc_is_webhook_notification_configured($settings = null) {
     return $url !== '';
 }
 
-/**
- * Remplace les placeholders du modèle de notification par les valeurs calculées.
- *
- * @param string               $template Modèle configuré.
- * @param array<string, mixed> $summary  Résumé d'analyse.
- *
- * @return string
- */
-function blc_render_notification_message_template($template, array $summary) {
-    $template = (string) $template;
-    if ($template === '') {
-        $template = "{{subject}}\n\n{{message}}";
+if (!function_exists('blc_render_notification_message_template')) {
+    /**
+     * Remplace les placeholders du modèle de notification par les valeurs calculées.
+     *
+     * @param string               $template Modèle configuré.
+     * @param array<string, mixed> $summary  Résumé d'analyse.
+     *
+     * @return string
+     */
+    function blc_render_notification_message_template($template, array $summary) {
+        $template = (string) $template;
+        if ($template === '') {
+            $template = "{{subject}}\n\n{{message}}";
+        }
+
+        $replacements = array(
+            '{{subject}}'       => isset($summary['subject']) ? (string) $summary['subject'] : '',
+            '{{message}}'       => isset($summary['message']) ? (string) $summary['message'] : '',
+            '{{dataset_type}}'  => isset($summary['dataset_type']) ? (string) $summary['dataset_type'] : '',
+            '{{dataset_label}}' => isset($summary['dataset_label']) ? (string) $summary['dataset_label'] : '',
+            '{{broken_count}}'  => isset($summary['broken_count']) ? (string) (int) $summary['broken_count'] : '0',
+            '{{report_url}}'    => isset($summary['report_url']) ? (string) $summary['report_url'] : '',
+            '{{site_name}}'     => isset($summary['site_name']) ? (string) $summary['site_name'] : '',
+        );
+
+        $rendered = strtr($template, $replacements);
+
+        return trim($rendered);
     }
-
-    $replacements = array(
-        '{{subject}}'       => isset($summary['subject']) ? (string) $summary['subject'] : '',
-        '{{message}}'       => isset($summary['message']) ? (string) $summary['message'] : '',
-        '{{dataset_type}}'  => isset($summary['dataset_type']) ? (string) $summary['dataset_type'] : '',
-        '{{dataset_label}}' => isset($summary['dataset_label']) ? (string) $summary['dataset_label'] : '',
-        '{{broken_count}}'  => isset($summary['broken_count']) ? (string) (int) $summary['broken_count'] : '0',
-        '{{report_url}}'    => isset($summary['report_url']) ? (string) $summary['report_url'] : '',
-        '{{site_name}}'     => isset($summary['site_name']) ? (string) $summary['site_name'] : '',
-    );
-
-    $rendered = strtr($template, $replacements);
-
-    return trim($rendered);
 }
 
 /**

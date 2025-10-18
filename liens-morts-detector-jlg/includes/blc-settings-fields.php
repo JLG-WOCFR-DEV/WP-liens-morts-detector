@@ -4616,24 +4616,26 @@ function blc_get_notification_webhook_channel_choices() {
     );
 }
 
-/**
- * Retourne la liste des catégories de statuts HTTP disponibles pour les notifications.
- *
- * @return array<string, string>
- */
-function blc_get_notification_status_filter_choices() {
-    $definitions = blc_get_notification_status_filter_definitions();
-    $choices = array();
+if (!function_exists('blc_get_notification_status_filter_choices')) {
+    /**
+     * Retourne la liste des catégories de statuts HTTP disponibles pour les notifications.
+     *
+     * @return array<string, string>
+     */
+    function blc_get_notification_status_filter_choices() {
+        $definitions = blc_get_notification_status_filter_definitions();
+        $choices = array();
 
-    foreach ($definitions as $key => $definition) {
-        if (!isset($definition['label'])) {
-            continue;
+        foreach ($definitions as $key => $definition) {
+            if (!isset($definition['label'])) {
+                continue;
+            }
+
+            $choices[$key] = (string) $definition['label'];
         }
 
-        $choices[$key] = (string) $definition['label'];
+        return $choices;
     }
-
-    return $choices;
 }
 
 /**
@@ -4694,21 +4696,23 @@ function blc_normalize_notification_status_filters($value) {
     return array_values($selected);
 }
 
-/**
- * Récupère la liste des statuts HTTP retenus pour les notifications.
- *
- * @param mixed $override Liste optionnelle à utiliser à la place du réglage stocké.
- *
- * @return string[]
- */
-function blc_get_notification_status_filters($override = null) {
-    if (is_array($override)) {
-        return blc_normalize_notification_status_filters($override);
+if (!function_exists('blc_get_notification_status_filters')) {
+    /**
+     * Récupère la liste des statuts HTTP retenus pour les notifications.
+     *
+     * @param mixed $override Liste optionnelle à utiliser à la place du réglage stocké.
+     *
+     * @return string[]
+     */
+    function blc_get_notification_status_filters($override = null) {
+        if (is_array($override)) {
+            return blc_normalize_notification_status_filters($override);
+        }
+
+        $stored = get_option('blc_notification_status_filters', blc_get_default_notification_status_filters());
+
+        return blc_normalize_notification_status_filters($stored);
     }
-
-    $stored = get_option('blc_notification_status_filters', blc_get_default_notification_status_filters());
-
-    return blc_normalize_notification_status_filters($stored);
 }
 
 /**

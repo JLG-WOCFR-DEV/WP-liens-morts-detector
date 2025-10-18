@@ -24,6 +24,12 @@ class BlcAdminNavigationTest extends TestCase
 
         Monkey\setUp();
 
+        Functions\when('apply_filters')->alias(static function ($hook, $value, ...$args) {
+            return $value;
+        });
+
+        Functions\when('current_user_can')->justReturn(true);
+
         Functions\when('admin_url')->alias(static function ($path = '') {
             $path = (string) $path;
 
