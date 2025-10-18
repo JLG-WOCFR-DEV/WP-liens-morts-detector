@@ -2491,6 +2491,150 @@ function blc_get_history_dataset_label($dataset_type) {
     }
 }
 
+function blc_calculate_link_scan_metrics_trends(array $metrics_history, $options = array()) {
+    $metrics = array();
+    foreach ($metrics_history as $entry) {
+        if (is_array($entry)) {
+            $metrics[] = $entry;
+        }
+    }
+
+    if ($metrics === array()) {
+        return array();
+    }
+
+    $window = isset($options['window']) ? max(1, (int) $options['window']) : 5;
+    $sparkline_length = isset($options['sparkline_length']) ? max(2, (int) $options['sparkline_length']) : 10;
+    $day_in_seconds = defined('DAY_IN_SECONDS') ? (int) DAY_IN_SECONDS : 86400;
+
+    $duration_series = array();
+    $throughput_series = array();
+    $latest_timestamp = isset($metrics[0]['timestamp']) ? (int) $metrics[0]['timestamp'] : time();
+    $week_reference   = $latest_timestamp - (7 * $day_in_seconds);
+    $duration_week_reference = null;
+    $throughput_week_reference = null;
+
+    foreach ($metrics as $entry) {
+        $timestamp = isset($entry['timestamp']) ? (int) $entry['timestamp'] : 0;
+        $duration_ms = isset($entry['duration_ms']) ? (float) $entry['duration_ms'] : null;
+        $processed_items = isset($entry['processed_items']) ? (int) $entry['processed_items'] : null;
+
+        if ($duration_ms !== null && $duration_ms > 0) {
+            $duration_series[] = $duration_ms;
+            if ($timestamp <= $week_reference && $duration_week_reference === null) {
+                $duration_week_reference = $duration_ms;
+            }
+        }
+
+        if ($duration_ms !== null && $duration_ms > 0 && $processed_items !== null) {
+            $minutes = $duration_ms / 60000;
+            if ($minutes > 0) {
+                $throughput = $processed_items / $minutes;
+                $throughput_series[] = $throughput;
+                if ($timestamp <= $week_reference && $throughput_week_reference === null) {
+                    $throughput_week_reference = $throughput;
+                }
+            }
+        }
+    }
+
+    $trends = array();
+
+    if (!empty($duration_series)) {
+        $duration_latest = $duration_series[0];
+        $duration_slice  = array_slice($duration_series, 0, $window);
+        $duration_average = !empty($duration_slice)
+            ? array_sum($duration_slice) / count($duration_slice)
+            : null;
+        $duration_delta = ($duration_week_reference !== null)
+            ? $duration_latest - $duration_week_reference
+            : null;
+        $duration_sparkline = array_reverse(array_slice($duration_series, 0, $sparkline_length));
+
+        $trends['duration_ms'] = array(
+            'latest'         => $duration_latest,
+            'moving_average' => $duration_average,
+            'change_7d'      => $duration_delta,
+            'sparkline'      => $duration_sparkline,
+            'window'         => $window,
+        );
+    }
+
+    if (!empty($throughput_series)) {
+        $throughput_latest = $throughput_series[0];
+        $throughput_slice  = array_slice($throughput_series, 0, $window);
+        $throughput_average = !empty($throughput_slice)
+            ? array_sum($throughput_slice) / count($throughput_slice)
+            : null;
+        $throughput_delta = ($throughput_week_reference !== null)
+            ? $throughput_latest - $throughput_week_reference
+            : null;
+        $throughput_sparkline = array_reverse(array_slice($throughput_series, 0, $sparkline_length));
+
+        $trends['throughput'] = array(
+            'latest'         => $throughput_latest,
+            'moving_average' => $throughput_average,
+            'change_7d'      => $throughput_delta,
+            'sparkline'      => $throughput_sparkline,
+            'window'         => $window,
+        );
+    }
+
+    return $trends;
+}
+
+function blc_render_sparkline(array $values, $width = 140, $height = 32) {
+    $numeric = array();
+    foreach ($values as $value) {
+        if (is_numeric($value)) {
+            $numeric[] = (float) $value;
+        }
+    }
+
+    $numeric = array_values($numeric);
+
+    if (empty($numeric)) {
+        return '';
+    }
+
+    if (count($numeric) === 1) {
+        $numeric[] = $numeric[0];
+    }
+
+    $min = min($numeric);
+    $max = max($numeric);
+    if ($max <= $min) {
+        $max = $min + 1;
+    }
+
+    $count = count($numeric);
+    $step  = $count > 1 ? $width / ($count - 1) : $width;
+    $points = array();
+    foreach ($numeric as $index => $value) {
+        $ratio = ($value - $min) / ($max - $min);
+        $x = $index * $step;
+        $y = $height - ($ratio * $height);
+        $points[] = round($x, 2) . ',' . round($y, 2);
+    }
+
+    $points_attr = implode(' ', $points);
+    if (function_exists('esc_attr')) {
+        $points_attr = esc_attr($points_attr);
+    } else {
+        $points_attr = htmlspecialchars($points_attr, ENT_QUOTES, 'UTF-8');
+    }
+
+    $width_attr  = (int) $width;
+    $height_attr = (int) $height;
+
+    return sprintf(
+        '<svg class="blc-sparkline" width="%1$d" height="%2$d" viewBox="0 0 %1$d %2$d" preserveAspectRatio="none" role="img" aria-hidden="true"><polyline points="%3$s" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></polyline></svg>',
+        $width_attr,
+        $height_attr,
+        $points_attr
+    );
+}
+
 /**
  * Render the scan history dashboard and metrics explorer.
  */
@@ -2502,6 +2646,7 @@ function blc_scan_history_page() {
     $history_entries  = blc_get_link_scan_history();
     $metrics_history  = blc_get_link_scan_metrics_history();
     $insights         = blc_calculate_link_scan_history_insights($history_entries);
+    $trends           = blc_calculate_link_scan_metrics_trends($metrics_history);
 
     $total_runs        = isset($insights['total_runs']) ? (int) $insights['total_runs'] : 0;
     $completed_runs    = isset($insights['completed_runs']) ? (int) $insights['completed_runs'] : 0;
@@ -2814,6 +2959,99 @@ function blc_scan_history_page() {
                 </div>
             <?php endforeach; ?>
         </div>
+
+        <?php if (!empty($trends)) :
+            $duration_trend = isset($trends['duration_ms']) ? $trends['duration_ms'] : array();
+            $throughput_trend = isset($trends['throughput']) ? $trends['throughput'] : array();
+            ?>
+            <section class="blc-history-trends blc-admin-card" aria-labelledby="blc-history-trends-heading">
+                <header class="blc-history-trends__header">
+                    <h2 id="blc-history-trends-heading" class="blc-history-trends__title"><?php esc_html_e('Tendances sur 7 jours', 'liens-morts-detector-jlg'); ?></h2>
+                    <p class="blc-history-trends__subtitle"><?php esc_html_e('Comparez les durées de traitement et le débit moyen des derniers scans.', 'liens-morts-detector-jlg'); ?></p>
+                </header>
+                <ul class="blc-history-trends__grid">
+                    <?php if (!empty($duration_trend)) :
+                        $duration_latest = isset($duration_trend['latest']) ? (float) $duration_trend['latest'] : null;
+                        if ($duration_latest !== null) {
+                            $duration_average = isset($duration_trend['moving_average']) ? (float) $duration_trend['moving_average'] : null;
+                            $duration_delta = isset($duration_trend['change_7d']) ? $duration_trend['change_7d'] : null;
+                            $duration_delta_label = __('Δ J-7 : —', 'liens-morts-detector-jlg');
+                            if ($duration_delta !== null) {
+                                $arrow = $duration_delta >= 0 ? '▲' : '▼';
+                                $duration_delta_label = sprintf(
+                                    /* translators: 1: arrow, 2: formatted duration. */
+                                    __('Δ J-7 : %1$s %2$s', 'liens-morts-detector-jlg'),
+                                    $arrow,
+                                    blc_format_scan_duration(abs((float) $duration_delta))
+                                );
+                            }
+                            ?>
+                            <li class="blc-history-trends__item">
+                                <div class="blc-history-trends__metric">
+                                    <h3 class="blc-history-trends__metric-title"><?php esc_html_e('Durée par scan', 'liens-morts-detector-jlg'); ?></h3>
+                                    <p class="blc-history-trends__value"><?php echo esc_html(blc_format_scan_duration($duration_latest)); ?></p>
+                                    <?php if ($duration_average !== null) : ?>
+                                        <p class="blc-history-trends__meta"><?php printf(
+                                            /* translators: 1: number of scans, 2: formatted duration. */
+                                            esc_html__('Moyenne mobile (%1$d scans) : %2$s', 'liens-morts-detector-jlg'),
+                                            (int) $duration_trend['window'],
+                                            esc_html(blc_format_scan_duration($duration_average))
+                                        ); ?></p>
+                                    <?php endif; ?>
+                                    <p class="blc-history-trends__delta"><?php echo esc_html($duration_delta_label); ?></p>
+                                </div>
+                                <?php
+                                $sparkline = blc_render_sparkline(isset($duration_trend['sparkline']) ? $duration_trend['sparkline'] : array());
+                                if ($sparkline !== '') {
+                                    echo '<div class="blc-history-trends__sparkline" aria-hidden="true">' . $sparkline . '</div>';
+                                }
+                                ?>
+                            </li>
+                        <?php }
+                    endif; ?>
+
+                    <?php if (!empty($throughput_trend)) :
+                        $throughput_latest = isset($throughput_trend['latest']) ? (float) $throughput_trend['latest'] : null;
+                        if ($throughput_latest !== null) {
+                            $throughput_average = isset($throughput_trend['moving_average']) ? (float) $throughput_trend['moving_average'] : null;
+                            $throughput_delta = isset($throughput_trend['change_7d']) ? $throughput_trend['change_7d'] : null;
+                            $throughput_delta_label = __('Δ J-7 : —', 'liens-morts-detector-jlg');
+                            if ($throughput_delta !== null) {
+                                $arrow = $throughput_delta >= 0 ? '▲' : '▼';
+                                $throughput_delta_label = sprintf(
+                                    /* translators: 1: arrow, 2: formatted throughput. */
+                                    __('Δ J-7 : %1$s %2$s', 'liens-morts-detector-jlg'),
+                                    $arrow,
+                                    blc_format_scan_throughput(abs((float) $throughput_delta))
+                                );
+                            }
+                            ?>
+                            <li class="blc-history-trends__item">
+                                <div class="blc-history-trends__metric">
+                                    <h3 class="blc-history-trends__metric-title"><?php esc_html_e('Débit moyen', 'liens-morts-detector-jlg'); ?></h3>
+                                    <p class="blc-history-trends__value"><?php echo esc_html(blc_format_scan_throughput($throughput_latest)); ?></p>
+                                    <?php if ($throughput_average !== null) : ?>
+                                        <p class="blc-history-trends__meta"><?php printf(
+                                            /* translators: 1: number of scans, 2: formatted throughput. */
+                                            esc_html__('Moyenne mobile (%1$d scans) : %2$s', 'liens-morts-detector-jlg'),
+                                            (int) $throughput_trend['window'],
+                                            esc_html(blc_format_scan_throughput($throughput_average))
+                                        ); ?></p>
+                                    <?php endif; ?>
+                                    <p class="blc-history-trends__delta"><?php echo esc_html($throughput_delta_label); ?></p>
+                                </div>
+                                <?php
+                                $sparkline = blc_render_sparkline(isset($throughput_trend['sparkline']) ? $throughput_trend['sparkline'] : array());
+                                if ($sparkline !== '') {
+                                    echo '<div class="blc-history-trends__sparkline" aria-hidden="true">' . $sparkline . '</div>';
+                                }
+                                ?>
+                            </li>
+                        <?php }
+                    endif; ?>
+                </ul>
+            </section>
+        <?php endif; ?>
 
         <section class="blc-history-last-run blc-admin-card blc-admin-card--accent">
             <h2><?php esc_html_e('Dernière analyse', 'liens-morts-detector-jlg'); ?></h2>
@@ -4255,6 +4493,12 @@ function blc_get_advanced_settings_groups() {
             'tab_hint'    => __('Surveillance des médias', 'liens-morts-detector-jlg'),
             'description' => __('Orchestrez les scans distants pour les images et les bibliothèques externes.', 'liens-morts-detector-jlg'),
             'sections'    => array('blc_images_section'),
+        ),
+        'surveillance' => array(
+            'label'       => __('Surveillance proactive', 'liens-morts-detector-jlg'),
+            'tab_hint'    => __('Seuils & alertes', 'liens-morts-detector-jlg'),
+            'description' => __('Configurez les seuils déclenchant des alertes automatisées et des escalades.', 'liens-morts-detector-jlg'),
+            'sections'    => array('blc_surveillance_section'),
         ),
         'diagnostics' => array(
             'label'       => __('Diagnostics & journalisation', 'liens-morts-detector-jlg'),

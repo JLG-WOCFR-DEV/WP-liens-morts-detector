@@ -238,6 +238,7 @@ function blc_get_notification_webhook_settings($overrides = array()) {
         'slack_title_template'   => blc_normalize_notification_slack_title_template(get_option('blc_notification_slack_title_template', '{{subject}}')),
         'slack_show_filters'     => blc_normalize_notification_slack_toggle(get_option('blc_notification_slack_show_filters', true)),
         'slack_show_top_issues'  => blc_normalize_notification_slack_toggle(get_option('blc_notification_slack_show_top_issues', true)),
+        'severity'              => blc_sanitize_notification_severity_option(get_option('blc_notification_webhook_severity', 'warning')),
     );
 
     if (is_array($overrides)) {
@@ -275,6 +276,44 @@ function blc_get_notification_webhook_settings($overrides = array()) {
 
         if (array_key_exists('slack_show_top_issues', $overrides)) {
             $settings['slack_show_top_issues'] = blc_normalize_notification_slack_toggle($overrides['slack_show_top_issues']);
+        }
+
+        if (array_key_exists('severity', $overrides)) {
+            $settings['severity'] = blc_sanitize_notification_severity_option($overrides['severity']);
+        }
+    }
+
+    return $settings;
+}
+
+function blc_get_notification_escalation_settings($overrides = array()) {
+    $settings = array(
+        'mode'             => blc_sanitize_notification_escalation_mode_option(get_option('blc_notification_escalation_mode', 'disabled')),
+        'url'              => blc_normalize_notification_webhook_url(get_option('blc_notification_escalation_url', '')),
+        'channel'          => blc_normalize_notification_webhook_channel(get_option('blc_notification_escalation_channel', 'disabled')),
+        'message_template' => blc_normalize_notification_message_template(get_option('blc_notification_escalation_message_template', "{{subject}}\n\n{{message}}")),
+        'severity'         => blc_sanitize_notification_severity_option(get_option('blc_notification_escalation_severity', 'critical')),
+    );
+
+    if (is_array($overrides)) {
+        if (array_key_exists('mode', $overrides)) {
+            $settings['mode'] = blc_sanitize_notification_escalation_mode_option($overrides['mode']);
+        }
+
+        if (array_key_exists('url', $overrides)) {
+            $settings['url'] = blc_normalize_notification_webhook_url($overrides['url']);
+        }
+
+        if (array_key_exists('channel', $overrides)) {
+            $settings['channel'] = blc_normalize_notification_webhook_channel($overrides['channel']);
+        }
+
+        if (array_key_exists('message_template', $overrides)) {
+            $settings['message_template'] = blc_normalize_notification_message_template($overrides['message_template']);
+        }
+
+        if (array_key_exists('severity', $overrides)) {
+            $settings['severity'] = blc_sanitize_notification_severity_option($overrides['severity']);
         }
     }
 

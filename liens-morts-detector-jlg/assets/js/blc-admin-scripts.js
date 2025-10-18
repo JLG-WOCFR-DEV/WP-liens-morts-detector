@@ -228,6 +228,37 @@ jQuery(document).ready(function($) {
         return '';
     };
 
+    function initEscalationControls() {
+        var $containers = $('[data-blc-escalation]');
+        if (!$containers.length) {
+            return;
+        }
+
+        $containers.each(function() {
+            var $container = $(this);
+            var $mode = $container.find('[data-blc-escalation-mode]');
+            var $config = $container.find('[data-blc-escalation-config]');
+
+            if (!$mode.length || !$config.length) {
+                return;
+            }
+
+            function sync() {
+                var mode = $mode.val();
+                if (mode === 'disabled') {
+                    $config.attr('hidden', 'hidden');
+                } else {
+                    $config.removeAttr('hidden');
+                }
+            }
+
+            $mode.on('change', sync);
+            sync();
+        });
+    }
+
+    initEscalationControls();
+
     var toast = (function() {
         var $container = null;
         var TOAST_DURATION = 7000;
