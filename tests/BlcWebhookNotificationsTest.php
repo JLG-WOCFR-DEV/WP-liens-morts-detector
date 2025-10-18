@@ -16,6 +16,8 @@ namespace {
 
 namespace Tests {
 
+require_once __DIR__ . '/translation-stubs.php';
+
 use Brain\Monkey;
 use PHPUnit\Framework\TestCase;
 
@@ -24,8 +26,6 @@ class BlcWebhookNotificationsTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-
-        require_once __DIR__ . '/../vendor/autoload.php';
 
         Monkey\setUp();
     }
