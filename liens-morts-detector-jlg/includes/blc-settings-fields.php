@@ -2547,14 +2547,15 @@ function blc_render_surveillance_section_intro() {
     <?php
 }
 
-/**
- * Render the surveillance thresholds management controls.
- *
- * @return void
- */
-function blc_render_surveillance_thresholds_field() {
-    $definitions = blc_get_surveillance_threshold_definitions();
-    $defaults    = blc_get_surveillance_threshold_defaults();
+if (!function_exists('blc_render_surveillance_thresholds_field')) {
+    /**
+     * Render the surveillance thresholds management controls.
+     *
+     * @return void
+     */
+    function blc_render_surveillance_thresholds_field() {
+        $definitions = blc_get_surveillance_threshold_definitions();
+        $defaults    = blc_get_surveillance_threshold_defaults();
 
     $global_definitions = isset($definitions['global']) && is_array($definitions['global'])
         ? $definitions['global']
@@ -2906,6 +2907,7 @@ function blc_render_surveillance_thresholds_field() {
             });
         </script>
     <?php endif;
+    }
 }
 
 /**
@@ -3083,15 +3085,16 @@ function blc_render_notification_channels_field() {
     <?php
 }
 
-/**
- * Render the thresholds configuration table for proactive surveillance.
- *
- * @return void
- */
-function blc_render_surveillance_thresholds_field() {
-    $stored_thresholds = get_option('blc_surveillance_thresholds', array());
-    $thresholds        = blc_normalize_surveillance_thresholds($stored_thresholds);
-    $defaults          = blc_get_surveillance_threshold_defaults();
+if (!function_exists('blc_render_surveillance_thresholds_field')) {
+    /**
+     * Render the thresholds configuration table for proactive surveillance.
+     *
+     * @return void
+     */
+    function blc_render_surveillance_thresholds_field() {
+        $stored_thresholds = get_option('blc_surveillance_thresholds', array());
+        $thresholds        = blc_normalize_surveillance_thresholds($stored_thresholds);
+        $defaults          = blc_get_surveillance_threshold_defaults();
 
     if (empty($thresholds['global'])) {
         $thresholds['global'] = $defaults['global'];
@@ -3452,7 +3455,8 @@ function blc_render_surveillance_thresholds_field() {
             </tr>
         </template>
     </div>
-    <?php
+        <?php
+    }
 }
 
 /**
