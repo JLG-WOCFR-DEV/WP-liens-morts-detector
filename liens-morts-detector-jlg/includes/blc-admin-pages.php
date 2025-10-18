@@ -3233,10 +3233,14 @@ function blc_dashboard_links_page() {
         <?php blc_render_dashboard_tabs('links'); ?>
         <h1><?php esc_html_e('Rapport des Liens Cassés', 'liens-morts-detector-jlg'); ?></h1>
         <?php if (!empty($summary_items)) : ?>
-            <section class="blc-dashboard-summary blc-admin-card blc-admin-card--subtle" aria-labelledby="blc-dashboard-summary-heading">
+            <section
+                class="blc-dashboard-summary blc-admin-card blc-admin-card--subtle"
+                aria-labelledby="blc-dashboard-summary-heading"
+                aria-describedby="blc-dashboard-summary-subtitle"
+            >
                 <div class="blc-dashboard-summary__header">
                     <h2 id="blc-dashboard-summary-heading" class="blc-dashboard-summary__title"><?php esc_html_e('Synthèse opérationnelle', 'liens-morts-detector-jlg'); ?></h2>
-                    <p class="blc-dashboard-summary__subtitle"><?php esc_html_e('Mesures clés actualisées selon le dernier scan manuel.', 'liens-morts-detector-jlg'); ?></p>
+                    <p id="blc-dashboard-summary-subtitle" class="blc-dashboard-summary__subtitle"><?php esc_html_e('Mesures clés actualisées selon le dernier scan manuel.', 'liens-morts-detector-jlg'); ?></p>
                 </div>
                 <ul class="blc-dashboard-summary__grid" role="list">
                     <?php foreach ($summary_items as $item) :
