@@ -71,6 +71,15 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 
 > 💡 Lorsqu’elles sont définies, les variables `WP_E2E_*` permettent également à la configuration Playwright de générer automatiquement un état de session réutilisable via `tests/e2e/utils/global-setup.ts`. À défaut de configuration, la suite E2E est ignorée (et renvoie un succès) ce qui permet son exécution dans la CI même sans instance WordPress accessible.
 
+### Audit accessibilité (Playwright + axe-core)
+
+1. Vérifier que l’instance de test WordPress expose des données de synthèse sur `/wp-admin/admin.php?page=blc-dashboard`.
+2. Exporter au minimum `WP_E2E_BASE_URL`, `WP_E2E_USERNAME`, `WP_E2E_PASSWORD` (et, si nécessaire, `WP_E2E_STORAGE_STATE`).
+3. Lancer `npm run test:e2e -- --grep @a11y` pour exécuter les scénarios axe-core (`settings` + synthèse du dashboard).
+4. Consulter le rapport dans `playwright-report/` et corriger toute violation sérieuse ou critique avant de valider.
+
+La charte d’interface détaille les styles, couleurs et attentes d’interaction à respecter : voir [`docs/charte-ux.md`](docs/charte-ux.md).
+
 ### Combinaison des suites
 - `npm run test:all` exécute successivement Jest puis Playwright.
 

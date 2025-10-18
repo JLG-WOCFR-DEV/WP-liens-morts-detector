@@ -9,7 +9,7 @@ const shouldSkip = !baseURL || !username || !password;
 
 const SERIOUS_IMPACTS = new Set(['serious', 'critical']);
 
-test.describe('Accessibilité des réglages Liens Morts Detector', () => {
+test.describe('Accessibilité des réglages Liens Morts Detector @a11y', () => {
   test.skip(shouldSkip, 'Les variables WP_E2E_* doivent être définies pour exécuter les tests d\'accessibilité.');
 
   test('ne présente pas de violations d\'impact sérieux ou critique sur la page des réglages', async ({ page }) => {
