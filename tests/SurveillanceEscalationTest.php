@@ -11,7 +11,6 @@ class SurveillanceEscalationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        require_once __DIR__ . '/../vendor/autoload.php';
         require_once __DIR__ . '/translation-stubs.php';
         require_once __DIR__ . '/wp-option-stubs.php';
 
@@ -45,10 +44,6 @@ class SurveillanceEscalationTest extends TestCase
 
         Functions\when('number_format_i18n')->alias(static function ($number, $decimals = 0) {
             return number_format((float) $number, (int) $decimals, ',', ' ');
-        });
-
-        Functions\when('__')->alias(static function ($text) {
-            return $text;
         });
 
         Functions\when('apply_filters')->alias(static function ($hook, $value) {

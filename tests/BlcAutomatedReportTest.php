@@ -27,6 +27,13 @@ namespace {
         }
     }
 
+    if (!function_exists('is_wp_error')) {
+        function is_wp_error($thing)
+        {
+            return $thing instanceof \WP_Error;
+        }
+    }
+
     if (!class_exists('WP_Error')) {
         class WP_Error
         {
@@ -62,26 +69,6 @@ namespace {
             }
         }
     }
-
-    if (!function_exists('is_wp_error')) {
-        function is_wp_error($thing)
-        {
-            return $thing instanceof \WP_Error;
-        }
-    }
-
-    if (!function_exists('add_action')) {
-        function add_action($hook, $callback, $priority = 10, $accepted_args = 1)
-        {
-            if (!isset($GLOBALS['blc_actions'])) {
-                $GLOBALS['blc_actions'] = [];
-            }
-
-            $GLOBALS['blc_actions'][$hook][] = $callback;
-
-            return true;
-        }
-    }
 }
 
 namespace Tests {
@@ -99,7 +86,6 @@ class BlcAutomatedReportTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        require_once __DIR__ . '/../vendor/autoload.php';
         Monkey\setUp();
         OptionsStore::reset();
 
@@ -110,6 +96,16 @@ class BlcAutomatedReportTest extends TestCase
         if (!defined('ARRAY_A')) {
             define('ARRAY_A', 'ARRAY_A');
         }
+
+        Functions\when('add_action')->alias(static function ($hook, $callback, $priority = 10, $accepted_args = 1) {
+            if (!isset($GLOBALS['blc_actions'])) {
+                $GLOBALS['blc_actions'] = [];
+            }
+
+            $GLOBALS['blc_actions'][$hook][] = $callback;
+
+            return true;
+        });
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-utils.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-reporting.php';

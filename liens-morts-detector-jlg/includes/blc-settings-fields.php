@@ -1216,14 +1216,25 @@ function blc_register_settings_sections() {
     add_settings_section(
         'blc_surveillance_section',
         __('Surveillance proactive', 'liens-morts-detector-jlg'),
-        'blc_render_surveillance_section_intro',
+        '__return_false',
         $page
     );
 
     add_settings_field(
         'blc_surveillance_thresholds',
-        __('Seuils personnalisés', 'liens-morts-detector-jlg'),
+        __('Seuils et métriques surveillés', 'liens-morts-detector-jlg'),
         'blc_render_surveillance_thresholds_field',
+        $page,
+        'blc_surveillance_section',
+        array(
+            'label_for' => 'blc-surveillance-thresholds',
+        )
+    );
+
+    add_settings_field(
+        'blc_surveillance_escalation',
+        __('Escalade & notifications', 'liens-morts-detector-jlg'),
+        'blc_render_surveillance_escalation_field',
         $page,
         'blc_surveillance_section'
     );
@@ -4606,6 +4617,7 @@ function blc_sanitize_notification_recipients_option($value) {
  *
  * @return array<string, string>
  */
+if (!function_exists('blc_get_notification_webhook_channel_choices')) {
 function blc_get_notification_webhook_channel_choices() {
     return array(
         'disabled' => __('Désactivé', 'liens-morts-detector-jlg'),
@@ -4615,16 +4627,17 @@ function blc_get_notification_webhook_channel_choices() {
         'mattermost' => __('Mattermost', 'liens-morts-detector-jlg'),
     );
 }
+}
 
+/**
+ * Retourne la liste des catégories de statuts HTTP disponibles pour les notifications.
+ *
+ * @return array<string, string>
+ */
 if (!function_exists('blc_get_notification_status_filter_choices')) {
-    /**
-     * Retourne la liste des catégories de statuts HTTP disponibles pour les notifications.
-     *
-     * @return array<string, string>
-     */
-    function blc_get_notification_status_filter_choices() {
-        $definitions = blc_get_notification_status_filter_definitions();
-        $choices = array();
+function blc_get_notification_status_filter_choices() {
+    $definitions = blc_get_notification_status_filter_definitions();
+    $choices = array();
 
         foreach ($definitions as $key => $definition) {
             if (!isset($definition['label'])) {
@@ -4637,14 +4650,17 @@ if (!function_exists('blc_get_notification_status_filter_choices')) {
         return $choices;
     }
 }
+}
 
 /**
  * Retourne la liste par défaut des catégories retenues dans les résumés.
  *
  * @return string[]
  */
+if (!function_exists('blc_get_default_notification_status_filters')) {
 function blc_get_default_notification_status_filters() {
     return array_keys(blc_get_notification_status_filter_choices());
+}
 }
 
 /**
@@ -4654,6 +4670,7 @@ function blc_get_default_notification_status_filters() {
  *
  * @return string[]
  */
+if (!function_exists('blc_normalize_notification_status_filters')) {
 function blc_normalize_notification_status_filters($value) {
     $choices = blc_get_notification_status_filter_choices();
 
@@ -4695,24 +4712,26 @@ function blc_normalize_notification_status_filters($value) {
 
     return array_values($selected);
 }
+}
 
+/**
+ * Récupère la liste des statuts HTTP retenus pour les notifications.
+ *
+ * @param mixed $override Liste optionnelle à utiliser à la place du réglage stocké.
+ *
+ * @return string[]
+ */
 if (!function_exists('blc_get_notification_status_filters')) {
-    /**
-     * Récupère la liste des statuts HTTP retenus pour les notifications.
-     *
-     * @param mixed $override Liste optionnelle à utiliser à la place du réglage stocké.
-     *
-     * @return string[]
-     */
-    function blc_get_notification_status_filters($override = null) {
-        if (is_array($override)) {
-            return blc_normalize_notification_status_filters($override);
-        }
+function blc_get_notification_status_filters($override = null) {
+    if (is_array($override)) {
+        return blc_normalize_notification_status_filters($override);
+    }
 
         $stored = get_option('blc_notification_status_filters', blc_get_default_notification_status_filters());
 
         return blc_normalize_notification_status_filters($stored);
     }
+}
 }
 
 /**
@@ -4722,8 +4741,10 @@ if (!function_exists('blc_get_notification_status_filters')) {
  *
  * @return string[]
  */
+if (!function_exists('blc_sanitize_notification_status_filters_option')) {
 function blc_sanitize_notification_status_filters_option($value) {
     return blc_normalize_notification_status_filters($value);
+}
 }
 
 /**
@@ -4821,6 +4842,7 @@ function blc_sanitize_surveillance_thresholds_option($value) {
  *
  * @return string
  */
+if (!function_exists('blc_normalize_notification_webhook_channel')) {
 function blc_normalize_notification_webhook_channel($value) {
     if (!is_scalar($value)) {
         $value = 'disabled';
@@ -4834,6 +4856,7 @@ function blc_normalize_notification_webhook_channel($value) {
     }
 
     return $value;
+}
 }
 
 /**
@@ -4887,6 +4910,7 @@ function blc_sanitize_notification_escalation_mode_option($value) {
  *
  * @return string
  */
+if (!function_exists('blc_normalize_notification_webhook_url')) {
 function blc_normalize_notification_webhook_url($value) {
     if (!is_scalar($value)) {
         return '';
@@ -4901,6 +4925,7 @@ function blc_normalize_notification_webhook_url($value) {
 
     return (string) $value;
 }
+}
 
 /**
  * Normalise le modèle de message des webhooks.
@@ -4909,6 +4934,7 @@ function blc_normalize_notification_webhook_url($value) {
  *
  * @return string
  */
+if (!function_exists('blc_normalize_notification_message_template')) {
 function blc_normalize_notification_message_template($value) {
     if (!is_scalar($value)) {
         $value = '';
@@ -4926,7 +4952,9 @@ function blc_normalize_notification_message_template($value) {
 
     return $value;
 }
+}
 
+if (!function_exists('blc_normalize_notification_slack_channel_override')) {
 function blc_normalize_notification_slack_channel_override($value) {
     if (!is_scalar($value)) {
         return '';
@@ -4966,7 +4994,9 @@ function blc_normalize_notification_slack_channel_override($value) {
 
     return substr($normalized, 0, 80);
 }
+}
 
+if (!function_exists('blc_normalize_notification_slack_username')) {
 function blc_normalize_notification_slack_username($value) {
     if (!is_scalar($value)) {
         return '';
@@ -4987,7 +5017,9 @@ function blc_normalize_notification_slack_username($value) {
 
     return $value;
 }
+}
 
+if (!function_exists('blc_normalize_notification_slack_icon')) {
 function blc_normalize_notification_slack_icon($value) {
     if (!is_scalar($value)) {
         return '';
@@ -5009,7 +5041,9 @@ function blc_normalize_notification_slack_icon($value) {
 
     return $url;
 }
+}
 
+if (!function_exists('blc_normalize_notification_slack_title_template')) {
 function blc_normalize_notification_slack_title_template($value) {
     if (!is_scalar($value)) {
         $value = '';
@@ -5034,9 +5068,137 @@ function blc_normalize_notification_slack_title_template($value) {
 
     return $value;
 }
+}
 
+if (!function_exists('blc_normalize_notification_slack_toggle')) {
 function blc_normalize_notification_slack_toggle($value) {
     return (bool) $value;
+}
+}
+
+/**
+ * Retrieve the available taxonomy choices for surveillance thresholds.
+ *
+ * @return array<string,string>
+ */
+if (!function_exists('blc_get_surveillance_taxonomy_choices')) {
+function blc_get_surveillance_taxonomy_choices() {
+    $choices = array();
+
+    if (function_exists('get_taxonomies')) {
+        $taxonomies = get_taxonomies(array('public' => true), 'objects');
+
+        if (is_array($taxonomies)) {
+            foreach ($taxonomies as $taxonomy => $object) {
+                $label = isset($object->labels->singular_name) ? (string) $object->labels->singular_name : $taxonomy;
+                $choices[$taxonomy] = $label;
+            }
+        }
+    }
+
+    if ($choices === array()) {
+        $choices['category'] = __('Catégories', 'liens-morts-detector-jlg');
+        $choices['post_tag'] = __('Étiquettes', 'liens-morts-detector-jlg');
+    }
+
+    return $choices;
+}
+}
+
+/**
+ * Return the available comparison operators for surveillance thresholds.
+ *
+ * @return array<string,string>
+ */
+if (!function_exists('blc_get_surveillance_comparison_options')) {
+function blc_get_surveillance_comparison_options() {
+    return array(
+        'gte' => __('≥ (supérieur ou égal)', 'liens-morts-detector-jlg'),
+        'gt'  => __('> (strictement supérieur)', 'liens-morts-detector-jlg'),
+        'lte' => __('≤ (inférieur ou égal)', 'liens-morts-detector-jlg'),
+        'lt'  => __('< (strictement inférieur)', 'liens-morts-detector-jlg'),
+        'eq'  => __('= (égal à)', 'liens-morts-detector-jlg'),
+        'neq' => __('≠ (différent de)', 'liens-morts-detector-jlg'),
+    );
+}
+}
+
+/**
+ * Return the severity labels for surveillance alerts.
+ *
+ * @return array<string,string>
+ */
+if (!function_exists('blc_get_surveillance_severity_options')) {
+function blc_get_surveillance_severity_options() {
+    return array(
+        'warning'  => __('Avertissement', 'liens-morts-detector-jlg'),
+        'critical' => __('Critique', 'liens-morts-detector-jlg'),
+    );
+}
+}
+
+/**
+ * Sanitize the surveillance thresholds option payload.
+ *
+ * @param mixed $value Raw value.
+ *
+ * @return array<string,mixed>
+ */
+function blc_sanitize_surveillance_thresholds_option($value) {
+    return blc_normalize_surveillance_thresholds($value);
+}
+
+/**
+ * Sanitize the list of severity levels enabled for a channel.
+ *
+ * @param mixed $value Raw value.
+ *
+ * @return array<int,string>
+ */
+function blc_sanitize_surveillance_escalation_levels_option($value) {
+    $options = blc_get_surveillance_severity_options();
+
+    if (is_string($value)) {
+        $value = array($value);
+    }
+
+    if (!is_array($value)) {
+        $value = array();
+    }
+
+    $normalized = array();
+
+    foreach ($value as $candidate) {
+        if (!is_scalar($candidate)) {
+            continue;
+        }
+
+        $slug = sanitize_key((string) $candidate);
+        if ($slug === '' || !isset($options[$slug])) {
+            continue;
+        }
+
+        $normalized[$slug] = $slug;
+    }
+
+    return array_values($normalized);
+}
+
+/**
+ * Sanitize the cooldown (seconds) configured for a severity.
+ *
+ * @param mixed $value Raw value.
+ *
+ * @return int
+ */
+function blc_sanitize_surveillance_cooldown_option($value) {
+    $value = is_numeric($value) ? (int) $value : 0;
+
+    if ($value < 60) {
+        $value = 60;
+    }
+
+    return $value;
 }
 
 /**
