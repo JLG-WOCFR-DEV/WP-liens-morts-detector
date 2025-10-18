@@ -29,6 +29,10 @@ if (!function_exists('blc_get_proxy_pool_instance')) {
     require_once __DIR__ . '/Scanner/ProxyPool.php';
 }
 
+if (!function_exists('blc_get_surveillance_threshold_defaults')) {
+    require_once __DIR__ . '/blc-surveillance.php';
+}
+
 /**
  * Render inline help tooltip markup for a settings field.
  *
@@ -521,11 +525,81 @@ function blc_register_settings() {
 
     register_setting(
         $option_group,
+        'blc_notification_webhook_severity',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_notification_severity_option',
+            'default'           => 'warning',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_notification_escalation_mode',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_notification_escalation_mode_option',
+            'default'           => 'disabled',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_notification_escalation_url',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_notification_webhook_url_option',
+            'default'           => '',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_notification_escalation_channel',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_notification_webhook_channel_option',
+            'default'           => 'disabled',
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_notification_escalation_message_template',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_notification_message_template_option',
+            'default'           => "{{subject}}\n\n{{message}}",
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_notification_escalation_severity',
+        array(
+            'type'              => 'string',
+            'sanitize_callback' => 'blc_sanitize_notification_severity_option',
+            'default'           => 'critical',
+        )
+    );
+
+    register_setting(
+        $option_group,
         'blc_notification_status_filters',
         array(
             'type'              => 'array',
             'sanitize_callback' => 'blc_sanitize_notification_status_filters_option',
             'default'           => blc_get_default_notification_status_filters(),
+        )
+    );
+
+    register_setting(
+        $option_group,
+        'blc_surveillance_thresholds',
+        array(
+            'type'              => 'array',
+            'sanitize_callback' => 'blc_sanitize_surveillance_thresholds_option',
+            'default'           => array(),
         )
     );
 
@@ -2456,6 +2530,385 @@ function blc_render_notification_recipients_field() {
 }
 
 /**
+ * Render the introduction text for the proactive surveillance section.
+ *
+ * @return void
+ */
+function blc_render_surveillance_section_intro() {
+    ?>
+    <p class="description">
+        <?php
+        esc_html_e(
+            'Définissez des seuils de déclenchement pour anticiper les dérives (volume global ou taxonomies spécifiques).',
+            'liens-morts-detector-jlg'
+        );
+        ?>
+    </p>
+    <?php
+}
+
+/**
+ * Render the surveillance thresholds management controls.
+ *
+ * @return void
+ */
+function blc_render_surveillance_thresholds_field() {
+    $definitions = blc_get_surveillance_threshold_definitions();
+    $defaults    = blc_get_surveillance_threshold_defaults();
+
+    $global_definitions = isset($definitions['global']) && is_array($definitions['global'])
+        ? $definitions['global']
+        : array();
+    $taxonomy_definitions = isset($definitions['taxonomy']) && is_array($definitions['taxonomy'])
+        ? $definitions['taxonomy']
+        : array();
+
+    $global_defaults_index = array();
+    foreach ($defaults['global'] as $default_definition) {
+        if (isset($default_definition['id'])) {
+            $global_defaults_index[(string) $default_definition['id']] = true;
+        }
+    }
+
+    $taxonomy_defaults_index = array();
+    foreach ($defaults['taxonomy'] as $default_definition) {
+        if (isset($default_definition['id'])) {
+            $taxonomy_defaults_index[(string) $default_definition['id']] = true;
+        }
+    }
+
+    $global_rows    = array();
+    $global_counter = 0;
+    foreach ($global_definitions as $definition) {
+        if (!is_array($definition)) {
+            continue;
+        }
+
+        $global_rows[] = array(
+            'index'      => $global_counter,
+            'id'         => isset($definition['id']) ? (string) $definition['id'] : '',
+            'label'      => isset($definition['label']) ? (string) $definition['label'] : '',
+            'metric'     => isset($definition['metric']) ? (string) $definition['metric'] : 'broken_ratio',
+            'comparison' => isset($definition['comparison']) ? (string) $definition['comparison'] : 'gte',
+            'threshold'  => isset($definition['threshold']) ? (float) $definition['threshold'] : 0.0,
+            'severity'   => isset($definition['severity']) ? (string) $definition['severity'] : 'warning',
+            'is_default' => isset($definition['id']) ? isset($global_defaults_index[(string) $definition['id']]) : false,
+        );
+
+        $global_counter++;
+    }
+
+    $taxonomy_rows    = array();
+    $taxonomy_counter = 0;
+    foreach ($taxonomy_definitions as $definition) {
+        if (!is_array($definition)) {
+            continue;
+        }
+
+        $term_ids = array();
+        if (!empty($definition['term_ids']) && is_array($definition['term_ids'])) {
+            foreach ($definition['term_ids'] as $term_id) {
+                $term_ids[] = (int) $term_id;
+            }
+        }
+
+        $taxonomy_rows[] = array(
+            'index'        => $taxonomy_counter,
+            'id'           => isset($definition['id']) ? (string) $definition['id'] : '',
+            'label'        => isset($definition['label']) ? (string) $definition['label'] : '',
+            'taxonomy'     => isset($definition['taxonomy']) ? (string) $definition['taxonomy'] : '',
+            'threshold'    => isset($definition['threshold']) ? (float) $definition['threshold'] : 0.0,
+            'comparison'   => isset($definition['comparison']) ? (string) $definition['comparison'] : 'gte',
+            'severity'     => isset($definition['severity']) ? (string) $definition['severity'] : 'warning',
+            'term_ids'     => $term_ids,
+            'apply_to_all' => !empty($definition['apply_to_all_terms']),
+            'is_default'   => isset($definition['id']) ? isset($taxonomy_defaults_index[(string) $definition['id']]) : false,
+        );
+
+        $taxonomy_counter++;
+    }
+
+    $comparison_options = array(
+        'gte' => __('≥ (supérieur ou égal)', 'liens-morts-detector-jlg'),
+        'gt'  => __('> (strictement supérieur)', 'liens-morts-detector-jlg'),
+        'lte' => __('≤ (inférieur ou égal)', 'liens-morts-detector-jlg'),
+        'lt'  => __('< (strictement inférieur)', 'liens-morts-detector-jlg'),
+        'eq'  => __('= (égal)', 'liens-morts-detector-jlg'),
+        'neq' => __('≠ (différent)', 'liens-morts-detector-jlg'),
+    );
+
+    $severity_options = array(
+        'warning'  => __('Alerte', 'liens-morts-detector-jlg'),
+        'critical' => __('Critique', 'liens-morts-detector-jlg'),
+        'info'     => __('Info', 'liens-morts-detector-jlg'),
+    );
+
+    $metrics_options = array(
+        'broken_ratio' => __('% de liens cassés', 'liens-morts-detector-jlg'),
+        'broken_count' => __('Volume de liens cassés', 'liens-morts-detector-jlg'),
+    );
+
+    $global_container_id   = 'blc-surveillance-global-list';
+    $taxonomy_container_id = 'blc-surveillance-taxonomy-list';
+
+    static $script_enqueued = false;
+
+    ?>
+    <div class="blc-surveillance" data-blc-surveillance-root>
+        <section class="blc-surveillance__group">
+            <header class="blc-surveillance__header">
+                <h3 class="blc-surveillance__title"><?php esc_html_e('Seuils globaux', 'liens-morts-detector-jlg'); ?></h3>
+                <p class="blc-surveillance__summary"><?php esc_html_e('Définissez des alertes basées sur le nombre total ou le pourcentage de liens cassés.', 'liens-morts-detector-jlg'); ?></p>
+            </header>
+            <div class="blc-surveillance__table-wrapper">
+                <table class="wp-list-table widefat fixed striped blc-surveillance__table" aria-describedby="<?php echo esc_attr($global_container_id); ?>-help">
+                    <caption class="screen-reader-text"><?php esc_html_e('Seuils globaux actifs', 'liens-morts-detector-jlg'); ?></caption>
+                    <thead>
+                        <tr>
+                            <th scope="col"><?php esc_html_e('Libellé', 'liens-morts-detector-jlg'); ?></th>
+                            <th scope="col"><?php esc_html_e('Métrique', 'liens-morts-detector-jlg'); ?></th>
+                            <th scope="col"><?php esc_html_e('Comparaison', 'liens-morts-detector-jlg'); ?></th>
+                            <th scope="col"><?php esc_html_e('Seuil', 'liens-morts-detector-jlg'); ?></th>
+                            <th scope="col"><?php esc_html_e('Sévérité', 'liens-morts-detector-jlg'); ?></th>
+                            <th scope="col" class="column-actions"><?php esc_html_e('Actions', 'liens-morts-detector-jlg'); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody id="<?php echo esc_attr($global_container_id); ?>" data-blc-surveillance-global-list>
+                        <?php if ($global_rows === array()) : ?>
+                            <tr class="no-items">
+                                <td class="colspanchange" colspan="6"><?php esc_html_e('Aucun seuil global n’est configuré pour le moment.', 'liens-morts-detector-jlg'); ?></td>
+                            </tr>
+                        <?php else : ?>
+                            <?php foreach ($global_rows as $row) :
+                                $index = (int) $row['index'];
+                                $field_prefix = sprintf('blc_surveillance_thresholds[global][%d]', $index);
+                                ?>
+                                <tr class="blc-surveillance__row" data-blc-surveillance-row>
+                                    <td>
+                                        <label class="screen-reader-text" for="<?php echo esc_attr($field_prefix . '[label]'); ?>"><?php esc_html_e('Libellé du seuil', 'liens-morts-detector-jlg'); ?></label>
+                                        <input type="text" class="regular-text" name="<?php echo esc_attr($field_prefix . '[label]'); ?>" id="<?php echo esc_attr($field_prefix . '[label]'); ?>" value="<?php echo esc_attr($row['label']); ?>" placeholder="<?php esc_attr_e('Ex. plafond hebdomadaire', 'liens-morts-detector-jlg'); ?>">
+                                        <input type="hidden" name="<?php echo esc_attr($field_prefix . '[id]'); ?>" value="<?php echo esc_attr($row['id']); ?>">
+                                        <?php if (!empty($row['is_default'])) : ?>
+                                            <span class="blc-surveillance__badge"><?php esc_html_e('Défaut', 'liens-morts-detector-jlg'); ?></span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <label class="screen-reader-text" for="<?php echo esc_attr($field_prefix . '[metric]'); ?>"><?php esc_html_e('Métrique surveillée', 'liens-morts-detector-jlg'); ?></label>
+                                        <select name="<?php echo esc_attr($field_prefix . '[metric]'); ?>" id="<?php echo esc_attr($field_prefix . '[metric]'); ?>">
+                                            <?php foreach ($metrics_options as $metric_value => $metric_label) : ?>
+                                                <option value="<?php echo esc_attr($metric_value); ?>" <?php selected($row['metric'], $metric_value); ?>><?php echo esc_html($metric_label); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <label class="screen-reader-text" for="<?php echo esc_attr($field_prefix . '[comparison]'); ?>"><?php esc_html_e('Opérateur de comparaison', 'liens-morts-detector-jlg'); ?></label>
+                                        <select name="<?php echo esc_attr($field_prefix . '[comparison]'); ?>" id="<?php echo esc_attr($field_prefix . '[comparison]'); ?>">
+                                            <?php foreach ($comparison_options as $comparison_value => $comparison_label) : ?>
+                                                <option value="<?php echo esc_attr($comparison_value); ?>" <?php selected($row['comparison'], $comparison_value); ?>><?php echo esc_html($comparison_label); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <label class="screen-reader-text" for="<?php echo esc_attr($field_prefix . '[threshold]'); ?>"><?php esc_html_e('Valeur seuil', 'liens-morts-detector-jlg'); ?></label>
+                                        <input type="number" step="0.01" min="0" class="small-text" name="<?php echo esc_attr($field_prefix . '[threshold]'); ?>" id="<?php echo esc_attr($field_prefix . '[threshold]'); ?>" value="<?php echo esc_attr($row['threshold']); ?>">
+                                    </td>
+                                    <td>
+                                        <label class="screen-reader-text" for="<?php echo esc_attr($field_prefix . '[severity]'); ?>"><?php esc_html_e('Sévérité de l’alerte', 'liens-morts-detector-jlg'); ?></label>
+                                        <select name="<?php echo esc_attr($field_prefix . '[severity]'); ?>" id="<?php echo esc_attr($field_prefix . '[severity]'); ?>">
+                                            <?php foreach ($severity_options as $severity_value => $severity_label) : ?>
+                                                <option value="<?php echo esc_attr($severity_value); ?>" <?php selected($row['severity'], $severity_value); ?>><?php echo esc_html($severity_label); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </td>
+                                    <td class="column-actions">
+                                        <button type="button" class="button-link delete blc-surveillance__remove" data-blc-remove-threshold><?php esc_html_e('Supprimer', 'liens-morts-detector-jlg'); ?></button>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+                <p id="<?php echo esc_attr($global_container_id); ?>-help" class="description"><?php esc_html_e('Les métriques globales agrègent l’ensemble des liens suivis.', 'liens-morts-detector-jlg'); ?></p>
+            </div>
+            <button type="button" class="button button-secondary" data-blc-add-global-threshold><?php esc_html_e('Ajouter un seuil global', 'liens-morts-detector-jlg'); ?></button>
+        </section>
+
+        <section class="blc-surveillance__group">
+            <header class="blc-surveillance__header">
+                <h3 class="blc-surveillance__title"><?php esc_html_e('Seuils par taxonomie', 'liens-morts-detector-jlg'); ?></h3>
+                <p class="blc-surveillance__summary"><?php esc_html_e('Ciblez des catégories, tags ou taxonomies personnalisées pour agir en priorité sur vos zones critiques.', 'liens-morts-detector-jlg'); ?></p>
+            </header>
+            <div class="blc-surveillance__table-wrapper">
+                <table class="wp-list-table widefat fixed striped blc-surveillance__table" aria-describedby="<?php echo esc_attr($taxonomy_container_id); ?>-help">
+                    <caption class="screen-reader-text"><?php esc_html_e('Seuils par taxonomie actifs', 'liens-morts-detector-jlg'); ?></caption>
+                    <thead>
+                        <tr>
+                            <th scope="col"><?php esc_html_e('Taxonomie', 'liens-morts-detector-jlg'); ?></th>
+                            <th scope="col"><?php esc_html_e('Termes ciblés', 'liens-morts-detector-jlg'); ?></th>
+                            <th scope="col"><?php esc_html_e('Comparaison', 'liens-morts-detector-jlg'); ?></th>
+                            <th scope="col"><?php esc_html_e('Seuil', 'liens-morts-detector-jlg'); ?></th>
+                            <th scope="col"><?php esc_html_e('Sévérité', 'liens-morts-detector-jlg'); ?></th>
+                            <th scope="col"><?php esc_html_e('Libellé', 'liens-morts-detector-jlg'); ?></th>
+                            <th scope="col" class="column-actions"><?php esc_html_e('Actions', 'liens-morts-detector-jlg'); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody id="<?php echo esc_attr($taxonomy_container_id); ?>" data-blc-surveillance-taxonomy-list>
+                        <?php if ($taxonomy_rows === array()) : ?>
+                            <tr class="no-items">
+                                <td class="colspanchange" colspan="7"><?php esc_html_e('Aucun seuil taxonomique n’est configuré pour le moment.', 'liens-morts-detector-jlg'); ?></td>
+                            </tr>
+                        <?php else : ?>
+                            <?php foreach ($taxonomy_rows as $row) :
+                                $index = (int) $row['index'];
+                                $field_prefix = sprintf('blc_surveillance_thresholds[taxonomy][%d]', $index);
+                                $term_ids_value = $row['apply_to_all'] ? '' : implode(', ', array_map('intval', $row['term_ids']));
+                                ?>
+                                <tr class="blc-surveillance__row" data-blc-surveillance-row>
+                                    <td>
+                                        <label class="screen-reader-text" for="<?php echo esc_attr($field_prefix . '[taxonomy]'); ?>"><?php esc_html_e('Taxonomie ciblée', 'liens-morts-detector-jlg'); ?></label>
+                                        <input type="text" class="regular-text" name="<?php echo esc_attr($field_prefix . '[taxonomy]'); ?>" id="<?php echo esc_attr($field_prefix . '[taxonomy]'); ?>" value="<?php echo esc_attr($row['taxonomy']); ?>" placeholder="<?php esc_attr_e('category, post_tag…', 'liens-morts-detector-jlg'); ?>">
+                                        <input type="hidden" name="<?php echo esc_attr($field_prefix . '[id]'); ?>" value="<?php echo esc_attr($row['id']); ?>">
+                                        <?php if (!empty($row['is_default'])) : ?>
+                                            <span class="blc-surveillance__badge"><?php esc_html_e('Défaut', 'liens-morts-detector-jlg'); ?></span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <label class="screen-reader-text" for="<?php echo esc_attr($field_prefix . '[term_ids]'); ?>"><?php esc_html_e('Termes ciblés', 'liens-morts-detector-jlg'); ?></label>
+                                        <textarea name="<?php echo esc_attr($field_prefix . '[term_ids]'); ?>" id="<?php echo esc_attr($field_prefix . '[term_ids]'); ?>" class="small-text blc-surveillance__term-input" rows="2" placeholder="<?php esc_attr_e('Identifiants séparés par des virgules', 'liens-morts-detector-jlg'); ?>"><?php echo esc_html($term_ids_value); ?></textarea>
+                                        <label class="blc-surveillance__toggle">
+                                            <input type="checkbox" name="<?php echo esc_attr($field_prefix . '[apply_to_all_terms]'); ?>" value="1" <?php checked($row['apply_to_all'], true); ?> data-blc-apply-all>
+                                            <?php esc_html_e('Appliquer à tous les termes', 'liens-morts-detector-jlg'); ?>
+                                        </label>
+                                    </td>
+                                    <td>
+                                        <label class="screen-reader-text" for="<?php echo esc_attr($field_prefix . '[comparison]'); ?>"><?php esc_html_e('Opérateur de comparaison', 'liens-morts-detector-jlg'); ?></label>
+                                        <select name="<?php echo esc_attr($field_prefix . '[comparison]'); ?>" id="<?php echo esc_attr($field_prefix . '[comparison]'); ?>">
+                                            <?php foreach ($comparison_options as $comparison_value => $comparison_label) : ?>
+                                                <option value="<?php echo esc_attr($comparison_value); ?>" <?php selected($row['comparison'], $comparison_value); ?>><?php echo esc_html($comparison_label); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <label class="screen-reader-text" for="<?php echo esc_attr($field_prefix . '[threshold]'); ?>"><?php esc_html_e('Valeur seuil', 'liens-morts-detector-jlg'); ?></label>
+                                        <input type="number" class="small-text" min="0" step="1" name="<?php echo esc_attr($field_prefix . '[threshold]'); ?>" id="<?php echo esc_attr($field_prefix . '[threshold]'); ?>" value="<?php echo esc_attr($row['threshold']); ?>">
+                                    </td>
+                                    <td>
+                                        <label class="screen-reader-text" for="<?php echo esc_attr($field_prefix . '[severity]'); ?>"><?php esc_html_e('Sévérité de l’alerte', 'liens-morts-detector-jlg'); ?></label>
+                                        <select name="<?php echo esc_attr($field_prefix . '[severity]'); ?>" id="<?php echo esc_attr($field_prefix . '[severity]'); ?>">
+                                            <?php foreach ($severity_options as $severity_value => $severity_label) : ?>
+                                                <option value="<?php echo esc_attr($severity_value); ?>" <?php selected($row['severity'], $severity_value); ?>><?php echo esc_html($severity_label); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <label class="screen-reader-text" for="<?php echo esc_attr($field_prefix . '[label]'); ?>"><?php esc_html_e('Libellé du seuil', 'liens-morts-detector-jlg'); ?></label>
+                                        <input type="text" class="regular-text" name="<?php echo esc_attr($field_prefix . '[label]'); ?>" id="<?php echo esc_attr($field_prefix . '[label]'); ?>" value="<?php echo esc_attr($row['label']); ?>" placeholder="<?php esc_attr_e('Ex. Catégorie Actualités', 'liens-morts-detector-jlg'); ?>">
+                                    </td>
+                                    <td class="column-actions">
+                                        <button type="button" class="button-link delete blc-surveillance__remove" data-blc-remove-threshold><?php esc_html_e('Supprimer', 'liens-morts-detector-jlg'); ?></button>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+                <p id="<?php echo esc_attr($taxonomy_container_id); ?>-help" class="description"><?php esc_html_e('Listez les identifiants de termes ciblés ou cochez l’option pour surveiller tous les termes de la taxonomie.', 'liens-morts-detector-jlg'); ?></p>
+            </div>
+            <button type="button" class="button button-secondary" data-blc-add-taxonomy-threshold><?php esc_html_e('Ajouter un seuil taxonomique', 'liens-morts-detector-jlg'); ?></button>
+        </section>
+    </div>
+
+    <template id="blc-surveillance-template-global">
+        <tr class="blc-surveillance__row" data-blc-surveillance-row>
+            <td>
+                <label class="screen-reader-text" data-blc-aria-label="label"></label>
+                <input type="text" class="regular-text" name="__NAME__[label]" value="" placeholder="<?php esc_attr_e('Ex. seuil personnalisé', 'liens-morts-detector-jlg'); ?>">
+                <input type="hidden" name="__NAME__[id]" value="">
+            </td>
+            <td>
+                <select name="__NAME__[metric]">
+                    <?php foreach ($metrics_options as $metric_value => $metric_label) : ?>
+                        <option value="<?php echo esc_attr($metric_value); ?>"><?php echo esc_html($metric_label); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </td>
+            <td>
+                <select name="__NAME__[comparison]">
+                    <?php foreach ($comparison_options as $comparison_value => $comparison_label) : ?>
+                        <option value="<?php echo esc_attr($comparison_value); ?>"><?php echo esc_html($comparison_label); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </td>
+            <td>
+                <input type="number" class="small-text" name="__NAME__[threshold]" value="0" min="0" step="0.01">
+            </td>
+            <td>
+                <select name="__NAME__[severity]">
+                    <?php foreach ($severity_options as $severity_value => $severity_label) : ?>
+                        <option value="<?php echo esc_attr($severity_value); ?>"><?php echo esc_html($severity_label); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </td>
+            <td class="column-actions">
+                <button type="button" class="button-link delete blc-surveillance__remove" data-blc-remove-threshold><?php esc_html_e('Supprimer', 'liens-morts-detector-jlg'); ?></button>
+            </td>
+        </tr>
+    </template>
+
+    <template id="blc-surveillance-template-taxonomy">
+        <tr class="blc-surveillance__row" data-blc-surveillance-row>
+            <td>
+                <label class="screen-reader-text" data-blc-aria-label="taxonomy"></label>
+                <input type="text" class="regular-text" name="__NAME__[taxonomy]" value="" placeholder="<?php esc_attr_e('category', 'liens-morts-detector-jlg'); ?>">
+                <input type="hidden" name="__NAME__[id]" value="">
+            </td>
+            <td>
+                <textarea name="__NAME__[term_ids]" class="small-text blc-surveillance__term-input" rows="2" placeholder="<?php esc_attr_e('Identifiants séparés par des virgules', 'liens-morts-detector-jlg'); ?>"></textarea>
+                <label class="blc-surveillance__toggle">
+                    <input type="checkbox" name="__NAME__[apply_to_all_terms]" value="1" data-blc-apply-all>
+                    <?php esc_html_e('Appliquer à tous les termes', 'liens-morts-detector-jlg'); ?>
+                </label>
+            </td>
+            <td>
+                <select name="__NAME__[comparison]">
+                    <?php foreach ($comparison_options as $comparison_value => $comparison_label) : ?>
+                        <option value="<?php echo esc_attr($comparison_value); ?>"><?php echo esc_html($comparison_label); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </td>
+            <td>
+                <input type="number" class="small-text" name="__NAME__[threshold]" value="0" min="0" step="1">
+            </td>
+            <td>
+                <select name="__NAME__[severity]">
+                    <?php foreach ($severity_options as $severity_value => $severity_label) : ?>
+                        <option value="<?php echo esc_attr($severity_value); ?>"><?php echo esc_html($severity_label); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </td>
+            <td>
+                <input type="text" class="regular-text" name="__NAME__[label]" value="" placeholder="<?php esc_attr_e('Libellé optionnel', 'liens-morts-detector-jlg'); ?>">
+            </td>
+            <td class="column-actions">
+                <button type="button" class="button-link delete blc-surveillance__remove" data-blc-remove-threshold><?php esc_html_e('Supprimer', 'liens-morts-detector-jlg'); ?></button>
+            </td>
+        </tr>
+    </template>
+
+    <?php if (!$script_enqueued) :
+        $script_enqueued = true;
+        ?>
+        <script>
+            document.addEventListener('DOMContentLoaded', function () {
+                if (window.blcSurveillanceControls && typeof window.blcSurveillanceControls.init === 'function') {
+                    window.blcSurveillanceControls.init();
+                }
+            });
+        </script>
+    <?php endif;
+}
+
+/**
  * Affiche les réglages d'activation des notifications et le bouton de test.
  *
  * @return void
@@ -2475,6 +2928,21 @@ function blc_render_notification_channels_field() {
     $channel_choices = blc_get_notification_webhook_channel_choices();
     $status_choices = blc_get_notification_status_filter_choices();
     $status_filters = blc_get_notification_status_filters();
+    $webhook_severity = blc_sanitize_notification_severity_option(get_option('blc_notification_webhook_severity', 'warning'));
+    $severity_choices = array(
+        'info'     => __('Info', 'liens-morts-detector-jlg'),
+        'warning'  => __('Alerte', 'liens-morts-detector-jlg'),
+        'critical' => __('Critique', 'liens-morts-detector-jlg'),
+    );
+    $escalation_mode = blc_sanitize_notification_escalation_mode_option(get_option('blc_notification_escalation_mode', 'disabled'));
+    $escalation_url = (string) get_option('blc_notification_escalation_url', '');
+    $escalation_channel = blc_normalize_notification_webhook_channel(get_option('blc_notification_escalation_channel', 'disabled'));
+    $escalation_message_template = (string) get_option('blc_notification_escalation_message_template', "{{subject}}\n\n{{message}}");
+    $escalation_severity = blc_sanitize_notification_severity_option(get_option('blc_notification_escalation_severity', 'critical'));
+    $escalation_mode_choices = array(
+        'disabled' => __('Désactivée', 'liens-morts-detector-jlg'),
+        'webhook'  => __('Webhook secondaire', 'liens-morts-detector-jlg'),
+    );
     ?>
     <fieldset>
         <legend class="screen-reader-text"><span><?php esc_html_e('Canaux de notification', 'liens-morts-detector-jlg'); ?></span></legend>
@@ -2507,6 +2975,55 @@ function blc_render_notification_channels_field() {
             <textarea name="blc_notification_message_template" id="blc_notification_message_template" rows="4" class="large-text code"><?php echo esc_textarea($message_template); ?></textarea>
         </p>
         <p class="description"><?php esc_html_e('Placeholders disponibles : {{subject}}, {{message}}, {{dataset_type}}, {{dataset_label}}, {{broken_count}}, {{report_url}}, {{site_name}}.', 'liens-morts-detector-jlg'); ?></p>
+        <p>
+            <label for="blc_notification_webhook_severity"><strong><?php esc_html_e('Seuil de sévérité pour le webhook', 'liens-morts-detector-jlg'); ?></strong></label><br>
+            <select name="blc_notification_webhook_severity" id="blc_notification_webhook_severity">
+                <?php foreach ($severity_choices as $value => $label) : ?>
+                    <option value="<?php echo esc_attr($value); ?>" <?php selected($webhook_severity, $value); ?>><?php echo esc_html($label); ?></option>
+                <?php endforeach; ?>
+            </select>
+        </p>
+        <p class="description"><?php esc_html_e('Le webhook ne sera envoyé que si la sévérité du rapport atteint ce niveau.', 'liens-morts-detector-jlg'); ?></p>
+        <div class="blc-notification-escalation" data-blc-escalation>
+            <hr>
+            <h4 class="blc-notification-escalation__title"><?php esc_html_e('Escalade automatique', 'liens-morts-detector-jlg'); ?></h4>
+            <p class="description"><?php esc_html_e('Déclenchez un canal secondaire (ex. webhook incident) lorsque la sévérité dépasse le seuil critique.', 'liens-morts-detector-jlg'); ?></p>
+            <p>
+                <label for="blc_notification_escalation_mode"><strong><?php esc_html_e('Mode d’escalade', 'liens-morts-detector-jlg'); ?></strong></label><br>
+                <select name="blc_notification_escalation_mode" id="blc_notification_escalation_mode" data-blc-escalation-mode>
+                    <?php foreach ($escalation_mode_choices as $value => $label) : ?>
+                        <option value="<?php echo esc_attr($value); ?>" <?php selected($escalation_mode, $value); ?>><?php echo esc_html($label); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </p>
+            <div class="blc-notification-escalation__config" data-blc-escalation-config>
+                <p>
+                    <label for="blc_notification_escalation_url"><strong><?php esc_html_e('URL du canal secondaire', 'liens-morts-detector-jlg'); ?></strong></label><br>
+                    <input type="url" name="blc_notification_escalation_url" id="blc_notification_escalation_url" class="regular-text" value="<?php echo esc_attr($escalation_url); ?>" placeholder="https://status.example.com/hook">
+                </p>
+                <p>
+                    <label for="blc_notification_escalation_channel"><strong><?php esc_html_e('Type de canal', 'liens-morts-detector-jlg'); ?></strong></label><br>
+                    <select name="blc_notification_escalation_channel" id="blc_notification_escalation_channel">
+                        <?php foreach ($channel_choices as $value => $label) : ?>
+                            <option value="<?php echo esc_attr($value); ?>" <?php selected($escalation_channel, $value); ?>><?php echo esc_html($label); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </p>
+                <p>
+                    <label for="blc_notification_escalation_message_template"><strong><?php esc_html_e('Modèle de message secondaire', 'liens-morts-detector-jlg'); ?></strong></label><br>
+                    <textarea name="blc_notification_escalation_message_template" id="blc_notification_escalation_message_template" rows="3" class="large-text code"><?php echo esc_textarea($escalation_message_template); ?></textarea>
+                </p>
+                <p>
+                    <label for="blc_notification_escalation_severity"><strong><?php esc_html_e('Seuil de sévérité pour l’escalade', 'liens-morts-detector-jlg'); ?></strong></label><br>
+                    <select name="blc_notification_escalation_severity" id="blc_notification_escalation_severity">
+                        <?php foreach ($severity_choices as $value => $label) : ?>
+                            <option value="<?php echo esc_attr($value); ?>" <?php selected($escalation_severity, $value); ?>><?php echo esc_html($label); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </p>
+                <p class="description"><?php esc_html_e('Lorsque ce seuil est atteint, le canal secondaire est déclenché en plus des e-mails et du webhook principal.', 'liens-morts-detector-jlg'); ?></p>
+            </div>
+        </div>
         <div class="blc-notification-channel-advanced" data-blc-webhook-channel="slack">
             <hr>
             <p><strong><?php esc_html_e('Options Slack', 'liens-morts-detector-jlg'); ?></strong></p>
@@ -4122,15 +4639,16 @@ function blc_get_notification_status_filter_choices() {
     $definitions = blc_get_notification_status_filter_definitions();
     $choices = array();
 
-    foreach ($definitions as $key => $definition) {
-        if (!isset($definition['label'])) {
-            continue;
+        foreach ($definitions as $key => $definition) {
+            if (!isset($definition['label'])) {
+                continue;
+            }
+
+            $choices[$key] = (string) $definition['label'];
         }
 
-        $choices[$key] = (string) $definition['label'];
+        return $choices;
     }
-
-    return $choices;
 }
 }
 
@@ -4209,9 +4727,10 @@ function blc_get_notification_status_filters($override = null) {
         return blc_normalize_notification_status_filters($override);
     }
 
-    $stored = get_option('blc_notification_status_filters', blc_get_default_notification_status_filters());
+        $stored = get_option('blc_notification_status_filters', blc_get_default_notification_status_filters());
 
-    return blc_normalize_notification_status_filters($stored);
+        return blc_normalize_notification_status_filters($stored);
+    }
 }
 }
 
@@ -4226,6 +4745,94 @@ if (!function_exists('blc_sanitize_notification_status_filters_option')) {
 function blc_sanitize_notification_status_filters_option($value) {
     return blc_normalize_notification_status_filters($value);
 }
+}
+
+/**
+ * Sanitize surveillance thresholds option payload and persist via helper.
+ *
+ * @param mixed $value Submitted value.
+ *
+ * @return array{global:array<int,array<string,mixed>>,taxonomy:array<int,array<string,mixed>>}
+ */
+function blc_sanitize_surveillance_thresholds_option($value) {
+    $structured = array(
+        'global'   => array(),
+        'taxonomy' => array(),
+    );
+
+    if (is_array($value)) {
+        if (isset($value['global']) && is_array($value['global'])) {
+            foreach ($value['global'] as $definition) {
+                if (!is_array($definition)) {
+                    continue;
+                }
+
+                $structured['global'][] = array(
+                    'id'         => isset($definition['id']) ? (string) $definition['id'] : '',
+                    'metric'     => isset($definition['metric']) ? (string) $definition['metric'] : 'broken_ratio',
+                    'comparison' => isset($definition['comparison']) ? (string) $definition['comparison'] : 'gte',
+                    'threshold'  => isset($definition['threshold']) ? (float) $definition['threshold'] : 0.0,
+                    'label'      => isset($definition['label']) ? (string) $definition['label'] : '',
+                    'severity'   => isset($definition['severity']) ? (string) $definition['severity'] : 'warning',
+                );
+            }
+        }
+
+        if (isset($value['taxonomy']) && is_array($value['taxonomy'])) {
+            foreach ($value['taxonomy'] as $definition) {
+                if (!is_array($definition)) {
+                    continue;
+                }
+
+                $taxonomy = isset($definition['taxonomy']) ? (string) $definition['taxonomy'] : '';
+                $taxonomy = blc_surveillance_sanitize_key($taxonomy);
+                if ($taxonomy === '') {
+                    continue;
+                }
+
+                $apply_to_all = !empty($definition['apply_to_all_terms']);
+                $term_ids = array();
+
+                if (!$apply_to_all && isset($definition['term_ids'])) {
+                    $raw = $definition['term_ids'];
+                    if (is_string($raw)) {
+                        $parts = preg_split('/[,\s]+/', $raw);
+                    } elseif (is_array($raw)) {
+                        $parts = $raw;
+                    } else {
+                        $parts = array();
+                    }
+
+                    foreach ($parts as $part) {
+                        $term_id = (int) $part;
+                        if ($term_id > 0) {
+                            $term_ids[] = $term_id;
+                        }
+                    }
+                }
+
+                if (!$apply_to_all && $term_ids === array()) {
+                    continue;
+                }
+
+                $structured['taxonomy'][] = array(
+                    'id'                => isset($definition['id']) ? (string) $definition['id'] : '',
+                    'taxonomy'          => $taxonomy,
+                    'threshold'         => isset($definition['threshold']) ? (float) $definition['threshold'] : 0.0,
+                    'comparison'        => isset($definition['comparison']) ? (string) $definition['comparison'] : 'gte',
+                    'label'             => isset($definition['label']) ? (string) $definition['label'] : '',
+                    'severity'          => isset($definition['severity']) ? (string) $definition['severity'] : 'warning',
+                    'term_ids'          => $term_ids,
+                    'apply_to_all_terms'=> $apply_to_all,
+                );
+            }
+        }
+    }
+
+    $normalized = blc_normalize_surveillance_thresholds($structured);
+    blc_save_surveillance_thresholds($normalized);
+
+    return $normalized;
 }
 
 /**
@@ -4250,6 +4857,50 @@ function blc_normalize_notification_webhook_channel($value) {
 
     return $value;
 }
+}
+
+/**
+ * Sanitize a severity threshold option (info, warning, critical).
+ *
+ * @param mixed $value Raw option value.
+ *
+ * @return string
+ */
+function blc_sanitize_notification_severity_option($value) {
+    if (!is_scalar($value)) {
+        $value = 'warning';
+    }
+
+    $normalized = sanitize_key((string) $value);
+    $allowed = array('info', 'warning', 'critical');
+
+    if (!in_array($normalized, $allowed, true)) {
+        return 'warning';
+    }
+
+    return $normalized;
+}
+
+/**
+ * Sanitize the escalation mode option.
+ *
+ * @param mixed $value Raw value.
+ *
+ * @return string
+ */
+function blc_sanitize_notification_escalation_mode_option($value) {
+    if (!is_scalar($value)) {
+        $value = 'disabled';
+    }
+
+    $normalized = sanitize_key((string) $value);
+    $allowed = array('disabled', 'webhook');
+
+    if (!in_array($normalized, $allowed, true)) {
+        return 'disabled';
+    }
+
+    return $normalized;
 }
 
 /**
@@ -4423,6 +5074,131 @@ if (!function_exists('blc_normalize_notification_slack_toggle')) {
 function blc_normalize_notification_slack_toggle($value) {
     return (bool) $value;
 }
+}
+
+/**
+ * Retrieve the available taxonomy choices for surveillance thresholds.
+ *
+ * @return array<string,string>
+ */
+if (!function_exists('blc_get_surveillance_taxonomy_choices')) {
+function blc_get_surveillance_taxonomy_choices() {
+    $choices = array();
+
+    if (function_exists('get_taxonomies')) {
+        $taxonomies = get_taxonomies(array('public' => true), 'objects');
+
+        if (is_array($taxonomies)) {
+            foreach ($taxonomies as $taxonomy => $object) {
+                $label = isset($object->labels->singular_name) ? (string) $object->labels->singular_name : $taxonomy;
+                $choices[$taxonomy] = $label;
+            }
+        }
+    }
+
+    if ($choices === array()) {
+        $choices['category'] = __('Catégories', 'liens-morts-detector-jlg');
+        $choices['post_tag'] = __('Étiquettes', 'liens-morts-detector-jlg');
+    }
+
+    return $choices;
+}
+}
+
+/**
+ * Return the available comparison operators for surveillance thresholds.
+ *
+ * @return array<string,string>
+ */
+if (!function_exists('blc_get_surveillance_comparison_options')) {
+function blc_get_surveillance_comparison_options() {
+    return array(
+        'gte' => __('≥ (supérieur ou égal)', 'liens-morts-detector-jlg'),
+        'gt'  => __('> (strictement supérieur)', 'liens-morts-detector-jlg'),
+        'lte' => __('≤ (inférieur ou égal)', 'liens-morts-detector-jlg'),
+        'lt'  => __('< (strictement inférieur)', 'liens-morts-detector-jlg'),
+        'eq'  => __('= (égal à)', 'liens-morts-detector-jlg'),
+        'neq' => __('≠ (différent de)', 'liens-morts-detector-jlg'),
+    );
+}
+}
+
+/**
+ * Return the severity labels for surveillance alerts.
+ *
+ * @return array<string,string>
+ */
+if (!function_exists('blc_get_surveillance_severity_options')) {
+function blc_get_surveillance_severity_options() {
+    return array(
+        'warning'  => __('Avertissement', 'liens-morts-detector-jlg'),
+        'critical' => __('Critique', 'liens-morts-detector-jlg'),
+    );
+}
+}
+
+/**
+ * Sanitize the surveillance thresholds option payload.
+ *
+ * @param mixed $value Raw value.
+ *
+ * @return array<string,mixed>
+ */
+function blc_sanitize_surveillance_thresholds_option($value) {
+    return blc_normalize_surveillance_thresholds($value);
+}
+
+/**
+ * Sanitize the list of severity levels enabled for a channel.
+ *
+ * @param mixed $value Raw value.
+ *
+ * @return array<int,string>
+ */
+function blc_sanitize_surveillance_escalation_levels_option($value) {
+    $options = blc_get_surveillance_severity_options();
+
+    if (is_string($value)) {
+        $value = array($value);
+    }
+
+    if (!is_array($value)) {
+        $value = array();
+    }
+
+    $normalized = array();
+
+    foreach ($value as $candidate) {
+        if (!is_scalar($candidate)) {
+            continue;
+        }
+
+        $slug = sanitize_key((string) $candidate);
+        if ($slug === '' || !isset($options[$slug])) {
+            continue;
+        }
+
+        $normalized[$slug] = $slug;
+    }
+
+    return array_values($normalized);
+}
+
+/**
+ * Sanitize the cooldown (seconds) configured for a severity.
+ *
+ * @param mixed $value Raw value.
+ *
+ * @return int
+ */
+function blc_sanitize_surveillance_cooldown_option($value) {
+    $value = is_numeric($value) ? (int) $value : 0;
+
+    if ($value < 60) {
+        $value = 60;
+    }
+
+    return $value;
 }
 
 /**

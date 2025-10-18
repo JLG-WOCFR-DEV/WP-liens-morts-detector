@@ -5,36 +5,38 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-/**
- * Retourne les planifications personnalisées proposées par défaut.
- *
- * @since 1.1.0
- *
- * @return array<string, array{interval:int, display:string}> Tableau associatif de définitions.
- */
-function blc_get_default_cron_schedules() {
-    return array(
-        'blc_hourly'       => array(
-            'interval' => HOUR_IN_SECONDS,
-            'display'  => __('Toutes les heures', 'liens-morts-detector-jlg'),
-        ),
-        'blc_six_hours'    => array(
-            'interval' => 6 * HOUR_IN_SECONDS,
-            'display'  => __('Toutes les 6 heures', 'liens-morts-detector-jlg'),
-        ),
-        'blc_twelve_hours' => array(
-            'interval' => 12 * HOUR_IN_SECONDS,
-            'display'  => __('Toutes les 12 heures', 'liens-morts-detector-jlg'),
-        ),
-        'weekly'           => array(
-            'interval' => 7 * DAY_IN_SECONDS,
-            'display'  => __('Une fois par semaine', 'liens-morts-detector-jlg'),
-        ),
-        'monthly'          => array(
-            'interval' => 30 * DAY_IN_SECONDS,
-            'display'  => __('Une fois par mois', 'liens-morts-detector-jlg'),
-        ),
-    );
+if (!function_exists('blc_get_default_cron_schedules')) {
+    /**
+     * Retourne les planifications personnalisées proposées par défaut.
+     *
+     * @since 1.1.0
+     *
+     * @return array<string, array{interval:int, display:string}> Tableau associatif de définitions.
+     */
+    function blc_get_default_cron_schedules() {
+        return array(
+            'blc_hourly'       => array(
+                'interval' => HOUR_IN_SECONDS,
+                'display'  => __('Toutes les heures', 'liens-morts-detector-jlg'),
+            ),
+            'blc_six_hours'    => array(
+                'interval' => 6 * HOUR_IN_SECONDS,
+                'display'  => __('Toutes les 6 heures', 'liens-morts-detector-jlg'),
+            ),
+            'blc_twelve_hours' => array(
+                'interval' => 12 * HOUR_IN_SECONDS,
+                'display'  => __('Toutes les 12 heures', 'liens-morts-detector-jlg'),
+            ),
+            'weekly'           => array(
+                'interval' => 7 * DAY_IN_SECONDS,
+                'display'  => __('Une fois par semaine', 'liens-morts-detector-jlg'),
+            ),
+            'monthly'          => array(
+                'interval' => 30 * DAY_IN_SECONDS,
+                'display'  => __('Une fois par mois', 'liens-morts-detector-jlg'),
+            ),
+        );
+    }
 }
 
 /**
@@ -425,32 +427,33 @@ function blc_calculate_image_custom_schedule_timestamp($time_string, $reference_
     return $candidate->getTimestamp();
 }
 
-/**
- * (Re)programme la tâche cron principale du plugin.
- *
- * @param array $args {
- *     Arguments facultatifs.
- *
- *     @type string|null $frequency          Fréquence souhaitée (valeur du champ `blc_frequency`).
- *     @type int|null    $custom_hours       Nombre d'heures pour l'intervalle personnalisé.
- *     @type string|null $custom_time        Heure de départ pour l'intervalle personnalisé.
- *     @type string      $context            Contexte d'appel (activation, réglages, etc.).
- *     @type int|null    $reference_timestamp Timestamp de référence pour le calcul personnalisé.
- * }
- *
- * @return array {
- *     @type bool   $success           Indique si la programmation a réussi.
- *     @type string $schedule          Identifiant WP-Cron utilisé.
- *     @type int    $timestamp         Timestamp planifié pour le prochain déclenchement.
- *     @type bool   $restore_attempted Indique si une tentative de restauration a été effectuée.
- *     @type bool   $restored          Indique si la restauration a réussi.
- *     @type int    $previous_timestamp Ancien timestamp planifié (le cas échéant).
- *     @type string $previous_schedule  Ancienne récurrence (le cas échéant).
- *     @type string $error_code         Code d'erreur éventuel.
- *     @type string $error_message      Message d'erreur technique.
- * }
- */
-function blc_reset_link_check_schedule(array $args = array()) {
+if (!function_exists('blc_reset_link_check_schedule')) {
+    /**
+     * (Re)programme la tâche cron principale du plugin.
+     *
+     * @param array $args {
+     *     Arguments facultatifs.
+     *
+     *     @type string|null $frequency          Fréquence souhaitée (valeur du champ `blc_frequency`).
+     *     @type int|null    $custom_hours       Nombre d'heures pour l'intervalle personnalisé.
+     *     @type string|null $custom_time        Heure de départ pour l'intervalle personnalisé.
+     *     @type string      $context            Contexte d'appel (activation, réglages, etc.).
+     *     @type int|null    $reference_timestamp Timestamp de référence pour le calcul personnalisé.
+     * }
+     *
+     * @return array {
+     *     @type bool   $success           Indique si la programmation a réussi.
+     *     @type string $schedule          Identifiant WP-Cron utilisé.
+     *     @type int    $timestamp         Timestamp planifié pour le prochain déclenchement.
+     *     @type bool   $restore_attempted Indique si une tentative de restauration a été effectuée.
+     *     @type bool   $restored          Indique si la restauration a réussi.
+     *     @type int    $previous_timestamp Ancien timestamp planifié (le cas échéant).
+     *     @type string $previous_schedule  Ancienne récurrence (le cas échéant).
+     *     @type string $error_code         Code d'erreur éventuel.
+     *     @type string $error_message      Message d'erreur technique.
+     * }
+     */
+    function blc_reset_link_check_schedule(array $args = array()) {
     $defaults = array(
         'frequency'           => null,
         'custom_hours'        => null,
@@ -537,6 +540,7 @@ function blc_reset_link_check_schedule(array $args = array()) {
     );
 
     return $result;
+    }
 }
 
 /**

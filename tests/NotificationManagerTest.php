@@ -3,6 +3,24 @@
 namespace {
     require_once __DIR__ . '/../vendor/autoload.php';
     require_once __DIR__ . '/translation-stubs.php';
+    require_once __DIR__ . '/wp-option-stubs.php';
+
+    if (!function_exists('blc_render_notification_message_template')) {
+        function blc_render_notification_message_template($template, $summary)
+        {
+            return isset($summary['subject']) ? (string) $summary['subject'] : '';
+        }
+    }
+
+    if (!function_exists('blc_build_notification_webhook_payload')) {
+        function blc_build_notification_webhook_payload($channel, $message, $summary, $settings = array())
+        {
+            return array(
+                'channel' => $channel,
+                'text'    => $message,
+            );
+        }
+    }
 
     if (!class_exists('WP_Error')) {
         class WP_Error
@@ -54,12 +72,10 @@ use Brain\Monkey;
 use Brain\Monkey\Functions;
 use JLG\BrokenLinks\Notifications\NotificationManager;
 use PHPUnit\Framework\TestCase;
+use Tests\Stubs\OptionsStore;
 
 class NotificationManagerTest extends TestCase
 {
-    /** @var array<string, mixed> */
-    private array $options = [];
-
     /** @var array<int, array<string, mixed>> */
     private array $sentEmails = [];
 
@@ -71,29 +87,25 @@ class NotificationManagerTest extends TestCase
 
     private ?int $throttleWindow = null;
 
+    /** @var array<string, mixed> */
+    private array $webhookSettings = [];
+
+    /** @var array<string, mixed> */
+    private array $escalationSettings = [];
+
     protected function setUp(): void
     {
         parent::setUp();
 
         Monkey\setUp();
 
-        $this->options        = [];
+        OptionsStore::reset();
         $this->sentEmails     = [];
         $this->httpRequests   = [];
         $this->errorLogs      = [];
         $this->throttleWindow = null;
 
         $testCase = $this;
-
-        Functions\when('get_option')->alias(static function ($name, $default = false) use ($testCase) {
-            return $testCase->options[$name] ?? $default;
-        });
-
-        Functions\when('update_option')->alias(static function ($name, $value) use ($testCase) {
-            $testCase->options[$name] = $value;
-
-            return true;
-        });
 
         Functions\when('apply_filters')->alias(static function ($hook, $value) use ($testCase) {
             if ($hook === 'blc_notification_throttle_window') {
@@ -107,15 +119,41 @@ class NotificationManagerTest extends TestCase
             return is_array($settings) && !empty($settings['url']);
         });
 
-        Functions\when('blc_render_notification_message_template')->alias(static function ($template, $summary) {
-            return isset($summary['subject']) ? (string) $summary['subject'] : '';
+        $this->webhookSettings = array(
+            'url'              => 'https://hooks.example.test',
+            'channel'          => 'slack',
+            'message_template' => '{{subject}}',
+            'severity'         => 'warning',
+        );
+
+        $this->escalationSettings = array(
+            'mode'             => 'disabled',
+            'url'              => '',
+            'channel'          => 'disabled',
+            'message_template' => '{{subject}}',
+            'severity'         => 'critical',
+        );
+
+        Functions\when('blc_get_notification_webhook_settings')->alias(static function ($overrides = array()) use ($testCase) {
+            $settings = $testCase->webhookSettings;
+            if (is_array($overrides)) {
+                foreach ($overrides as $key => $value) {
+                    $settings[$key] = $value;
+                }
+            }
+
+            return $settings;
         });
 
-        Functions\when('blc_build_notification_webhook_payload')->alias(static function ($channel, $message, $summary, $settings) {
-            return array(
-                'channel' => $channel,
-                'text'    => $message,
-            );
+        Functions\when('blc_get_notification_escalation_settings')->alias(static function ($overrides = array()) use ($testCase) {
+            $settings = $testCase->escalationSettings;
+            if (is_array($overrides)) {
+                foreach ($overrides as $key => $value) {
+                    $settings[$key] = $value;
+                }
+            }
+
+            return $settings;
         });
 
         Functions\when('wp_json_encode')->alias(static fn($value) => json_encode($value));
@@ -169,10 +207,11 @@ class NotificationManagerTest extends TestCase
             'subject'       => 'Résumé',
             'message'       => 'Contenu',
             'dataset_label' => 'Analyse des liens',
+            'severity'      => 'critical',
         );
 
         $recipients = array('admin@example.test');
-        $settings   = array('url' => 'https://hooks.example.test', 'channel' => 'slack');
+        $settings   = array('url' => 'https://hooks.example.test', 'channel' => 'slack', 'severity' => 'warning');
 
         $first = $manager->sendSummaryNotifications('link', $summary, $recipients, array(
             'context'          => 'scan',
@@ -182,9 +221,10 @@ class NotificationManagerTest extends TestCase
         $this->assertSame('sent', $first['email']['status']);
         $this->assertSame('sent', $first['webhook']['status']);
         $this->assertSame(200, $first['webhook']['code']);
+        $this->assertSame('skipped', $first['escalation']['status']);
 
-        $this->assertArrayHasKey('blc_notification_delivery_log', $this->options);
-        $this->assertCount(2, $this->options['blc_notification_delivery_log']);
+        $this->assertArrayHasKey('blc_notification_delivery_log', OptionsStore::$options);
+        $this->assertCount(2, OptionsStore::$options['blc_notification_delivery_log']);
 
         $second = $manager->sendSummaryNotifications('link', $summary, $recipients, array(
             'context'          => 'scan',
@@ -193,6 +233,7 @@ class NotificationManagerTest extends TestCase
 
         $this->assertSame('throttled', $second['email']['status']);
         $this->assertSame('throttled', $second['webhook']['status']);
+        $this->assertSame('skipped', $second['escalation']['status']);
         $this->assertCount(1, $this->sentEmails);
         $this->assertCount(1, $this->httpRequests);
 
@@ -224,10 +265,11 @@ class NotificationManagerTest extends TestCase
             'subject'       => 'Résumé',
             'message'       => 'Contenu',
             'dataset_label' => 'Analyse des liens',
+            'severity'      => 'critical',
         );
 
         $recipients = array('admin@example.test');
-        $settings   = array('url' => 'https://hooks.example.test', 'channel' => 'slack');
+        $settings   = array('url' => 'https://hooks.example.test', 'channel' => 'slack', 'severity' => 'warning');
 
         $result = $manager->sendSummaryNotifications('link', $summary, $recipients, array(
             'context'          => 'scan',
@@ -278,5 +320,77 @@ class NotificationManagerTest extends TestCase
         $this->assertSame('Timeout', $history[0]['error']);
         $this->assertNotEmpty($this->errorLogs);
     }
+    public function test_webhook_skipped_when_severity_below_threshold(): void
+    {
+        $manager = new NotificationManager(static function () {
+            return 3000;
+        });
+
+        $summary = array(
+            'subject'       => 'Résumé',
+            'message'       => 'Contenu',
+            'dataset_label' => 'Analyse des liens',
+            'severity'      => 'info',
+        );
+
+        $recipients = array('admin@example.test');
+        $settings   = array('url' => 'https://hooks.example.test', 'channel' => 'slack', 'severity' => 'critical');
+
+        $result = $manager->sendSummaryNotifications('link', $summary, $recipients, array(
+            'context'          => 'scan',
+            'webhook_settings' => $settings,
+        ));
+
+        $this->assertSame('sent', $result['email']['status']);
+        $this->assertSame('skipped', $result['webhook']['status']);
+        $this->assertSame('skipped', $result['escalation']['status']);
+
+        $history = $manager->getHistoryEntries();
+        $this->assertSame('webhook', $history[1]['channel']);
+        $this->assertSame('skipped', $history[1]['status']);
+        $this->assertSame('below_severity', $history[1]['reason']);
+        $this->assertSame('info', $history[1]['severity']);
+        $this->assertSame('critical', $history[1]['severity_threshold']);
+    }
+
+    public function test_escalation_triggered_when_severity_meets_threshold(): void
+    {
+        $this->escalationSettings = array(
+            'mode'             => 'webhook',
+            'url'              => 'https://hooks.example.test/escalate',
+            'channel'          => 'generic',
+            'message_template' => '{{subject}}',
+            'severity'         => 'warning',
+        );
+
+        $manager = new NotificationManager(static function () {
+            return 4000;
+        });
+
+        $summary = array(
+            'subject'       => 'Résumé',
+            'message'       => 'Contenu',
+            'dataset_label' => 'Analyse des liens',
+            'severity'      => 'critical',
+        );
+
+        $recipients = array('admin@example.test');
+        $settings   = array('url' => 'https://hooks.example.test', 'channel' => 'slack', 'severity' => 'warning');
+
+        $result = $manager->sendSummaryNotifications('link', $summary, $recipients, array(
+            'context'          => 'scan',
+            'webhook_settings' => $settings,
+        ));
+
+        $this->assertSame('sent', $result['webhook']['status']);
+        $this->assertSame('sent', $result['escalation']['status']);
+        $this->assertCount(2, $this->httpRequests);
+        $this->assertSame('https://hooks.example.test/escalate', $this->httpRequests[1]['url']);
+
+        $history = $manager->getHistoryEntries();
+        $channels = array_column($history, 'channel');
+        $this->assertContains('escalation', $channels);
+    }
+
 }
 }

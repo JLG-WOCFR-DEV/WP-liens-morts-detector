@@ -239,6 +239,7 @@ function blc_get_notification_webhook_settings($overrides = array()) {
         'slack_title_template'   => blc_normalize_notification_slack_title_template(get_option('blc_notification_slack_title_template', '{{subject}}')),
         'slack_show_filters'     => blc_normalize_notification_slack_toggle(get_option('blc_notification_slack_show_filters', true)),
         'slack_show_top_issues'  => blc_normalize_notification_slack_toggle(get_option('blc_notification_slack_show_top_issues', true)),
+        'severity'              => blc_sanitize_notification_severity_option(get_option('blc_notification_webhook_severity', 'warning')),
     );
 
     if (is_array($overrides)) {
@@ -277,6 +278,44 @@ function blc_get_notification_webhook_settings($overrides = array()) {
         if (array_key_exists('slack_show_top_issues', $overrides)) {
             $settings['slack_show_top_issues'] = blc_normalize_notification_slack_toggle($overrides['slack_show_top_issues']);
         }
+
+        if (array_key_exists('severity', $overrides)) {
+            $settings['severity'] = blc_sanitize_notification_severity_option($overrides['severity']);
+        }
+    }
+
+    return $settings;
+}
+
+function blc_get_notification_escalation_settings($overrides = array()) {
+    $settings = array(
+        'mode'             => blc_sanitize_notification_escalation_mode_option(get_option('blc_notification_escalation_mode', 'disabled')),
+        'url'              => blc_normalize_notification_webhook_url(get_option('blc_notification_escalation_url', '')),
+        'channel'          => blc_normalize_notification_webhook_channel(get_option('blc_notification_escalation_channel', 'disabled')),
+        'message_template' => blc_normalize_notification_message_template(get_option('blc_notification_escalation_message_template', "{{subject}}\n\n{{message}}")),
+        'severity'         => blc_sanitize_notification_severity_option(get_option('blc_notification_escalation_severity', 'critical')),
+    );
+
+    if (is_array($overrides)) {
+        if (array_key_exists('mode', $overrides)) {
+            $settings['mode'] = blc_sanitize_notification_escalation_mode_option($overrides['mode']);
+        }
+
+        if (array_key_exists('url', $overrides)) {
+            $settings['url'] = blc_normalize_notification_webhook_url($overrides['url']);
+        }
+
+        if (array_key_exists('channel', $overrides)) {
+            $settings['channel'] = blc_normalize_notification_webhook_channel($overrides['channel']);
+        }
+
+        if (array_key_exists('message_template', $overrides)) {
+            $settings['message_template'] = blc_normalize_notification_message_template($overrides['message_template']);
+        }
+
+        if (array_key_exists('severity', $overrides)) {
+            $settings['severity'] = blc_sanitize_notification_severity_option($overrides['severity']);
+        }
     }
 
     return $settings;
@@ -308,33 +347,35 @@ function blc_is_webhook_notification_configured($settings = null) {
     return $url !== '';
 }
 
-/**
- * Remplace les placeholders du modèle de notification par les valeurs calculées.
- *
- * @param string               $template Modèle configuré.
- * @param array<string, mixed> $summary  Résumé d'analyse.
- *
- * @return string
- */
-function blc_render_notification_message_template($template, array $summary) {
-    $template = (string) $template;
-    if ($template === '') {
-        $template = "{{subject}}\n\n{{message}}";
+if (!function_exists('blc_render_notification_message_template')) {
+    /**
+     * Remplace les placeholders du modèle de notification par les valeurs calculées.
+     *
+     * @param string               $template Modèle configuré.
+     * @param array<string, mixed> $summary  Résumé d'analyse.
+     *
+     * @return string
+     */
+    function blc_render_notification_message_template($template, array $summary) {
+        $template = (string) $template;
+        if ($template === '') {
+            $template = "{{subject}}\n\n{{message}}";
+        }
+
+        $replacements = array(
+            '{{subject}}'       => isset($summary['subject']) ? (string) $summary['subject'] : '',
+            '{{message}}'       => isset($summary['message']) ? (string) $summary['message'] : '',
+            '{{dataset_type}}'  => isset($summary['dataset_type']) ? (string) $summary['dataset_type'] : '',
+            '{{dataset_label}}' => isset($summary['dataset_label']) ? (string) $summary['dataset_label'] : '',
+            '{{broken_count}}'  => isset($summary['broken_count']) ? (string) (int) $summary['broken_count'] : '0',
+            '{{report_url}}'    => isset($summary['report_url']) ? (string) $summary['report_url'] : '',
+            '{{site_name}}'     => isset($summary['site_name']) ? (string) $summary['site_name'] : '',
+        );
+
+        $rendered = strtr($template, $replacements);
+
+        return trim($rendered);
     }
-
-    $replacements = array(
-        '{{subject}}'       => isset($summary['subject']) ? (string) $summary['subject'] : '',
-        '{{message}}'       => isset($summary['message']) ? (string) $summary['message'] : '',
-        '{{dataset_type}}'  => isset($summary['dataset_type']) ? (string) $summary['dataset_type'] : '',
-        '{{dataset_label}}' => isset($summary['dataset_label']) ? (string) $summary['dataset_label'] : '',
-        '{{broken_count}}'  => isset($summary['broken_count']) ? (string) (int) $summary['broken_count'] : '0',
-        '{{report_url}}'    => isset($summary['report_url']) ? (string) $summary['report_url'] : '',
-        '{{site_name}}'     => isset($summary['site_name']) ? (string) $summary['site_name'] : '',
-    );
-
-    $rendered = strtr($template, $replacements);
-
-    return trim($rendered);
 }
 
 /**

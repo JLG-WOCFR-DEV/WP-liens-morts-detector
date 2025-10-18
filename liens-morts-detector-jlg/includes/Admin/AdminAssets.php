@@ -126,6 +126,17 @@ class AdminAssets
             $jsVersion,
             true
         );
+
+        $surveillancePath = $this->getPluginDir() . 'assets/js/surveillance-thresholds.js';
+        $surveillanceVersion = file_exists($surveillancePath) ? filemtime($surveillancePath) : time();
+
+        \wp_enqueue_script(
+            'blc-surveillance-controls',
+            $this->getPluginUrl('assets/js/surveillance-thresholds.js'),
+            array('blc-admin-js'),
+            $surveillanceVersion,
+            true
+        );
     }
 
     private function registerTranslations()
