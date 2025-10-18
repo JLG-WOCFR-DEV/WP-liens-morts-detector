@@ -4758,7 +4758,64 @@ if (!function_exists('blc_sanitize_notification_status_filters_option')) {
  */
 if (!function_exists('blc_sanitize_surveillance_thresholds_option')) {
     function blc_sanitize_surveillance_thresholds_option($value) {
-        $normalized = blc_normalize_surveillance_thresholds($value);
+        $structured = array(
+            'global'   => array(),
+            'taxonomy' => array(),
+        );
+
+        if (is_array($value)) {
+            if (isset($value['global']) && is_array($value['global'])) {
+                foreach ($value['global'] as $definition) {
+                    if (!is_array($definition)) {
+                        continue;
+                    }
+
+                    $structured['global'][] = $definition;
+                }
+            }
+
+            if (isset($value['taxonomy']) && is_array($value['taxonomy'])) {
+                foreach ($value['taxonomy'] as $definition) {
+                    if (!is_array($definition)) {
+                        continue;
+                    }
+
+                    $apply_to_all = !empty($definition['apply_to_all_terms']);
+                    $term_ids     = array();
+
+                    if (isset($definition['term_ids'])) {
+                        $raw = $definition['term_ids'];
+
+                        if (is_string($raw)) {
+                            $parts = preg_split('/[,\s]+/', $raw);
+                        } elseif (is_array($raw)) {
+                            $parts = $raw;
+                        } else {
+                            $parts = array();
+                        }
+
+                        foreach ($parts as $part) {
+                            $term_id = (int) $part;
+
+                            if ($term_id > 0) {
+                                $term_ids[] = $term_id;
+                            }
+                        }
+                    }
+
+                    if (!$apply_to_all && $term_ids === array()) {
+                        continue;
+                    }
+
+                    $definition['term_ids']          = $term_ids;
+                    $definition['apply_to_all_terms'] = $apply_to_all;
+
+                    $structured['taxonomy'][] = $definition;
+                }
+            }
+        }
+
+        $normalized = blc_normalize_surveillance_thresholds($structured);
 
         blc_save_surveillance_thresholds($normalized);
 
