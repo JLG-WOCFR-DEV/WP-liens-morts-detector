@@ -232,8 +232,18 @@ if (!function_exists('blc_normalize_surveillance_threshold_group')) {
             }
 
             $term_ids = array();
-            if (isset($definition['term_ids']) && is_array($definition['term_ids'])) {
-                foreach ($definition['term_ids'] as $term_id) {
+            if (isset($definition['term_ids'])) {
+                $raw_term_ids = $definition['term_ids'];
+
+                if (!is_array($raw_term_ids)) {
+                    $raw_term_ids = preg_split('/[\s,]+/', (string) $raw_term_ids);
+                }
+
+                foreach ($raw_term_ids as $term_id) {
+                    if ($term_id === null || $term_id === '') {
+                        continue;
+                    }
+
                     $term_ids[] = (int) $term_id;
                 }
             }
