@@ -1490,24 +1490,25 @@ if (!function_exists('blc_build_dashboard_summary_items')) {
     }
 }
 
-/**
- * Build a prioritized action queue based on the most impacted domains.
- *
- * @param array<int,array<string,int|string>> $top_domains Domain aggregates.
- * @param string                               $dashboard_base_url Base dashboard URL.
- * @param array<string,int>                    $count_keys Status counters for ratios.
- *
- * @return array<int,array{
- *     title:string,
- *     description:string,
- *     severity_label:string,
- *     severity_class:string,
- *     cta_url:string,
- *     cta_label:string,
- *     meta:string
- * }>
- */
-function blc_build_priority_action_queue(array $top_domains, $dashboard_base_url, array $count_keys) {
+if (!function_exists('blc_build_priority_action_queue')) {
+    /**
+     * Build a prioritized action queue based on the most impacted domains.
+     *
+     * @param array<int,array<string,int|string>> $top_domains Domain aggregates.
+     * @param string                               $dashboard_base_url Base dashboard URL.
+     * @param array<string,int>                    $count_keys Status counters for ratios.
+     *
+     * @return array<int,array{
+     *     title:string,
+     *     description:string,
+     *     severity_label:string,
+     *     severity_class:string,
+     *     cta_url:string,
+     *     cta_label:string,
+     *     meta:string
+     * }>
+     */
+    function blc_build_priority_action_queue(array $top_domains, $dashboard_base_url, array $count_keys) {
     $actions      = array();
     $total_active = isset($count_keys['active_count']) ? max(0, (int) $count_keys['active_count']) : 0;
     $total_active = max(1, $total_active);
@@ -1805,6 +1806,7 @@ function blc_build_priority_action_queue(array $top_domains, $dashboard_base_url
     }
 
     return array_slice($actions, 0, $max_actions);
+    }
 }
 
 /**

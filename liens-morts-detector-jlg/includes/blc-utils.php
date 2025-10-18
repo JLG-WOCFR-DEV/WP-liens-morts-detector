@@ -1649,42 +1649,44 @@ function blc_is_safe_remote_host($host, $allowed_hosts = null) {
     return $store_cache(true);
 }
 
-/**
- * Map a logical dataset type to the stored row types.
- *
- * @param string $dataset_type Dataset identifier (e.g. 'link', 'image').
- * @return string[]
- */
-function blc_get_dataset_row_types($dataset_type) {
-    $normalized = strtolower((string) $dataset_type);
+if (!function_exists('blc_get_dataset_row_types')) {
+    /**
+     * Map a logical dataset type to the stored row types.
+     *
+     * @param string $dataset_type Dataset identifier (e.g. 'link', 'image').
+     * @return string[]
+     */
+    function blc_get_dataset_row_types($dataset_type) {
+        $normalized = strtolower((string) $dataset_type);
 
-    if ($normalized === 'image') {
-        $types = ['image', 'remote-image'];
-    } elseif ($normalized === 'link') {
-        $types = ['link', 'iframe', 'script', 'stylesheet', 'form', 'css-background'];
-    } elseif ($normalized === '') {
-        $types = [];
-    } else {
-        $types = [$normalized];
-    }
-
-    if (function_exists('apply_filters')) {
-        $types = apply_filters('blc_dataset_row_types', $types, $normalized);
-    }
-
-    $types = array_filter(
-        array_map(
-            static function ($type) {
-                return is_string($type) ? trim($type) : '';
-            },
-            (array) $types
-        ),
-        static function ($value) {
-            return $value !== '';
+        if ($normalized === 'image') {
+            $types = ['image', 'remote-image'];
+        } elseif ($normalized === 'link') {
+            $types = ['link', 'iframe', 'script', 'stylesheet', 'form', 'css-background'];
+        } elseif ($normalized === '') {
+            $types = [];
+        } else {
+            $types = [$normalized];
         }
-    );
 
-    return array_values(array_unique($types));
+        if (function_exists('apply_filters')) {
+            $types = apply_filters('blc_dataset_row_types', $types, $normalized);
+        }
+
+        $types = array_filter(
+            array_map(
+                static function ($type) {
+                    return is_string($type) ? trim($type) : '';
+                },
+                (array) $types
+            ),
+            static function ($value) {
+                return $value !== '';
+            }
+        );
+
+        return array_values(array_unique($types));
+    }
 }
 
 /**
