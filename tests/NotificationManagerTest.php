@@ -202,6 +202,52 @@ class NotificationManagerTest extends TestCase
         $this->assertSame('throttled', $history[3]['status']);
     }
 
+    public function test_send_summary_notifications_records_failed_email_when_wp_mail_returns_false(): void
+    {
+        $testCase = $this;
+
+        Functions\when('wp_mail')->alias(static function ($recipients, $subject, $message) use ($testCase) {
+            $testCase->sentEmails[] = array(
+                'recipients' => $recipients,
+                'subject'    => $subject,
+                'message'    => $message,
+            );
+
+            return false;
+        });
+
+        $manager = new NotificationManager(static function () {
+            return 1500;
+        });
+
+        $summary = array(
+            'subject'       => 'Résumé',
+            'message'       => 'Contenu',
+            'dataset_label' => 'Analyse des liens',
+        );
+
+        $recipients = array('admin@example.test');
+        $settings   = array('url' => 'https://hooks.example.test', 'channel' => 'slack');
+
+        $result = $manager->sendSummaryNotifications('link', $summary, $recipients, array(
+            'context'          => 'scan',
+            'webhook_settings' => $settings,
+        ));
+
+        $failureMessage = 'Échec de l’envoi de l’e-mail pour l’analyse Analyse des liens.';
+
+        $this->assertSame('failed', $result['email']['status']);
+        $this->assertSame($failureMessage, $result['email']['error']);
+        $this->assertCount(1, $this->errorLogs);
+        $this->assertStringContainsString('Failed to send link summary email', $this->errorLogs[0]);
+
+        $history = $manager->getHistoryEntries();
+        $this->assertCount(2, $history);
+        $this->assertSame('failed', $history[0]['status']);
+        $this->assertSame('email', $history[0]['channel']);
+        $this->assertSame($failureMessage, $history[0]['error']);
+    }
+
     public function test_send_webhook_only_returns_wp_error_on_failure_and_logs_history(): void
     {
         $this->throttleWindow = 0;

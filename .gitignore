@@ -4,3 +4,6 @@
 .playwright/
 playwright-report/
 test-results/
+build/
+phpunit.junit.xml
+phpunit.result.cache

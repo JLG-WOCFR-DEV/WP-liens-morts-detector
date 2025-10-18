@@ -9,7 +9,17 @@
         }
     },
     "scripts": {
-        "test:js": "npm test"
+        "test:php": [
+            "@php -r \"if (!is_dir('build')) { mkdir('build'); }\"",
+            "@php -r \"if (!is_dir('build/logs')) { mkdir('build/logs'); }\"",
+            "vendor/bin/phpunit"
+        ],
+        "test:js": "npm test",
+        "test:all": [
+            "@test:php",
+            "@test:js",
+            "npm run test:e2e"
+        ]
     },
     "autoload": {
         "psr-4": {

@@ -56,6 +56,11 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 
 ## Tests automatisés
 
+### PHP (PHPUnit)
+- Installer les dépendances PHP : `composer install`.
+- Lancer la suite unitaire : `composer test:php` (génère également un rapport JUnit `phpunit.junit.xml`).
+- ✅ Cette suite est exécutée dans la CI et doit réussir avant toute fusion.
+
 ### JavaScript (Jest)
 - `npm test` exécute l’intégralité de la suite Jest existante.
 
@@ -72,7 +77,8 @@ Liens Morts Detector est une extension WordPress qui détecte les liens et image
 > 💡 Lorsqu’elles sont définies, les variables `WP_E2E_*` permettent également à la configuration Playwright de générer automatiquement un état de session réutilisable via `tests/e2e/utils/global-setup.ts`. À défaut de configuration, la suite E2E est ignorée (et renvoie un succès) ce qui permet son exécution dans la CI même sans instance WordPress accessible.
 
 ### Combinaison des suites
-- `npm run test:all` exécute successivement Jest puis Playwright.
+- `composer test:all` enchaîne les tests PHP, Jest puis Playwright.
+- `npm run test:all` reste disponible si seuls les tests JavaScript sont nécessaires.
 
 ## Détection des soft 404
 
