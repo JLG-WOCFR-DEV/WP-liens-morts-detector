@@ -3006,6 +3006,37 @@ function blc_generate_scan_summary_email($dataset_type, $args = null) {
         ? $threshold_evaluation['metrics']
         : $threshold_evaluation['metrics'];
 
+    $severity_ranking = array(
+        'info'     => 0,
+        'warning'  => 1,
+        'critical' => 2,
+    );
+    $summary_severity = 'info';
+    foreach ($threshold_alerts as $alert) {
+        if (!is_array($alert)) {
+            continue;
+        }
+
+        $alert_severity = isset($alert['severity']) ? strtolower((string) $alert['severity']) : 'warning';
+        if (!isset($severity_ranking[$alert_severity])) {
+            $alert_severity = 'warning';
+        }
+
+        if ($severity_ranking[$alert_severity] > $severity_ranking[$summary_severity]) {
+            $summary_severity = $alert_severity;
+        }
+    }
+
+    if (function_exists('apply_filters')) {
+        $filtered_severity = apply_filters('blc_scan_summary_severity', $summary_severity, $threshold_alerts, $threshold_metrics, $dataset_type);
+        if (is_string($filtered_severity)) {
+            $filtered_severity = strtolower($filtered_severity);
+            if (isset($severity_ranking[$filtered_severity])) {
+                $summary_severity = $filtered_severity;
+            }
+        }
+    }
+
     if (!isset($threshold_metrics['global']) || !is_array($threshold_metrics['global'])) {
         $threshold_metrics['global'] = array(
             'broken_ratio' => 0.0,
@@ -3284,6 +3315,7 @@ function blc_generate_scan_summary_email($dataset_type, $args = null) {
         'threshold_alerts'         => $threshold_alerts,
         'threshold_metrics'        => $threshold_metrics,
         'threshold_definitions'    => $threshold_definitions,
+        'severity'                 => $summary_severity,
     ];
 }
 

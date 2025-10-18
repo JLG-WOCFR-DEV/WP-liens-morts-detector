@@ -33,6 +33,10 @@ class BlcScanHistoryPageTest extends TestCase
             define('ABSPATH', __DIR__ . '/../');
         }
 
+        if (!defined('DAY_IN_SECONDS')) {
+            define('DAY_IN_SECONDS', 86400);
+        }
+
         OptionsStore::reset();
 
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-scanner.php';
@@ -54,6 +58,70 @@ class BlcScanHistoryPageTest extends TestCase
 
         Functions\when('blc_current_user_can_view_reports')->justReturn(true);
         Functions\when('current_user_can')->justReturn(true);
+    }
+
+    public function test_calculate_link_scan_metrics_trends_computes_moving_average_and_week_delta(): void
+    {
+        $latest_timestamp = 1_700_000_000;
+        $metrics_history = [
+            [
+                'timestamp'       => $latest_timestamp,
+                'duration_ms'     => 420000,
+                'processed_items' => 210,
+            ],
+            [
+                'timestamp'       => $latest_timestamp - (8 * DAY_IN_SECONDS),
+                'duration_ms'     => 360000,
+                'processed_items' => 180,
+            ],
+            [
+                'timestamp'       => $latest_timestamp - (9 * DAY_IN_SECONDS),
+                'duration_ms'     => 390000,
+                'processed_items' => 200,
+            ],
+        ];
+
+        $trends = blc_calculate_link_scan_metrics_trends($metrics_history, array(
+            'window'           => 2,
+            'sparkline_length' => 3,
+        ));
+
+        $this->assertArrayHasKey('duration_ms', $trends);
+        $this->assertArrayHasKey('throughput', $trends);
+
+        $duration_trend = $trends['duration_ms'];
+        $this->assertSame(420000.0, $duration_trend['latest']);
+        $this->assertEqualsWithDelta(390000.0, $duration_trend['moving_average'], 0.1);
+        $this->assertSame(60000.0, $duration_trend['change_7d']);
+        $this->assertCount(3, $duration_trend['sparkline']);
+        $this->assertEqualsWithDelta(
+            $duration_trend['latest'],
+            $duration_trend['sparkline'][count($duration_trend['sparkline']) - 1],
+            0.1
+        );
+
+        $throughput_trend = $trends['throughput'];
+        $this->assertGreaterThan(0, $throughput_trend['latest']);
+        $this->assertCount(3, $throughput_trend['sparkline']);
+        $this->assertEqualsWithDelta(
+            $throughput_trend['latest'],
+            $throughput_trend['sparkline'][count($throughput_trend['sparkline']) - 1],
+            0.1
+        );
+        $this->assertSame($throughput_trend['window'], 2);
+    }
+
+    public function test_render_sparkline_returns_svg_markup(): void
+    {
+        $values = [10, 20, 15, 30];
+
+        $svg = blc_render_sparkline($values, 100, 20);
+
+        $this->assertStringContainsString('<svg', $svg);
+        $this->assertStringContainsString('polyline', $svg);
+        $this->assertStringContainsString('100', $svg);
+        $this->assertStringContainsString('20', $svg);
+        $this->assertMatchesRegularExpression('/points="[0-9.,\s]+"/', $svg);
     }
 
     protected function tearDown(): void

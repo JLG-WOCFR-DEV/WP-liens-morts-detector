@@ -11,6 +11,11 @@ class NotificationManager
 {
     private const HISTORY_OPTION = 'blc_notification_delivery_log';
     private const DEFAULT_HISTORY_SIZE = 50;
+    private const SEVERITY_LEVELS = array(
+        'info' => 0,
+        'warning' => 1,
+        'critical' => 2,
+    );
 
     /**
      * @var callable
@@ -60,35 +65,125 @@ class NotificationManager
             ? __('de test', 'liens-morts-detector-jlg')
             : __('planifiée', 'liens-morts-detector-jlg');
 
-        $results = array(
-            'email'   => $this->dispatchEmailChannel(
-                $datasetType,
-                $context,
-                $summary,
-                $recipients,
-                array(
-                    'dataset_label'        => $datasetLabel,
-                    'context_label'        => $contextLabel,
-                    'failure_message'      => sprintf(
-                        __('Échec de l’envoi de l’e-mail pour l’analyse %s.', 'liens-morts-detector-jlg'),
-                        $datasetLabel
-                    ),
-                ) + $args
-            ),
-            'webhook' => $this->dispatchWebhookChannel(
+        $summarySeverity = $this->normalizeSeverity($summary['severity'] ?? 'info');
+        $webhookThreshold = isset($webhookSettings['severity'])
+            ? $this->normalizeSeverity($webhookSettings['severity'], 'warning')
+            : 'warning';
+
+        $escalationSettings = function_exists('blc_get_notification_escalation_settings')
+            ? \blc_get_notification_escalation_settings()
+            : array();
+        if (!is_array($escalationSettings)) {
+            $escalationSettings = array();
+        }
+
+        $escalationMode = isset($escalationSettings['mode']) ? (string) $escalationSettings['mode'] : 'disabled';
+        $escalationThreshold = isset($escalationSettings['severity'])
+            ? $this->normalizeSeverity($escalationSettings['severity'], 'critical')
+            : 'critical';
+
+        $results = array();
+        $results['email'] = $this->dispatchEmailChannel(
+            $datasetType,
+            $context,
+            $summary,
+            $recipients,
+            array(
+                'dataset_label'   => $datasetLabel,
+                'context_label'   => $contextLabel,
+                'failure_message' => sprintf(
+                    __('Échec de l’envoi de l’e-mail pour l’analyse %s.', 'liens-morts-detector-jlg'),
+                    $datasetLabel
+                ),
+                'severity'        => $summarySeverity,
+            ) + $args
+        );
+
+        if ($this->shouldTriggerSeverity($summarySeverity, $webhookThreshold)) {
+            $results['webhook'] = $this->dispatchWebhookChannel(
                 $datasetType,
                 $context,
                 $summary,
                 $webhookSettings,
                 array(
-                    'dataset_label'            => $datasetLabel,
-                    'context_label'            => $contextLabel,
-                    'include_details'          => false,
-                    'return_error_instance'    => false,
-                    'log_failures'             => true,
+                    'dataset_label'         => $datasetLabel,
+                    'context_label'         => $contextLabel,
+                    'include_details'       => false,
+                    'return_error_instance' => false,
+                    'log_failures'          => true,
+                    'channel_key'           => 'webhook',
+                    'severity'              => $summarySeverity,
+                    'severity_threshold'    => $webhookThreshold,
                 ) + $args
-            ),
-        );
+            );
+        } else {
+            $timestamp = $this->now();
+            $this->recordHistory('webhook', $datasetType, $context, 'skipped', $timestamp, array(
+                'reason'             => 'below_severity',
+                'severity'           => $summarySeverity,
+                'severity_threshold' => $webhookThreshold,
+            ));
+
+            $results['webhook'] = array(
+                'status'  => 'skipped',
+                'message' => __('Notification ignorée car la sévérité est inférieure au seuil configuré.', 'liens-morts-detector-jlg'),
+            );
+        }
+
+        $results['escalation'] = array('status' => 'skipped');
+
+        if ($escalationMode === 'webhook') {
+            $escalationPayload = array(
+                'url'              => isset($escalationSettings['url']) ? (string) $escalationSettings['url'] : '',
+                'channel'          => isset($escalationSettings['channel']) ? (string) $escalationSettings['channel'] : 'disabled',
+                'message_template' => isset($escalationSettings['message_template']) ? (string) $escalationSettings['message_template'] : '',
+            );
+
+            if ($this->shouldTriggerSeverity($summarySeverity, $escalationThreshold)) {
+                if (\blc_is_webhook_notification_configured($escalationPayload)) {
+                    $results['escalation'] = $this->dispatchWebhookChannel(
+                        $datasetType,
+                        $context,
+                        $summary,
+                        $escalationPayload,
+                        array(
+                            'dataset_label'         => $datasetLabel,
+                            'context_label'         => $contextLabel,
+                            'include_details'       => false,
+                            'return_error_instance' => false,
+                            'log_failures'          => true,
+                            'channel_key'           => 'escalation',
+                            'severity'              => $summarySeverity,
+                            'severity_threshold'    => $escalationThreshold,
+                        ) + $args
+                    );
+                } else {
+                    $timestamp = $this->now();
+                    $this->recordHistory('escalation', $datasetType, $context, 'skipped', $timestamp, array(
+                        'reason'             => 'missing_configuration',
+                        'severity'           => $summarySeverity,
+                        'severity_threshold' => $escalationThreshold,
+                    ));
+
+                    $results['escalation'] = array(
+                        'status'  => 'skipped',
+                        'message' => __('Escalade ignorée : le canal secondaire n’est pas configuré.', 'liens-morts-detector-jlg'),
+                    );
+                }
+            } else {
+                $timestamp = $this->now();
+                $this->recordHistory('escalation', $datasetType, $context, 'skipped', $timestamp, array(
+                    'reason'             => 'below_severity',
+                    'severity'           => $summarySeverity,
+                    'severity_threshold' => $escalationThreshold,
+                ));
+
+                $results['escalation'] = array(
+                    'status'  => 'skipped',
+                    'message' => __('Escalade ignorée car la sévérité est inférieure au seuil configuré.', 'liens-morts-detector-jlg'),
+                );
+            }
+        }
 
         $this->persistHistory();
 
@@ -172,13 +267,18 @@ class NotificationManager
         $timestamp = $this->now();
         $signature = $this->buildSignature('email', $datasetType, $context, $summary, array('recipients' => $recipients));
         $window    = $this->resolveThrottleWindow('email', $datasetType, $context, $args);
+        $severity  = isset($args['severity']) ? $this->normalizeSeverity($args['severity']) : null;
 
         if ($this->shouldThrottle($signature, $window, $timestamp)) {
             $message = __('Notification ignorée pour éviter un doublon récent.', 'liens-morts-detector-jlg');
-            $this->recordHistory('email', $datasetType, $context, 'throttled', $timestamp, array(
-                'signature'        => $signature,
-                'recipient_count'  => count($recipients),
-            ));
+            $meta = array(
+                'signature'       => $signature,
+                'recipient_count' => count($recipients),
+            );
+            if ($severity !== null) {
+                $meta['severity'] = $severity;
+            }
+            $this->recordHistory('email', $datasetType, $context, 'throttled', $timestamp, $meta);
 
             return array(
                 'status'  => 'throttled',
@@ -191,10 +291,14 @@ class NotificationManager
         $sent    = \wp_mail($recipients, $subject, $message);
 
         if ($sent) {
-            $this->recordHistory('email', $datasetType, $context, 'sent', $timestamp, array(
-                'signature'        => $signature,
-                'recipient_count'  => count($recipients),
-            ));
+            $meta = array(
+                'signature'       => $signature,
+                'recipient_count' => count($recipients),
+            );
+            if ($severity !== null) {
+                $meta['severity'] = $severity;
+            }
+            $this->recordHistory('email', $datasetType, $context, 'sent', $timestamp, $meta);
 
             return array('status' => 'sent');
         }
@@ -204,11 +308,15 @@ class NotificationManager
             $errorMessage = __('Échec de l’envoi de la notification e-mail.', 'liens-morts-detector-jlg');
         }
 
-        $this->recordHistory('email', $datasetType, $context, 'failed', $timestamp, array(
-            'signature'        => $signature,
-            'recipient_count'  => count($recipients),
-            'error'            => $errorMessage,
-        ));
+        $meta = array(
+            'signature'       => $signature,
+            'recipient_count' => count($recipients),
+            'error'           => $errorMessage,
+        );
+        if ($severity !== null) {
+            $meta['severity'] = $severity;
+        }
+        $this->recordHistory('email', $datasetType, $context, 'failed', $timestamp, $meta);
 
         $contextLabel = isset($args['context_label']) ? (string) $args['context_label'] : $context;
         \error_log(sprintf('BLC: Failed to send %s summary email (%s).', $datasetType, $contextLabel));
@@ -235,19 +343,31 @@ class NotificationManager
         }
 
         $timestamp    = $this->now();
+        $channelKey   = isset($args['channel_key']) && is_string($args['channel_key']) && $args['channel_key'] !== ''
+            ? $args['channel_key']
+            : 'webhook';
         $signature    = isset($args['signature']) && is_string($args['signature'])
             ? $args['signature']
-            : $this->buildSignature('webhook', $datasetType, $context, $summary, $this->summarizeWebhookSettings($settings));
-        $window       = $this->resolveThrottleWindow('webhook', $datasetType, $context, $args);
+            : $this->buildSignature($channelKey, $datasetType, $context, $summary, $this->summarizeWebhookSettings($settings));
+        $window       = $this->resolveThrottleWindow($channelKey, $datasetType, $context, $args);
         $includeDetails = !empty($args['include_details']);
         $returnErrorInstance = !empty($args['return_error_instance']);
         $contextLabel = isset($args['context_label']) ? (string) $args['context_label'] : $context;
+        $severity = isset($args['severity']) ? $this->normalizeSeverity($args['severity']) : null;
+        $severityThreshold = isset($args['severity_threshold'])
+            ? $this->normalizeSeverity($args['severity_threshold'], 'warning')
+            : null;
 
         if ($this->shouldThrottle($signature, $window, $timestamp)) {
             $message = __('Notification webhook ignorée pour éviter un doublon récent.', 'liens-morts-detector-jlg');
-            $this->recordHistory('webhook', $datasetType, $context, 'throttled', $timestamp, array(
-                'signature' => $signature,
-            ));
+            $meta = array('signature' => $signature);
+            if ($severity !== null) {
+                $meta['severity'] = $severity;
+            }
+            if ($severityThreshold !== null) {
+                $meta['severity_threshold'] = $severityThreshold;
+            }
+            $this->recordHistory($channelKey, $datasetType, $context, 'throttled', $timestamp, $meta);
 
             return array(
                 'status'  => 'throttled',
@@ -259,10 +379,17 @@ class NotificationManager
 
         if ($sendResult instanceof WP_Error) {
             $errorMessage = $sendResult->get_error_message();
-            $this->recordHistory('webhook', $datasetType, $context, 'failed', $timestamp, array(
+            $meta = array(
                 'signature' => $signature,
                 'error'     => $errorMessage,
-            ));
+            );
+            if ($severity !== null) {
+                $meta['severity'] = $severity;
+            }
+            if ($severityThreshold !== null) {
+                $meta['severity_threshold'] = $severityThreshold;
+            }
+            $this->recordHistory($channelKey, $datasetType, $context, 'failed', $timestamp, $meta);
 
             if (!empty($args['log_failures'])) {
                 \error_log(sprintf('BLC: Webhook notification failed for %s summary (%s): %s', $datasetType, $contextLabel, $errorMessage));
@@ -281,10 +408,17 @@ class NotificationManager
         }
 
         $code = isset($sendResult['code']) ? (int) $sendResult['code'] : null;
-        $this->recordHistory('webhook', $datasetType, $context, 'sent', $timestamp, array(
+        $meta = array(
             'signature'    => $signature,
             'webhook_code' => $code,
-        ));
+        );
+        if ($severity !== null) {
+            $meta['severity'] = $severity;
+        }
+        if ($severityThreshold !== null) {
+            $meta['severity_threshold'] = $severityThreshold;
+        }
+        $this->recordHistory($channelKey, $datasetType, $context, 'sent', $timestamp, $meta);
 
         if (!$includeDetails) {
             return array(
@@ -399,6 +533,34 @@ class NotificationManager
         return false;
     }
 
+    private function normalizeSeverity($value, string $default = 'info'): string
+    {
+        if (!is_scalar($value)) {
+            return $default;
+        }
+
+        $normalized = strtolower((string) $value);
+
+        return array_key_exists($normalized, self::SEVERITY_LEVELS) ? $normalized : $default;
+    }
+
+    private function compareSeverity(string $left, string $right): int
+    {
+        $leftLevel  = self::SEVERITY_LEVELS[$left] ?? self::SEVERITY_LEVELS['info'];
+        $rightLevel = self::SEVERITY_LEVELS[$right] ?? self::SEVERITY_LEVELS['info'];
+
+        if ($leftLevel === $rightLevel) {
+            return 0;
+        }
+
+        return ($leftLevel > $rightLevel) ? 1 : -1;
+    }
+
+    private function shouldTriggerSeverity(string $severity, string $threshold): bool
+    {
+        return $this->compareSeverity($severity, $threshold) >= 0;
+    }
+
     /**
      * @param string $channel
      * @param string $datasetType
@@ -448,6 +610,16 @@ class NotificationManager
 
             if ($key === 'recipient_count' || $key === 'webhook_code') {
                 $entry[$key] = (int) $value;
+                continue;
+            }
+
+            if ($key === 'severity') {
+                $entry[$key] = $this->normalizeSeverity($value);
+                continue;
+            }
+
+            if ($key === 'severity_threshold') {
+                $entry[$key] = $this->normalizeSeverity($value, 'warning');
                 continue;
             }
 
@@ -519,6 +691,11 @@ class NotificationManager
                 'recipient_count'=> isset($entry['recipient_count']) ? (int) $entry['recipient_count'] : null,
                 'webhook_code'   => isset($entry['webhook_code']) ? (int) $entry['webhook_code'] : null,
                 'error'          => isset($entry['error']) ? (string) $entry['error'] : '',
+                'reason'         => isset($entry['reason']) ? (string) $entry['reason'] : '',
+                'severity'       => isset($entry['severity']) ? $this->normalizeSeverity($entry['severity']) : '',
+                'severity_threshold' => isset($entry['severity_threshold'])
+                    ? $this->normalizeSeverity($entry['severity_threshold'], 'warning')
+                    : '',
             );
         }
 
@@ -534,6 +711,15 @@ class NotificationManager
             }
             if ($entry['signature'] === '') {
                 unset($entry['signature']);
+            }
+            if ($entry['reason'] === '') {
+                unset($entry['reason']);
+            }
+            if ($entry['severity'] === '') {
+                unset($entry['severity']);
+            }
+            if ($entry['severity_threshold'] === '') {
+                unset($entry['severity_threshold']);
             }
         }
         unset($entry);
