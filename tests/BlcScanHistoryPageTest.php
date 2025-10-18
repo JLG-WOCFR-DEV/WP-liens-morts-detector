@@ -51,6 +51,9 @@ class BlcScanHistoryPageTest extends TestCase
 
             return gmdate($format, $timestamp);
         });
+
+        Functions\when('blc_current_user_can_view_reports')->justReturn(true);
+        Functions\when('current_user_can')->justReturn(true);
     }
 
     protected function tearDown(): void
