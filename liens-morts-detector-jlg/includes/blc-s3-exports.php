@@ -413,7 +413,7 @@ if (!function_exists('blc_s3_sign_request')) {
 
         $canonical_headers_string = '';
         foreach ($canonical_headers as $name => $value) {
-            $canonical_headers_string .= sprintf('%s:%s\n', strtolower($name), trim($value));
+            $canonical_headers_string .= sprintf("%s:%s\n", strtolower($name), trim($value));
         }
 
         $signed_headers = implode(';', array_keys($canonical_headers));

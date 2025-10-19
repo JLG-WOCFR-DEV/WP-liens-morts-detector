@@ -69,7 +69,7 @@ class BLC_Scan_CLI_Command extends WP_CLI_Command
         $controller = blc_make_link_scan_controller($queue);
 
         $this->process_batches(
-            static function (array $task) use ($controller) {
+            function (array $task) use ($controller) {
                 $batch = (int) ($task['args'][0] ?? 0);
                 $is_full = (bool) ($task['args'][1] ?? false);
                 $bypass = (bool) ($task['args'][2] ?? false);
@@ -110,7 +110,7 @@ class BLC_Scan_CLI_Command extends WP_CLI_Command
         $controller = blc_make_image_scan_controller($queue);
 
         $this->process_batches(
-            static function (array $task) use ($controller) {
+            function (array $task) use ($controller) {
                 $batch = (int) ($task['args'][0] ?? 0);
                 $is_full = (bool) ($task['args'][1] ?? true);
 
