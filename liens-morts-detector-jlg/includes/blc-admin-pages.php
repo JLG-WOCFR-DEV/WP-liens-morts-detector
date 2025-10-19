@@ -956,14 +956,14 @@ function blc_summarize_link_scan_trend(array $points) {
     if ($delta > 0) {
         $delta_label = sprintf(
             /* translators: 1: additional URLs, 2: percentage increase. */
-            __('Progression de %1$s URL (+%2$s %) vs. l’analyse précédente.', 'liens-morts-detector-jlg'),
+            __('Progression de %1$s URL (+%2$s %%) vs. l’analyse précédente.', 'liens-morts-detector-jlg'),
             number_format_i18n($delta_abs),
             number_format_i18n($percent, 1)
         );
     } else {
         $delta_label = sprintf(
             /* translators: 1: missing URLs, 2: percentage drop. */
-            __('Baisse de %1$s URL (−%2$s %) vs. l’analyse précédente.', 'liens-morts-detector-jlg'),
+            __('Baisse de %1$s URL (−%2$s %%) vs. l’analyse précédente.', 'liens-morts-detector-jlg'),
             number_format_i18n($delta_abs),
             number_format_i18n($percent, 1)
         );
