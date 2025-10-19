@@ -2510,22 +2510,35 @@ if (!class_exists('ImageScanQueue')) {
             $checked_at_gmt = current_time('mysql', true);
             $row_type = $is_remote_upload_candidate ? 'remote-image' : 'image';
 
+            $insert_data = [
+                'url'             => $url_for_storage,
+                'anchor'          => $anchor_for_storage,
+                'post_id'         => $post->ID,
+                'post_title'      => $post_title_for_storage,
+                'type'            => $row_type,
+                'url_host'        => $metadata['host'],
+                'is_internal'     => $metadata['is_internal'],
+                'http_status'     => null,
+                'last_checked_at' => $checked_at_gmt,
+            ];
+
             $inserted = $wpdb->insert(
                 $table_name,
-                [
-                    'url'             => $url_for_storage,
-                    'anchor'          => $anchor_for_storage,
-                    'post_id'         => $post->ID,
-                    'post_title'      => $post_title_for_storage,
-                    'type'            => $row_type,
-                    'url_host'        => $metadata['host'],
-                    'is_internal'     => $metadata['is_internal'],
-                    'http_status'     => null,
-                    'last_checked_at' => $checked_at_gmt,
-                ],
+                $insert_data,
                 ['%s', '%s', '%d', '%s', '%s', '%s', '%d', '%d', '%s']
             );
             if ($inserted) {
+                $insert_id = isset($wpdb->insert_id) ? (int) $wpdb->insert_id : 0;
+                if ($insert_id > 0 && array_key_exists('http_status', $insert_data) && $insert_data['http_status'] === null) {
+                    $sanitized_table = '`' . esc_sql($table_name) . '`';
+                    $wpdb->query(
+                        $wpdb->prepare(
+                            "UPDATE {$sanitized_table} SET http_status = NULL WHERE id = %d",
+                            $insert_id
+                        )
+                    );
+                }
+
                 $checked_local_paths[$file_path]['reported_posts'][$post->ID] = true;
                 $register_pending_image_insert($post->ID, $row_bytes);
                 blc_adjust_dataset_storage_footprint('image', $row_bytes);
@@ -2541,11 +2554,12 @@ if (!class_exists('ImageScanQueue')) {
                         $row_id = isset($entry['id']) ? (int) $entry['id'] : 0;
                         $bytes  = isset($entry['bytes']) ? (int) $entry['bytes'] : 0;
 
+                        $deleted_rows = 0;
                         if ($row_id > 0) {
-                            $wpdb->delete($table_name, ['id' => $row_id], ['%d']);
+                            $deleted_rows = (int) $wpdb->delete($table_name, ['id' => $row_id], ['%d']);
                         }
 
-                        if ($bytes !== 0) {
+                        if ($deleted_rows > 0 && $bytes !== 0) {
                             blc_adjust_dataset_storage_footprint('image', -$bytes);
                         }
                     }
