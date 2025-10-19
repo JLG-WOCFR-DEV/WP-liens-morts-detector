@@ -16,6 +16,8 @@ if (!defined('ABSPATH')) {
 // Définir les constantes utiles du plugin
 define('BLC_PLUGIN_PATH', plugin_dir_path(__FILE__));
 
+require_once BLC_PLUGIN_PATH . 'includes/autoload.php';
+
 if (!defined('BLC_HTTP_BAD_REQUEST')) {
     define('BLC_HTTP_BAD_REQUEST', 400);
 }
