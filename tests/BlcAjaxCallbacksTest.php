@@ -1250,14 +1250,24 @@ class BlcAjaxCallbacksTest extends TestCase
 
         Functions\when('check_ajax_referer')->justReturn(true);
         Functions\expect('get_post')->once()->with(11)->andReturn(null);
-        Functions\expect('blc_current_user_can_fix_links')->once()->andReturn(true);
+        $capabilityCalls = 0;
+        Functions\when('blc_current_user_can_fix_links')->alias(static function () use (&$capabilityCalls) {
+            $capabilityCalls++;
+
+            return true;
+        });
 
         global $wpdb;
         $wpdb = $this->createAjaxWpdbStub();
         $wpdb->prefix = 'wp_';
         $wpdb->delete_return_value = 1;
 
-        Functions\expect('wp_send_json_success')->once()->with(['purged' => true])->andReturnUsing(function () {
+        Functions\expect('wp_send_json_success')->once()->with([
+            'purged'      => true,
+            'row_removed' => true,
+            'rowRemoved'  => true,
+            'previewOnly' => false,
+        ])->andReturnUsing(function () {
             throw new \Exception('success');
         });
 
@@ -1267,6 +1277,8 @@ class BlcAjaxCallbacksTest extends TestCase
         } catch (\Exception $exception) {
             $this->assertSame('success', $exception->getMessage());
         }
+
+        $this->assertGreaterThanOrEqual(2, $capabilityCalls, 'The capability should be checked for the request and during cleanup.');
 
         $this->assertCount(1, $wpdb->delete_calls, 'Cleanup should remove the orphaned database row.');
         $deleted = $wpdb->delete_calls[0];
@@ -2063,7 +2075,12 @@ class BlcAjaxCallbacksTest extends TestCase
 
         Functions\when('check_ajax_referer')->justReturn(true);
         Functions\expect('get_post')->once()->with(21)->andReturn(null);
-        Functions\expect('blc_current_user_can_fix_links')->once()->andReturn(true);
+        $capabilityCalls = 0;
+        Functions\when('blc_current_user_can_fix_links')->alias(static function () use (&$capabilityCalls) {
+            $capabilityCalls++;
+
+            return true;
+        });
 
         Functions\when('esc_url_raw')->alias(function ($url) {
             return $url;
@@ -2084,6 +2101,8 @@ class BlcAjaxCallbacksTest extends TestCase
         } catch (\Exception $exception) {
             $this->assertSame('success', $exception->getMessage());
         }
+
+        $this->assertGreaterThanOrEqual(2, $capabilityCalls, 'The capability should be checked for the request and during cleanup.');
 
         $this->assertCount(1, $wpdb->delete_calls, 'Cleanup should remove the orphaned database row.');
         $deleted = $wpdb->delete_calls[0];
