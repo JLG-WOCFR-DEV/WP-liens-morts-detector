@@ -44,7 +44,22 @@
             var templateHtml = '';
 
             if ($template.length) {
-                templateHtml = $template.html();
+                var templateElement = $template.get(0);
+
+                if (templateElement && typeof templateElement.innerHTML === 'string') {
+                    templateHtml = templateElement.innerHTML;
+                }
+
+                if (!templateHtml && templateElement && templateElement.content) {
+                    var container = document.createElement('div');
+                    container.appendChild(templateElement.content.cloneNode(true));
+                    templateHtml = container.innerHTML;
+                }
+
+                if (!templateHtml) {
+                    templateHtml = $template.html();
+                }
+
                 if (typeof templateHtml === 'string') {
                     templateHtml = templateHtml.trim();
                 }
@@ -55,11 +70,10 @@
                     return;
                 }
 
-                if ($placeholder.children().length) {
-                    return;
+                if (!$placeholder.children().length) {
+                    $placeholder.html(templateHtml);
                 }
 
-                $placeholder.html(templateHtml);
                 initAdvancedSettings($placeholder);
             }
 

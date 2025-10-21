@@ -434,7 +434,7 @@ describe('settings mode toggle', () => {
         const advancedDetails = placeholder.querySelector('details');
         expect(advancedDetails).not.toBeNull();
         expect(advancedDetails.hasAttribute('open')).toBe(true);
-        expect(initAdvancedSettingsSpy).toHaveBeenCalledTimes(1);
+        expect(initAdvancedSettingsSpy).toHaveBeenCalledTimes(2);
         expect(window.wp.a11y.speak).toHaveBeenCalledWith('Mode avancé activé. Les réglages supplémentaires sont visibles.', 'polite');
     });
 
@@ -460,5 +460,71 @@ describe('settings mode toggle', () => {
         expect(button.getAttribute('aria-checked')).toBe('false');
         expect(window.wp.a11y.speak).toHaveBeenCalledWith('Impossible d’enregistrer votre préférence pour le moment.', 'assertive');
         expect(toast.warning).toHaveBeenCalledWith('Impossible d’enregistrer votre préférence pour le moment.');
+    });
+
+    it('insère les réglages avancés quand le gabarit utilise un élément template natif', async () => {
+        initAdvancedSettingsSpy.mockClear();
+        $.post.mockClear();
+        postDeferred = $.Deferred();
+        $.post.mockReturnValue(postDeferred.promise());
+
+        document.body.innerHTML = `
+            <div class="blc-settings-mode" data-blc-settings-mode-toggle data-current-mode="simple">
+                <div class="blc-settings-mode__intro">
+                    <h2 id="blc-settings-mode-title">Niveau de configuration</h2>
+                    <p id="blc-settings-mode-description">Description</p>
+                </div>
+                <div class="blc-settings-mode__control">
+                    <span id="blc-settings-mode-state" data-blc-settings-mode-state>Mode simple activé — seuls les réglages essentiels sont visibles.</span>
+                    <button type="button" class="button blc-settings-mode__switch" role="switch" aria-checked="false" aria-labelledby="blc-settings-mode-title blc-settings-mode-state" aria-describedby="blc-settings-mode-description" data-blc-settings-mode-control>
+                        <span data-blc-settings-mode-action>Passer en mode avancé</span>
+                    </button>
+                </div>
+            </div>
+            <div class="blc-settings-groups" data-blc-settings-groups>
+                <div class="blc-settings-groups__advanced" data-blc-settings-advanced-placeholder></div>
+            </div>
+            <template id="blc-settings-advanced-template">
+                <details class="blc-settings-group blc-settings-group--collapsible" open>
+                    <summary class="blc-settings-group__summary">
+                        <span class="blc-settings-group__title">Réglages avancés</span>
+                        <span class="blc-settings-group__description">Optimisez les performances.</span>
+                    </summary>
+                    <div class="blc-settings-group__content">
+                        <div class="blc-settings-advanced">
+                            <div class="blc-settings-advanced__tabs" role="tablist">
+                                <button type="button" class="blc-settings-advanced__tab is-active" data-blc-target="demo" aria-selected="true" tabindex="0" role="tab">Démo</button>
+                            </div>
+                            <div class="blc-settings-advanced__panels">
+                                <section class="blc-settings-advanced__panel is-active" data-blc-panel="demo"></section>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+            </template>
+        `;
+
+        window.blcAdminSettings.mode = 'simple';
+
+        initSettingsModeToggle = createSettingsModeToggle($, {
+            toast: toast,
+            accessibility: { speak: window.wp.a11y.speak },
+            initAdvancedSettings: initAdvancedSettingsSpy
+        });
+
+        expect(initSettingsModeToggle()).toBe(true);
+
+        const button = document.querySelector('[data-blc-settings-mode-control]');
+        const placeholder = document.querySelector('[data-blc-settings-advanced-placeholder]');
+
+        $(button).trigger('click');
+
+        expect(placeholder.querySelector('.blc-settings-advanced')).not.toBeNull();
+        expect(initAdvancedSettingsSpy).toHaveBeenCalled();
+
+        postDeferred.resolve({ success: true, data: { mode: 'advanced' } });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(initAdvancedSettingsSpy).toHaveBeenCalledTimes(2);
     });
 });
