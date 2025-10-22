@@ -2028,7 +2028,9 @@ jQuery(document).ready(function($) {
 
         modal.open($.extend({}, modalConfig, {
             onConfirm: function(_value, helpers) {
-                helpers.setSubmitting(true);
+                if (helpers && typeof helpers.setSubmitting === 'function') {
+                    helpers.setSubmitting(true);
+                }
                 $(document).trigger('blcAdmin:bulkActionConfirmed', {
                     action: action,
                     count: $selected.length,
@@ -2573,7 +2575,19 @@ jQuery(document).ready(function($) {
             cancelText: messages.cancelButton,
             closeLabel: messages.closeLabel,
             onConfirm: function(_value, helpers) {
-                helpers.setSubmitting(true);
+                var modalHelpers = helpers || {};
+                var setSubmitting = (modalHelpers && typeof modalHelpers.setSubmitting === 'function')
+                    ? modalHelpers.setSubmitting.bind(modalHelpers)
+                    : function() {};
+                var showError = (modalHelpers && typeof modalHelpers.showError === 'function')
+                    ? modalHelpers.showError.bind(modalHelpers)
+                    : function(message) {
+                        if (message) {
+                            window.alert(message);
+                        }
+                    };
+
+                setSubmitting(true);
 
                 var row = linkElement.closest('tr');
                 row.css('opacity', 0.5);
@@ -2587,18 +2601,18 @@ jQuery(document).ready(function($) {
                     _ajax_nonce: nonce
                 }).done(function(response) {
                     if (response && response.success) {
-                        handleSuccessfulResponse(response, row, helpers);
+                        handleSuccessfulResponse(response, row, modalHelpers);
                     } else {
                         var errorMessage = response && response.data && response.data.message
                             ? response.data.message
                             : messages.genericError;
-                        helpers.setSubmitting(false);
-                        helpers.showError((messages.errorPrefix || '') + errorMessage);
+                        setSubmitting(false);
+                        showError((messages.errorPrefix || '') + errorMessage);
                         row.css('opacity', 1);
                     }
                 }).fail(function() {
-                    helpers.setSubmitting(false);
-                    helpers.showError(messages.genericError);
+                    setSubmitting(false);
+                    showError(messages.genericError);
                     row.css('opacity', 1);
                 });
             }
@@ -2637,7 +2651,11 @@ jQuery(document).ready(function($) {
             contextHtml: contextHtml,
             contextLabel: messages.contextLabel,
             onConfirm: function(_value, helpers) {
-                helpers.close();
+                if (helpers && typeof helpers.close === 'function') {
+                    helpers.close();
+                } else if (modal && typeof modal.close === 'function') {
+                    modal.close();
+                }
             }
         });
     });
@@ -2684,7 +2702,19 @@ jQuery(document).ready(function($) {
             cancelText: messages.cancelButton,
             closeLabel: messages.closeLabel,
             onConfirm: function(_value, helpers) {
-                helpers.setSubmitting(true);
+                var modalHelpers = helpers || {};
+                var setSubmitting = (modalHelpers && typeof modalHelpers.setSubmitting === 'function')
+                    ? modalHelpers.setSubmitting.bind(modalHelpers)
+                    : function() {};
+                var showError = (modalHelpers && typeof modalHelpers.showError === 'function')
+                    ? modalHelpers.showError.bind(modalHelpers)
+                    : function(message) {
+                        if (message) {
+                            window.alert(message);
+                        }
+                    };
+
+                setSubmitting(true);
 
                 var row = linkElement.closest('tr');
                 row.css('opacity', 0.5);
@@ -2704,18 +2734,18 @@ jQuery(document).ready(function($) {
                         if (!response.data.announcement && announcementFallback) {
                             response.data.announcement = announcementFallback;
                         }
-                        handleSuccessfulResponse(response, row, helpers);
+                        handleSuccessfulResponse(response, row, modalHelpers);
                     } else {
                         var errorMessage = response && response.data && response.data.message
                             ? response.data.message
                             : messages.genericError;
-                        helpers.setSubmitting(false);
-                        helpers.showError((messages.errorPrefix || '') + errorMessage);
+                        setSubmitting(false);
+                        showError((messages.errorPrefix || '') + errorMessage);
                         row.css('opacity', 1);
                     }
                 }).fail(function() {
-                    helpers.setSubmitting(false);
-                    helpers.showError(messages.genericError);
+                    setSubmitting(false);
+                    showError(messages.genericError);
                     row.css('opacity', 1);
                 });
             }
@@ -3512,7 +3542,9 @@ jQuery(document).ready(function($) {
                     return $wrapper;
                 },
                 onConfirm: function(_value, helpers) {
-                    helpers.setSubmitting(true);
+                    if (helpers && typeof helpers.setSubmitting === 'function') {
+                        helpers.setSubmitting(true);
+                    }
                     sendStartRequest(isFullScan, {
                         forceCancel: true,
                         confirmationHelpers: helpers
