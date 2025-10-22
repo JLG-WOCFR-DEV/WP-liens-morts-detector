@@ -3512,7 +3512,9 @@ jQuery(document).ready(function($) {
                     return $wrapper;
                 },
                 onConfirm: function(_value, helpers) {
-                    helpers.setSubmitting(true);
+                    if (helpers && typeof helpers.setSubmitting === 'function') {
+                        helpers.setSubmitting(true);
+                    }
                     sendStartRequest(isFullScan, {
                         forceCancel: true,
                         confirmationHelpers: helpers
