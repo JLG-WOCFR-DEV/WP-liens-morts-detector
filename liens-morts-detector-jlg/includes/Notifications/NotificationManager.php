@@ -476,7 +476,7 @@ class NotificationManager
         $requestArgs = \apply_filters('blc_notification_webhook_request_args', $requestArgs, $datasetType, $summary, $settings, $payload);
 
         $response = \wp_remote_post($settings['url'], $requestArgs);
-        if (\is_wp_error($response)) {
+        if (\blc_is_wp_error($response)) {
             return $response;
         }
 

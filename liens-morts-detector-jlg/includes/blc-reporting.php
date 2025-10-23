@@ -526,12 +526,12 @@ if (!function_exists('blc_generate_automated_report_csv')) {
 
         $upload_info = function_exists('wp_upload_dir') ? wp_upload_dir() : null;
         $storage = blc_get_report_storage_directory($upload_info);
-        if (is_wp_error($storage)) {
+        if (blc_is_wp_error($storage)) {
             return $storage;
         }
 
         $rows = blc_query_report_rows($normalized_type, $context);
-        if (is_wp_error($rows)) {
+        if (blc_is_wp_error($rows)) {
             return $rows;
         }
 
@@ -677,7 +677,7 @@ if (!function_exists('blc_handle_generate_automated_report')) {
     function blc_handle_generate_automated_report($dataset_type, $context = [])
     {
         $result = blc_generate_automated_report_csv($dataset_type, is_array($context) ? $context : []);
-        if (is_wp_error($result) && function_exists('do_action')) {
+        if (blc_is_wp_error($result) && function_exists('do_action')) {
             do_action('blc_automated_report_generation_failed', $dataset_type, $context, $result);
         }
     }

@@ -535,7 +535,7 @@ if (!function_exists('blc_s3_put_object')) {
             'timeout' => $timeout,
         ]);
 
-        if (is_wp_error($response)) {
+        if (blc_is_wp_error($response)) {
             return $response;
         }
 
@@ -583,7 +583,7 @@ if (!function_exists('blc_s3_handle_report_export')) {
 
         $response = blc_s3_put_object($settings, $object_key, (string) $metadata['file_path']);
 
-        if (is_wp_error($response)) {
+        if (blc_is_wp_error($response)) {
             blc_s3_store_error($response->get_error_code(), $response->get_error_message());
 
             return;

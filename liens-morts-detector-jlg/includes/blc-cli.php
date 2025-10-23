@@ -78,7 +78,7 @@ class BLC_Scan_CLI_Command extends WP_CLI_Command
                 \WP_CLI::log(sprintf('→ Lancement du lot de liens #%d (scan complet : %s)…', $batch, $is_full ? 'oui' : 'non'));
 
                 $result = $controller->runBatch($batch, $is_full, $bypass, $context);
-                if (is_wp_error($result)) {
+                if (blc_is_wp_error($result)) {
                     \WP_CLI::error($result->get_error_message());
                 }
 
@@ -117,7 +117,7 @@ class BLC_Scan_CLI_Command extends WP_CLI_Command
                 \WP_CLI::log(sprintf('→ Lancement du lot d\'images #%d…', $batch));
 
                 $result = $controller->run($batch, $is_full);
-                if (is_wp_error($result)) {
+                if (blc_is_wp_error($result)) {
                     \WP_CLI::error($result->get_error_message());
                 }
 
@@ -370,7 +370,7 @@ class BLC_Worker_CLI_Command extends WP_CLI_Command
 
             $result = $queue->runBatch($batch, $is_full, $bypass, $context);
 
-            if (is_wp_error($result)) {
+            if (blc_is_wp_error($result)) {
                 $message = $result->get_error_message();
                 \WP_CLI::warning(sprintf('Lot #%d en erreur : %s', $batch, $message));
                 $driver->reportFailure($job, new \RuntimeException($message));

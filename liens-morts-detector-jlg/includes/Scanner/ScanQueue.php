@@ -423,7 +423,7 @@ class ScanQueue {
                 if (!empty($post_ids_in_batch)) {
                     $scan_run_token = blc_generate_scan_run_token();
                     $stage_result = blc_stage_dataset_refresh($table_name, $link_dataset_row_types, $scan_run_token, $post_ids_in_batch);
-                    if (is_wp_error($stage_result)) {
+                    if (blc_is_wp_error($stage_result)) {
                         if ($lock_token !== '') {
                             blc_release_link_scan_lock($lock_token);
                         }
@@ -1203,14 +1203,14 @@ class ScanQueue {
                                 $get_request_args
                             ) {
                                 $soft_404_reason = '';
-                                if (!is_wp_error($response)) {
+                                if (!blc_is_wp_error($response)) {
                                     $resolved_target_url = blc_determine_response_target_url($response, $normalized_url);
                                     if ($resolved_target_url !== '') {
                                         $detected_target_for_storage = blc_prepare_url_for_storage($resolved_target_url);
                                     }
                                 }
 
-                                if (is_wp_error($response)) {
+                                if (blc_is_wp_error($response)) {
                                     if ($head_request_disallowed || $fallback_due_to_temporary_status) {
                                         $should_retry_later = true;
                                     } else {
@@ -1293,7 +1293,7 @@ class ScanQueue {
                                         $followup_failed = false;
                                         if ($body_content === '' && !$used_get_request) {
                                             $followup_response = $remote_request_client->get($normalized_url, $get_request_args);
-                                            if (is_wp_error($followup_response)) {
+                                            if (blc_is_wp_error($followup_response)) {
                                                 $followup_failed = true;
                                             } else {
                                                 $effective_response = $followup_response;
@@ -1721,7 +1721,7 @@ class ScanQueue {
 
                     if ($scan_run_token !== '') {
                         $commit_result = blc_commit_dataset_refresh($table_name, $link_dataset_row_types, $scan_run_token, 'link', [$post->ID]);
-                        if (is_wp_error($commit_result)) {
+                        if (blc_is_wp_error($commit_result)) {
                             $batch_wp_error = $commit_result;
                             break;
                         }
@@ -1772,7 +1772,7 @@ class ScanQueue {
 
                     if ($scan_run_token !== '') {
                         $commit_result = blc_commit_dataset_refresh($table_name, $link_dataset_row_types, $scan_run_token, 'link', [0]);
-                        if (is_wp_error($commit_result)) {
+                        if (blc_is_wp_error($commit_result)) {
                             $batch_wp_error = $commit_result;
                         }
 

@@ -2185,7 +2185,7 @@ if (!class_exists('ImageScanQueue')) {
             if (!empty($post_ids_in_batch)) {
                 $scan_run_token = blc_generate_scan_run_token();
                 $stage_result = blc_stage_dataset_refresh($table_name, $image_dataset_row_types, $scan_run_token, $post_ids_in_batch);
-                if (is_wp_error($stage_result)) {
+                if (blc_is_wp_error($stage_result)) {
                     if ($lock_token !== '') {
                         blc_release_image_scan_lock($lock_token);
                     }
@@ -2403,7 +2403,7 @@ if (!class_exists('ImageScanQueue')) {
                             $batch_exception = $commit_exception;
                             break;
                         }
-                        if (is_wp_error($commit_result)) {
+                        if (blc_is_wp_error($commit_result)) {
                             $batch_wp_error = $commit_result;
                             break;
                         }
@@ -5089,7 +5089,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
 
     $result = $controller->runBatch((int) $batch, (bool) $is_full_scan, (bool) $bypass_rest_window, $job_context);
 
-    if (function_exists('is_wp_error') && is_wp_error($result)) {
+    if (function_exists('is_wp_error') && blc_is_wp_error($result)) {
         $message = $result->get_error_message();
         blc_update_link_scan_status([
             'state'       => 'failed',
@@ -5107,7 +5107,7 @@ function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_windo
         'duration_ms'        => $duration_ms,
         'timestamp'          => time(),
         'state'              => isset($status['state']) ? (string) $status['state'] : 'unknown',
-        'success'            => !(function_exists('is_wp_error') && is_wp_error($result)) && (!isset($status['state']) || $status['state'] !== 'failed'),
+        'success'            => !(function_exists('is_wp_error') && blc_is_wp_error($result)) && (!isset($status['state']) || $status['state'] !== 'failed'),
         'processed_batches'  => isset($status['processed_batches']) ? (int) $status['processed_batches'] : 0,
         'total_batches'      => isset($status['total_batches']) ? (int) $status['total_batches'] : 0,
         'processed_items'    => isset($status['processed_items']) ? (int) $status['processed_items'] : 0,
@@ -5174,7 +5174,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) {
         $result = $controller->run($batch, $is_full_scan);
     }
 
-    if (function_exists('is_wp_error') && is_wp_error($result)) {
+    if (function_exists('is_wp_error') && blc_is_wp_error($result)) {
         $message = $result->get_error_message();
 
         blc_update_image_scan_status([
@@ -5194,7 +5194,7 @@ function blc_perform_image_check($batch = 0, $is_full_scan = true) {
         'duration_ms'        => $duration_ms,
         'timestamp'          => time(),
         'state'              => isset($status['state']) ? (string) $status['state'] : 'unknown',
-        'success'            => !(function_exists('is_wp_error') && is_wp_error($result)) && (!isset($status['state']) || $status['state'] !== 'failed'),
+        'success'            => !(function_exists('is_wp_error') && blc_is_wp_error($result)) && (!isset($status['state']) || $status['state'] !== 'failed'),
         'processed_batches'  => isset($status['processed_batches']) ? (int) $status['processed_batches'] : 0,
         'total_batches'      => isset($status['total_batches']) ? (int) $status['total_batches'] : 0,
         'processed_items'    => isset($status['processed_items']) ? (int) $status['processed_items'] : 0,
