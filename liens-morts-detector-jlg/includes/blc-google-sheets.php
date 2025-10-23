@@ -272,7 +272,7 @@ if (!function_exists('blc_google_sheets_maybe_refresh_token')) {
             ]
         );
 
-        if (is_wp_error($response)) {
+        if (blc_is_wp_error($response)) {
             blc_google_sheets_store_error('token_refresh_failed', $response->get_error_message());
 
             return $settings;
@@ -422,7 +422,7 @@ if (!function_exists('blc_google_sheets_push_values')) {
             ]
         );
 
-        if (is_wp_error($response)) {
+        if (blc_is_wp_error($response)) {
             return $response;
         }
 
@@ -474,7 +474,7 @@ if (!function_exists('blc_google_sheets_handle_report_export')) {
         }
 
         $values = blc_google_sheets_extract_csv_values((string) $metadata['file_path']);
-        if (is_wp_error($values)) {
+        if (blc_is_wp_error($values)) {
             blc_google_sheets_store_error($values->get_error_code(), $values->get_error_message());
 
             return;
@@ -487,7 +487,7 @@ if (!function_exists('blc_google_sheets_handle_report_export')) {
             $settings['access_token']
         );
 
-        if (is_wp_error($response)) {
+        if (blc_is_wp_error($response)) {
             blc_google_sheets_store_error($response->get_error_code(), $response->get_error_message());
 
             return;

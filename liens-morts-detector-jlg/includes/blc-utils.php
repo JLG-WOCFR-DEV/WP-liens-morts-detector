@@ -735,7 +735,7 @@ function blc_prepare_context_excerpt_for_storage($text) {
 function blc_determine_response_target_url($response, $fallback_url) {
     $target = is_string($fallback_url) ? $fallback_url : '';
 
-    if (is_wp_error($response)) {
+    if (blc_is_wp_error($response)) {
         return $target;
     }
 

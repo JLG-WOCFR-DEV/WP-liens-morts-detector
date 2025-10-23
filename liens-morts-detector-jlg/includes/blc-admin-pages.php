@@ -2053,7 +2053,7 @@ function blc_schedule_manual_link_scan($is_full_scan = false, $force_cancel = fa
         if (null !== $manual_trigger_result) {
             $is_error = (false === $manual_trigger_result);
 
-            if (function_exists('is_wp_error') && is_wp_error($manual_trigger_result)) {
+            if (function_exists('is_wp_error') && blc_is_wp_error($manual_trigger_result)) {
                 $is_error = true;
                 $manual_trigger_error = $manual_trigger_result->get_error_message();
             }
@@ -2209,7 +2209,7 @@ function blc_schedule_manual_image_scan() {
         if (null !== $manual_trigger_result) {
             $is_error = (false === $manual_trigger_result);
 
-            if (function_exists('is_wp_error') && is_wp_error($manual_trigger_result)) {
+            if (function_exists('is_wp_error') && blc_is_wp_error($manual_trigger_result)) {
                 $is_error = true;
             }
 
@@ -5360,7 +5360,7 @@ function blc_ajax_save_links_view() {
 
     $result = blc_save_link_view($name, is_array($filters) ? $filters : array(), 0, $default_flag);
 
-    if (is_wp_error($result)) {
+    if (blc_is_wp_error($result)) {
         $error_data = array(
             'message' => $result->get_error_message(),
             'code'    => $result->get_error_code(),
@@ -5407,7 +5407,7 @@ function blc_ajax_delete_links_view() {
 
     $result = blc_delete_link_view($view_id);
 
-    if (is_wp_error($result)) {
+    if (blc_is_wp_error($result)) {
         $error_data = array(
             'message' => $result->get_error_message(),
             'code'    => $result->get_error_code(),

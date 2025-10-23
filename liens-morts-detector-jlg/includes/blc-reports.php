@@ -23,7 +23,7 @@ if (!function_exists('blc_run_automated_report_exports')) {
         }
 
         $directory = blc_prepare_report_export_directory();
-        if (function_exists('is_wp_error') && is_wp_error($directory)) {
+        if (function_exists('is_wp_error') && blc_is_wp_error($directory)) {
             blc_log_report_export_error($directory);
 
             return;
@@ -43,7 +43,7 @@ if (!function_exists('blc_run_automated_report_exports')) {
             }
 
             $rows = blc_collect_report_rows($dataset_type);
-            if (function_exists('is_wp_error') && is_wp_error($rows)) {
+            if (function_exists('is_wp_error') && blc_is_wp_error($rows)) {
                 blc_log_report_export_error($rows);
                 blc_record_report_export_result($dataset_type, $status, null, true);
 
@@ -51,7 +51,7 @@ if (!function_exists('blc_run_automated_report_exports')) {
             }
 
             $metadata = blc_write_report_export($dataset_type, $rows, $directory, $status);
-            if (function_exists('is_wp_error') && is_wp_error($metadata)) {
+            if (function_exists('is_wp_error') && blc_is_wp_error($metadata)) {
                 blc_log_report_export_error($metadata);
                 blc_record_report_export_result($dataset_type, $status, null, true);
 

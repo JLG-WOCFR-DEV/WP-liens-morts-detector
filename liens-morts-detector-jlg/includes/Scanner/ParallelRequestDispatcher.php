@@ -127,7 +127,7 @@ class ParallelRequestDispatcher
             $headRequestDisallowed = false;
 
             if ($job['scan_method'] === 'precise') {
-                if (is_wp_error($headResponse)) {
+                if (blc_is_wp_error($headResponse)) {
                     $needsGetFallback = true;
                 } else {
                     $headStatus = (int) $this->client->responseCode($headResponse);
@@ -139,7 +139,7 @@ class ParallelRequestDispatcher
                     }
                 }
             } else {
-                if (!is_wp_error($headResponse)) {
+                if (!blc_is_wp_error($headResponse)) {
                     $headStatus = (int) $this->client->responseCode($headResponse);
                     if (in_array($headStatus, [403, 405, 501], true)) {
                         $needsGetFallback = true;
