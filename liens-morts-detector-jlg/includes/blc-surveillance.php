@@ -68,6 +68,8 @@ if (!function_exists('blc_get_surveillance_threshold_definitions')) {
      * @return array{global:array<int,array<string,mixed>>,taxonomy:array<int,array<string,mixed>>}
      */
     function blc_get_surveillance_threshold_definitions() {
+        static $call_depth = 0;
+
         $defaults = blc_get_surveillance_threshold_defaults();
         $stored   = array();
 
@@ -80,21 +82,27 @@ if (!function_exists('blc_get_surveillance_threshold_definitions')) {
 
         $stored = blc_normalize_surveillance_thresholds($stored);
 
-        $definitions = array(
-            'global'   => blc_merge_surveillance_threshold_groups($defaults['global'], $stored['global']),
-            'taxonomy' => blc_merge_surveillance_threshold_groups($defaults['taxonomy'], $stored['taxonomy']),
-        );
+        $call_depth++;
 
-        if (function_exists('apply_filters')) {
-            /**
-             * Allow plugins to customize the surveillance thresholds before evaluation.
-             *
-             * @param array{global:array<int,array<string,mixed>>,taxonomy:array<int,array<string,mixed>>} $definitions Threshold definitions.
-             */
-            $definitions = apply_filters('blc_surveillance_threshold_definitions', $definitions);
+        try {
+            $definitions = array(
+                'global'   => blc_merge_surveillance_threshold_groups($defaults['global'], $stored['global']),
+                'taxonomy' => blc_merge_surveillance_threshold_groups($defaults['taxonomy'], $stored['taxonomy']),
+            );
+
+            if ($call_depth === 1 && function_exists('apply_filters')) {
+                /**
+                 * Allow plugins to customize the surveillance thresholds before evaluation.
+                 *
+                 * @param array{global:array<int,array<string,mixed>>,taxonomy:array<int,array<string,mixed>>} $definitions Threshold definitions.
+                 */
+                $definitions = apply_filters('blc_surveillance_threshold_definitions', $definitions);
+            }
+
+            return blc_normalize_surveillance_thresholds($definitions);
+        } finally {
+            $call_depth--;
         }
-
-        return blc_normalize_surveillance_thresholds($definitions);
     }
 }
 
