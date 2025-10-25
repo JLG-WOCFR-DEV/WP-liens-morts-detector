@@ -594,8 +594,8 @@ class AdminListTablesTest extends TestCase
 
         unset($_GET['link_type']);
 
-        $this->assertStringContainsString('type = %s', $wpdb->last_get_var_query);
-        $this->assertStringContainsString('type = %s', $wpdb->last_get_results_query);
+        $this->assertStringContainsString("type = 'iframe'", $wpdb->last_get_var_query);
+        $this->assertStringContainsString("type = 'iframe'", $wpdb->last_get_results_query);
 
         $matching_calls = array_filter(
             $wpdb->prepare_calls,
@@ -633,22 +633,40 @@ class AdminListTablesTest extends TestCase
         $this->assertStringContainsString("(url LIKE '//example.com%' AND url REGEXP '^//example\\\.com(?:[/?#]|$)')", $wpdb->last_get_row_query);
         $this->assertStringContainsString("'/%'", $wpdb->last_get_row_query);
         $this->assertStringContainsString("WHEN (url NOT LIKE '%://%' AND url NOT LIKE '//%' AND url NOT LIKE '%:%'", $wpdb->last_get_row_query);
-        $prepare_call = end($wpdb->prepare_calls);
+        $prepare_call = null;
+        foreach (array_reverse($wpdb->prepare_calls) as $candidate_call) {
+            if (!is_array($candidate_call)) {
+                continue;
+            }
+
+            $params = $candidate_call['params'] ?? ($candidate_call[1] ?? null);
+            if (!is_array($params)) {
+                continue;
+            }
+
+            if (in_array('https://example.com%', $params, true) && in_array('^https://example\\.com(?:[/?#]|$)', $params, true)) {
+                $prepare_call = $candidate_call;
+                break;
+            }
+        }
+
         $this->assertIsArray($prepare_call);
+
+        $params = $prepare_call['params'] ?? $prepare_call[1];
         $expected_types = ['link', 'iframe', 'script', 'stylesheet', 'form', 'css-background'];
         foreach ($expected_types as $expected_type) {
-            $this->assertContains($expected_type, $prepare_call[1]);
+            $this->assertContains($expected_type, $params);
         }
-        $this->assertContains('https://example.com%', $prepare_call[1]);
-        $this->assertContains('^https://example\\.com(?:[/?#]|$)', $prepare_call[1]);
-        $this->assertContains('http://example.com%', $prepare_call[1]);
-        $this->assertContains('^http://example\\.com(?:[/?#]|$)', $prepare_call[1]);
-        $this->assertContains('//example.com%', $prepare_call[1]);
-        $this->assertContains('^//example\\.com(?:[/?#]|$)', $prepare_call[1]);
-        $this->assertContains('/%', $prepare_call[1]);
-        $this->assertContains('%://%', $prepare_call[1]);
-        $this->assertContains('//%', $prepare_call[1]);
-        $this->assertContains('%:%', $prepare_call[1]);
+        $this->assertContains('https://example.com%', $params);
+        $this->assertContains('^https://example\\.com(?:[/?#]|$)', $params);
+        $this->assertContains('http://example.com%', $params);
+        $this->assertContains('^http://example\\.com(?:[/?#]|$)', $params);
+        $this->assertContains('//example.com%', $params);
+        $this->assertContains('^//example\\.com(?:[/?#]|$)', $params);
+        $this->assertContains('/%', $params);
+        $this->assertContains('%://%', $params);
+        $this->assertContains('//%', $params);
+        $this->assertContains('%:%', $params);
     }
 
     public function test_links_get_views_counts_internal_includes_http_links(): void
@@ -798,7 +816,14 @@ class DummyWpdb
             $args = array_slice(func_get_args(), 1);
         }
 
-        $this->prepare_calls[] = [$query, $args];
+        $entry = [
+            $query,
+            $args,
+            'query'  => $query,
+            'params' => $args,
+        ];
+
+        $this->prepare_calls[] = $entry;
 
         $escaped = array_map(function ($value) {
             if (is_string($value)) {

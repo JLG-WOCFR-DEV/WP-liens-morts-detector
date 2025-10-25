@@ -9,8 +9,107 @@ namespace {
     }
 
     if (!function_exists('blc_reset_link_check_schedule')) {
-        function blc_reset_link_check_schedule(): void
+        function blc_reset_link_check_schedule(array $args = array()): array
         {
+            $defaults = array(
+                'frequency'           => null,
+                'custom_hours'        => null,
+                'custom_time'         => null,
+                'context'             => 'settings',
+                'reference_timestamp' => null,
+            );
+
+            $args = array_merge($defaults, $args);
+
+            $frequency = $args['frequency'] ?? null;
+            if ($frequency === null && function_exists('get_option')) {
+                $frequency = get_option('blc_frequency', 'daily');
+            }
+
+            if ($frequency === null || $frequency === '') {
+                $frequency = 'daily';
+            }
+
+            $schedule_slug = function_exists('blc_resolve_cron_schedule_slug')
+                ? blc_resolve_cron_schedule_slug($frequency)
+                : (string) $frequency;
+
+            if ($schedule_slug === '') {
+                $schedule_slug = 'daily';
+            }
+
+            $timestamp = time();
+            if ($schedule_slug === 'blc_custom_interval' && isset($args['reference_timestamp']) && is_int($args['reference_timestamp'])) {
+                $timestamp = $args['reference_timestamp'];
+            }
+
+            $result = array(
+                'success'            => false,
+                'schedule'           => $schedule_slug,
+                'timestamp'          => $timestamp,
+                'restore_attempted'  => false,
+                'restored'           => false,
+                'previous_timestamp' => null,
+                'previous_schedule'  => null,
+                'error_code'         => '',
+                'error_message'      => '',
+            );
+
+            if (function_exists('wp_get_schedules')) {
+                $schedules = wp_get_schedules();
+                if (is_array($schedules) && !isset($schedules[$schedule_slug])) {
+                    $result['error_code']    = 'missing_schedule';
+                    $result['error_message'] = sprintf('BLC: Schedule "%s" is not registered.', $schedule_slug);
+
+                    return $result;
+                }
+            }
+
+            if (function_exists('wp_clear_scheduled_hook')) {
+                wp_clear_scheduled_hook('blc_check_links');
+            }
+
+            $scheduled = true;
+            if (function_exists('wp_schedule_event')) {
+                $scheduled = wp_schedule_event($timestamp, $schedule_slug, 'blc_check_links');
+            }
+
+            if ($scheduled === false) {
+                $result['error_code']    = 'schedule_failed';
+                $result['error_message'] = sprintf(
+                    'BLC: Failed to schedule automatic link check (frequency: %s, context: %s).',
+                    $schedule_slug,
+                    isset($args['context']) ? (string) $args['context'] : 'unknown'
+                );
+
+                if (function_exists('error_log')) {
+                    error_log($result['error_message']);
+                }
+
+                if (function_exists('do_action')) {
+                    do_action('blc_check_links_schedule_failed', $schedule_slug, $args['context']);
+                }
+
+                return $result;
+            }
+
+            $result['success'] = true;
+
+            if (function_exists('do_action')) {
+                do_action(
+                    'blc_check_links_schedule_updated',
+                    $schedule_slug,
+                    $timestamp,
+                    array(
+                        'frequency'    => $frequency,
+                        'custom_hours' => $args['custom_hours'],
+                        'custom_time'  => $args['custom_time'],
+                        'context'      => $args['context'],
+                    )
+                );
+            }
+
+            return $result;
         }
     }
 
@@ -18,9 +117,30 @@ namespace {
         function blc_get_notification_status_filter_definitions(): array
         {
             return array(
-                '4xx' => array('label' => 'Erreurs 4xx'),
-                '5xx' => array('label' => 'Erreurs 5xx'),
-                'ok'  => array('label' => 'Validés'),
+                'status_404_410' => array(
+                    'label' => '404 / 410',
+                    'sql'   => static function ($column) {
+                        return sprintf('%s IN (404, 410)', $column);
+                    },
+                ),
+                'status_5xx' => array(
+                    'label' => 'Erreurs 5xx',
+                    'sql'   => static function ($column) {
+                        return sprintf('(%s BETWEEN 500 AND 599)', $column);
+                    },
+                ),
+                'status_redirects' => array(
+                    'label' => 'Redirections (3xx)',
+                    'sql'   => static function ($column) {
+                        return sprintf('(%s BETWEEN 300 AND 399)', $column);
+                    },
+                ),
+                'status_other' => array(
+                    'label' => 'Autres statuts',
+                    'sql'   => static function ($column) {
+                        return sprintf('(%s IS NULL OR %s = 0)', $column, $column);
+                    },
+                ),
             );
         }
     }

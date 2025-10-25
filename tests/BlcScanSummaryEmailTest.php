@@ -116,6 +116,23 @@ class BlcScanSummaryEmailTest extends TestCase
         Functions\when('number_format_i18n')->alias(static function ($number, $decimals = 0) {
             return number_format((float) $number, $decimals, ',', ' ');
         });
+        Functions\when('blc_get_notification_status_filters')->alias(static function ($override = null) {
+            if (is_array($override)) {
+                return $override;
+            }
+
+            $stored = OptionsStore::$options['blc_notification_status_filters'] ?? blc_get_default_notification_status_filters();
+
+            if (is_string($stored)) {
+                $stored = [$stored];
+            }
+
+            if (!is_array($stored)) {
+                return blc_get_default_notification_status_filters();
+            }
+
+            return $stored;
+        });
     }
 
     protected function tearDown(): void
@@ -128,6 +145,7 @@ class BlcScanSummaryEmailTest extends TestCase
     public function test_summary_includes_top_issues_and_trend(): void
     {
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-settings-fields.php';
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-utils.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-scanner.php';
 
         $default_filters = blc_get_default_notification_status_filters();
