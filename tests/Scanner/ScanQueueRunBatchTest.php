@@ -280,13 +280,17 @@ final class ScanQueueRunBatchTest extends ScannerTestCase
 
 
         Functions\when('wp_safe_remote_head')->alias(fn() => new \WP_Error('http_error', 'HEAD blocked'));
+        Functions\when('wp_remote_head')->alias(fn() => new \WP_Error('http_error', 'HEAD blocked'));
 
-        Functions\when('wp_safe_remote_get')->alias(function () {
+        $soft404Response = function () {
             return [
                 'body'     => '<html><head><title>Page Introuvable</title></head><body><h1>Erreur 404</h1></body></html>',
                 'response' => ['code' => 200],
             ];
-        });
+        };
+
+        Functions\when('wp_safe_remote_get')->alias($soft404Response);
+        Functions\when('wp_remote_get')->alias($soft404Response);
 
         $queue = new ScanQueue(new RemoteRequestClient());
         $result = $queue->runBatch(0, true, true);
@@ -403,13 +407,17 @@ final class ScanQueueRunBatchTest extends ScannerTestCase
         $this->options['blc_soft_404_ignore_patterns'] = "Profil introuvable";
 
         Functions\when('wp_safe_remote_head')->alias(fn() => new \WP_Error('http_error', 'HEAD blocked'));
+        Functions\when('wp_remote_head')->alias(fn() => new \WP_Error('http_error', 'HEAD blocked'));
 
-        Functions\when('wp_safe_remote_get')->alias(function () {
+        $profileResponse = function () {
             return [
                 'body'     => '<html><head><title>Profil introuvable</title></head><body><p>Profil introuvable</p></body></html>',
                 'response' => ['code' => 200],
             ];
-        });
+        };
+
+        Functions\when('wp_safe_remote_get')->alias($profileResponse);
+        Functions\when('wp_remote_get')->alias($profileResponse);
 
         $queue = new ScanQueue(new RemoteRequestClient());
         $result = $queue->runBatch(0, true, true);

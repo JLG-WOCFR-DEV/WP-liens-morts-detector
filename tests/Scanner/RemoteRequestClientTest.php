@@ -309,4 +309,52 @@ final class RemoteRequestClientTest extends ScannerTestCase
         $this->assertArrayHasKey('proxy-a', $health);
         $this->assertGreaterThan(0, $health['proxy-a']['failure_count']);
     }
+
+    public function test_get_request_falls_back_to_wp_remote_when_host_blocked(): void
+    {
+        $captured = [];
+
+        Functions\when('wp_safe_remote_get')->alias(static function () {
+            return new \WP_Error('http_request_not_allowed', 'Host blocked by WP HTTP API');
+        });
+
+        Functions\when('wp_remote_get')->alias(function ($url, $args) use (&$captured) {
+            $captured[] = [$url, $args];
+
+            return ['response' => ['code' => 200]];
+        });
+
+        $client = new RemoteRequestClient();
+
+        $response = $client->get('https://blocked.example', ['timeout' => 8]);
+
+        $this->assertSame(['response' => ['code' => 200]], $response);
+        $this->assertCount(1, $captured);
+        $this->assertSame('https://blocked.example', $captured[0][0]);
+        $this->assertSame(8, $captured[0][1]['timeout']);
+    }
+
+    public function test_head_request_falls_back_to_wp_remote_when_host_blocked(): void
+    {
+        $captured = [];
+
+        Functions\when('wp_safe_remote_head')->alias(static function () {
+            return new \WP_Error('http_request_not_allowed', 'Host blocked by WP HTTP API');
+        });
+
+        Functions\when('wp_remote_head')->alias(function ($url, $args) use (&$captured) {
+            $captured[] = [$url, $args];
+
+            return ['response' => ['code' => 200]];
+        });
+
+        $client = new RemoteRequestClient();
+
+        $response = $client->head('https://blocked.example', ['timeout' => 5]);
+
+        $this->assertSame(['response' => ['code' => 200]], $response);
+        $this->assertCount(1, $captured);
+        $this->assertSame('https://blocked.example', $captured[0][0]);
+        $this->assertSame(5, $captured[0][1]['timeout']);
+    }
 }
