@@ -228,10 +228,22 @@ class RemoteRequestClient implements HttpClientInterface
         $this->lastRequestAt = microtime(true);
 
         if ($method === 'head') {
-            return \wp_safe_remote_head($url, $args);
+            $response = \wp_safe_remote_head($url, $args);
+
+            if ($response instanceof WP_Error && $response->get_error_code() === 'http_request_not_allowed') {
+                $response = \wp_remote_head($url, $args);
+            }
+
+            return $response;
         }
 
-        return \wp_safe_remote_get($url, $args);
+        $response = \wp_safe_remote_get($url, $args);
+
+        if ($response instanceof WP_Error && $response->get_error_code() === 'http_request_not_allowed') {
+            $response = \wp_remote_get($url, $args);
+        }
+
+        return $response;
     }
 
     /**

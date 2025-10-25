@@ -26,6 +26,9 @@ class RedisQueueDriver implements QueueDriverInterface
     /** @var string */
     private $queueKey;
 
+    /** @var string */
+    private $delayedKey;
+
     /** @var int */
     private $blockingTimeout;
 
@@ -35,6 +38,7 @@ class RedisQueueDriver implements QueueDriverInterface
         $this->port = isset($config['port']) ? (int) $config['port'] : 6379;
         $this->password = isset($config['password']) ? (string) $config['password'] : '';
         $this->queueKey = isset($config['queue']) ? (string) $config['queue'] : 'blc:scan-queue';
+        $this->delayedKey = $this->queueKey . ':delayed';
         $this->blockingTimeout = isset($config['blocking_timeout']) ? (int) $config['blocking_timeout'] : 5;
     }
 
@@ -58,12 +62,14 @@ class RedisQueueDriver implements QueueDriverInterface
             return false;
         }
 
+        $availableAt = time() + max(0, $delaySeconds);
+
         $payload = [
             'batch'              => isset($job['batch']) ? (int) $job['batch'] : 0,
             'is_full_scan'       => isset($job['is_full_scan']) ? (bool) $job['is_full_scan'] : false,
             'bypass_rest_window' => isset($job['bypass_rest_window']) ? (bool) $job['bypass_rest_window'] : false,
             'context'            => isset($job['context']) && is_array($job['context']) ? $job['context'] : [],
-            'available_at'       => time() + max(0, $delaySeconds),
+            'available_at'       => $availableAt,
             'enqueued_at'        => time(),
         ];
 
@@ -73,6 +79,10 @@ class RedisQueueDriver implements QueueDriverInterface
         }
 
         try {
+            if ($delaySeconds > 0) {
+                return (bool) $this->client->zAdd($this->delayedKey, $availableAt, $encoded);
+            }
+
             return (bool) $this->client->rPush($this->queueKey, $encoded);
         } catch (\RedisException $exception) {
             $this->connected = false;
@@ -85,6 +95,8 @@ class RedisQueueDriver implements QueueDriverInterface
         if (!$this->connect()) {
             return null;
         }
+
+        $this->releaseDueDelayedJobs();
 
         try {
             $result = $this->client->brPop([$this->queueKey], max(1, $this->blockingTimeout));
@@ -104,16 +116,7 @@ class RedisQueueDriver implements QueueDriverInterface
 
         $availableAt = isset($payload['available_at']) ? (int) $payload['available_at'] : 0;
         if ($availableAt > time()) {
-            // Not ready yet: requeue at the end and wait.
-            try {
-                $this->client->rPush($this->queueKey, $result[1]);
-            } catch (\RedisException $exception) {
-                $this->connected = false;
-            }
-
-            $sleepDuration = min(5, max(1, $availableAt - time()));
-            sleep($sleepDuration);
-
+            $this->storeDelayedJob($availableAt, $result[1]);
             return null;
         }
 
@@ -214,6 +217,68 @@ class RedisQueueDriver implements QueueDriverInterface
         }
 
         return $decoded;
+    }
+
+    private function releaseDueDelayedJobs(): void
+    {
+        if (!$this->client instanceof \Redis) {
+            return;
+        }
+
+        try {
+            $due = $this->client->zRangeByScore($this->delayedKey, '-inf', time());
+        } catch (\RedisException $exception) {
+            $this->connected = false;
+            return;
+        }
+
+        if (!is_array($due) || $due === []) {
+            return;
+        }
+
+        try {
+            $transactionStarted = $this->client->multi();
+
+            if ($transactionStarted === false) {
+                foreach ($due as $encoded) {
+                    $this->client->zRem($this->delayedKey, $encoded);
+                }
+                foreach (array_reverse($due) as $encoded) {
+                    $this->client->rPush($this->queueKey, $encoded);
+                }
+
+                return;
+            }
+
+            foreach ($due as $encoded) {
+                $this->client->zRem($this->delayedKey, $encoded);
+            }
+            foreach (array_reverse($due) as $encoded) {
+                $this->client->rPush($this->queueKey, $encoded);
+            }
+            $this->client->exec();
+        } catch (\RedisException $exception) {
+            $this->connected = false;
+
+            try {
+                $this->client->discard();
+            } catch (\RedisException $discardException) {
+                // Ignore discard failures.
+            }
+        }
+    }
+
+    private function storeDelayedJob(int $availableAt, string $encodedPayload): void
+    {
+        if (!$this->client instanceof \Redis) {
+            return;
+        }
+
+        try {
+            $this->client->zAdd($this->delayedKey, $availableAt, $encodedPayload);
+        } catch (\RedisException $exception) {
+            $this->connected = false;
+        }
     }
 }
 

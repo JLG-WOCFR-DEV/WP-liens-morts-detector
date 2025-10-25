@@ -505,12 +505,9 @@ if (!function_exists('blc_s3_put_object')) {
 
         $headers['Content-Type'] = 'text/csv';
 
-        $body = file_get_contents($file_path);
-        if ($body === false) {
-            return new \WP_Error(
-                'blc_s3_file_unreadable',
-                __('Unable to open the generated CSV for S3 export.', 'liens-morts-detector-jlg')
-            );
+        $fileSize = @filesize($file_path);
+        if (is_int($fileSize) && $fileSize >= 0) {
+            $headers['Content-Length'] = (string) $fileSize;
         }
 
         $timeout = 20;
@@ -521,19 +518,100 @@ if (!function_exists('blc_s3_put_object')) {
             }
         }
 
-        if (!function_exists('wp_remote_request')) {
-            return new \WP_Error(
-                'blc_s3_http_unavailable',
-                __('The WordPress HTTP API is unavailable for S3 requests.', 'liens-morts-detector-jlg')
-            );
-        }
+        $canStreamUpload = class_exists('\\Requests_Transport_cURL')
+            && class_exists('\\Requests_Hooks')
+            && class_exists('\\Requests')
+            && function_exists('curl_init');
 
-        $response = wp_remote_request($url, [
-            'method'  => 'PUT',
-            'headers' => $headers,
-            'body'    => $body,
-            'timeout' => $timeout,
-        ]);
+        if ($canStreamUpload) {
+            $handle = fopen($file_path, 'rb');
+            if ($handle === false) {
+                return new \WP_Error(
+                    'blc_s3_file_unreadable',
+                    __('Unable to open the generated CSV for S3 export.', 'liens-morts-detector-jlg')
+                );
+            }
+
+            $hooks = new \Requests_Hooks();
+            $hooks->register('curl.before_send', function ($curlHandle) use ($handle, $fileSize) {
+                curl_setopt($curlHandle, CURLOPT_UPLOAD, true);
+                curl_setopt($curlHandle, CURLOPT_INFILE, $handle);
+
+                if (is_int($fileSize) && $fileSize >= 0) {
+                    curl_setopt($curlHandle, CURLOPT_INFILESIZE, $fileSize);
+                }
+            });
+
+            try {
+                $requestsResponse = \Requests::request(
+                    $url,
+                    $headers,
+                    null,
+                    'PUT',
+                    [
+                        'timeout'    => $timeout,
+                        'hooks'      => $hooks,
+                        'transport'  => 'Requests_Transport_cURL',
+                        'blocking'   => true,
+                    ]
+                );
+            } catch (\Exception $exception) {
+                fclose($handle);
+
+                return new \WP_Error(
+                    'blc_s3_http_error',
+                    sprintf(
+                        __('S3 request failed: %s', 'liens-morts-detector-jlg'),
+                        $exception->getMessage()
+                    )
+                );
+            }
+
+            fclose($handle);
+
+            $response = [
+                'body'     => $requestsResponse->body,
+                'headers'  => $requestsResponse->headers instanceof \Requests_Response_Headers
+                    ? $requestsResponse->headers->getAll()
+                    : [],
+                'response' => [
+                    'code'    => $requestsResponse->status_code,
+                    'message' => $requestsResponse->status_text,
+                ],
+            ];
+        } else {
+            if (!function_exists('wp_remote_request')) {
+                return new \WP_Error(
+                    'blc_s3_http_unavailable',
+                    __('The WordPress HTTP API is unavailable for S3 requests.', 'liens-morts-detector-jlg')
+                );
+            }
+
+            $handle = fopen($file_path, 'rb');
+            if ($handle === false) {
+                return new \WP_Error(
+                    'blc_s3_file_unreadable',
+                    __('Unable to open the generated CSV for S3 export.', 'liens-morts-detector-jlg')
+                );
+            }
+
+            $body = stream_get_contents($handle);
+            fclose($handle);
+
+            if ($body === false) {
+                return new \WP_Error(
+                    'blc_s3_file_unreadable',
+                    __('Unable to open the generated CSV for S3 export.', 'liens-morts-detector-jlg')
+                );
+            }
+
+            $response = wp_remote_request($url, [
+                'method'  => 'PUT',
+                'headers' => $headers,
+                'body'    => $body,
+                'timeout' => $timeout,
+            ]);
+        }
 
         if (blc_is_wp_error($response)) {
             return $response;

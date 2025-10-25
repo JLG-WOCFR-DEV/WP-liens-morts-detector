@@ -339,6 +339,8 @@ abstract class ScannerTestCase extends TestCase
 
         Functions\when('wp_safe_remote_head')->alias(fn($url, $args = []) => ['response' => ['code' => 200]]);
         Functions\when('wp_safe_remote_get')->alias(fn($url, $args = []) => ['response' => ['code' => 200]]);
+        Functions\when('wp_remote_head')->alias(fn($url, $args = []) => ['response' => ['code' => 200]]);
+        Functions\when('wp_remote_get')->alias(fn($url, $args = []) => ['response' => ['code' => 200]]);
         Functions\when('wp_remote_retrieve_response_code')->alias(function ($response) {
             if (is_array($response) && isset($response['response']['code'])) {
                 return (int) $response['response']['code'];
