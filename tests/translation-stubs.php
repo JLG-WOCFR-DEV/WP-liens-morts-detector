@@ -90,6 +90,73 @@ if (!function_exists('esc_url')) {
     }
 }
 
+if (!function_exists('sanitize_text_field')) {
+    function sanitize_text_field($text)
+    {
+        if (is_string($text)) {
+            $text = preg_replace('/[\r\n\t\0\x0B]+/', '', $text);
+            $text = trim($text);
+        }
+
+        if (is_scalar($text) || $text === null) {
+            return (string) $text;
+        }
+
+        if (is_object($text) && method_exists($text, '__toString')) {
+            return (string) $text;
+        }
+
+        return '';
+    }
+}
+
+if (!function_exists('admin_url')) {
+    function admin_url($path = '', $scheme = 'admin')
+    {
+        $base = 'https://example.com/wp-admin/';
+
+        if (!is_string($path) || $path === '') {
+            return $base;
+        }
+
+        return $base . ltrim($path, '/');
+    }
+}
+
+if (!function_exists('blc_is_wp_error')) {
+    function blc_is_wp_error($thing)
+    {
+        if (function_exists('is_wp_error')) {
+            try {
+                if (is_wp_error($thing)) {
+                    return true;
+                }
+            } catch (\Throwable $throwable) {
+                $message = $throwable->getMessage();
+                if (stripos($message, 'is_wp_error') === false || (stripos($message, 'undefined') === false && stripos($message, 'not defined') === false)) {
+                    throw $throwable;
+                }
+            }
+        }
+
+        return $thing instanceof \WP_Error;
+    }
+}
+
+if (!function_exists('wp_send_json_success')) {
+    function wp_send_json_success($data = null, $status_code = null)
+    {
+        throw new \RuntimeException('success');
+    }
+}
+
+if (!function_exists('wp_send_json_error')) {
+    function wp_send_json_error($data = null, $status_code = null)
+    {
+        throw new \RuntimeException('error');
+    }
+}
+
 if (!function_exists('wp_parse_args')) {
     function wp_parse_args($args, $defaults = [])
     {

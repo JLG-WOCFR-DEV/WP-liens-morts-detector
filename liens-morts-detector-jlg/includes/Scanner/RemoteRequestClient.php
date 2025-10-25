@@ -168,6 +168,13 @@ class RemoteRequestClient implements HttpClientInterface
 
         $userAgent = $this->pickUserAgent($attempt);
 
+        if (isset($prepared['user-agent']) && is_string($prepared['user-agent'])) {
+            $candidate = trim($prepared['user-agent']);
+            if ($candidate !== '') {
+                $userAgent = $candidate;
+            }
+        }
+
         $headers = [];
         if (isset($prepared['headers']) && is_array($prepared['headers'])) {
             $headers = $prepared['headers'];

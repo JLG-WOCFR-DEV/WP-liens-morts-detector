@@ -144,6 +144,9 @@ class BlcManualScanSchedulingTest extends TestCase
             return true;
         });
 
+        Functions\when('wp_schedule_single_event')->justReturn(true);
+        Functions\when('spawn_cron')->justReturn(true);
+
         Functions\when('current_user_can')->justReturn(true);
         Functions\when('get_current_user_id')->justReturn(42);
         Functions\when('get_userdata')->alias(static function ($user_id) {
@@ -160,6 +163,17 @@ class BlcManualScanSchedulingTest extends TestCase
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-scanner.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-cron.php';
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-admin-pages.php';
+
+        Functions\when('blc_get_link_scan_status')->alias(static function ($force_refresh = false) use ($test_case) {
+            $defaults = \blc_get_default_link_scan_status();
+            $stored = $test_case->options['blc_link_scan_status'] ?? [];
+
+            if (!is_array($stored)) {
+                $stored = [];
+            }
+
+            return array_merge($defaults, array_intersect_key($stored, $defaults));
+        });
     }
 
     protected function tearDown(): void

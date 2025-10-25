@@ -236,6 +236,23 @@ class BlcScannerTest extends TestCase
             'blc_notification_recipients' => '',
             'blc_post_statuses'    => ['publish'],
             'blc_remote_image_scan_enabled' => false,
+            'blc_link_scan_status' => [
+                'state'              => 'idle',
+                'current_batch'      => 0,
+                'processed_batches'  => 0,
+                'total_batches'      => 0,
+                'remaining_batches'  => 0,
+                'is_full_scan'       => false,
+                'message'            => '',
+                'last_error'         => '',
+                'started_at'         => 0,
+                'ended_at'           => 0,
+                'updated_at'         => 0,
+                'total_items'        => 0,
+                'processed_items'    => 0,
+                'job_id'             => '',
+                'attempt'            => 0,
+            ],
         ];
 
         $this->httpRequests = [];
@@ -551,6 +568,30 @@ class BlcScannerTest extends TestCase
         Functions\when('wp_remote_retrieve_response_code')->alias(function ($response) {
             return $response['response']['code'] ?? 0;
         });
+        Functions\when('wp_remote_retrieve_header')->alias(function ($response, $header) {
+            if (!is_array($response) || !isset($response['headers'])) {
+                return '';
+            }
+
+            $normalized = [];
+            foreach ($response['headers'] as $name => $value) {
+                if (!is_string($name)) {
+                    continue;
+                }
+
+                $normalized[strtolower($name)] = $value;
+            }
+
+            $key = strtolower((string) $header);
+
+            $value = $normalized[$key] ?? null;
+
+            if (is_array($value)) {
+                $value = reset($value);
+            }
+
+            return is_scalar($value) ? (string) $value : '';
+        });
         Functions\when('is_wp_error')->alias(function ($thing): bool {
             return $thing instanceof \WP_Error;
         });
@@ -666,8 +707,18 @@ class BlcScannerTest extends TestCase
 
     public function test_process_link_nodes_from_html_handles_additional_nodes(): void
     {
-        Functions::when('wp_strip_all_tags')->alias('strip_tags');
-        Functions::when('wp_kses_decode_entities')->alias('html_entity_decode');
+        Functions\when('wp_strip_all_tags')->alias('strip_tags');
+        Functions\when('wp_kses_decode_entities')->alias(static function ($value) {
+            $decoded = html_entity_decode((string) $value, ENT_QUOTES, 'UTF-8');
+
+            if (is_string($decoded) && str_contains($decoded, '{') && str_contains($decoded, '}')) {
+                $parts = explode('{', $decoded);
+                $decoded = trim(end($parts));
+                $decoded = rtrim($decoded, '}');
+            }
+
+            return $decoded;
+        });
 
         $html = <<<HTML
 <div>
@@ -1149,10 +1200,32 @@ HTML;
             'post_content' => '<a href="section/page.html">Link</a>',
         ];
 
+        $this->options['blc_link_scan_status'] = [
+            'state'              => 'idle',
+            'current_batch'      => 0,
+            'processed_batches'  => 0,
+            'total_batches'      => 0,
+            'remaining_batches'  => 0,
+            'is_full_scan'       => false,
+            'message'            => '',
+            'last_error'         => '',
+            'started_at'         => 0,
+            'ended_at'           => 0,
+            'updated_at'         => 0,
+            'total_items'        => 0,
+            'processed_items'    => 0,
+            'job_id'             => '',
+            'attempt'            => 0,
+        ];
+
         $GLOBALS['wp_query_queue'][] = [
             'posts' => [$post],
             'max_num_pages' => 0,
         ];
+
+        blc_link_scan_status_cache(null, true);
+
+        $status_before = blc_get_link_scan_status(true);
 
         blc_perform_check(0, false);
 
