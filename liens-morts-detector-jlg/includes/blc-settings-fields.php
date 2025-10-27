@@ -3717,6 +3717,12 @@ function blc_get_ui_presets() {
     }
 
     $presets = array(
+        'wordpress-classic' => array(
+            'label'       => __('WordPress Classique', 'liens-morts-detector-jlg'),
+            'description' => __('Palette familière de l’admin WordPress avec reliefs discrets.', 'liens-morts-detector-jlg'),
+            'accent'      => '#2271b1',
+            'badges'      => array(__('Défaut', 'liens-morts-detector-jlg'), 'WP'),
+        ),
         'headless-minimal' => array(
             'label'       => __('Headless Minimal', 'liens-morts-detector-jlg'),
             'description' => __('Palette neutre, focus renforcé et transitions discrètes.', 'liens-morts-detector-jlg'),
@@ -3773,7 +3779,7 @@ function blc_get_ui_presets() {
  * @return string
  */
 function blc_get_ui_preset_default() {
-    return 'headless-minimal';
+    return 'wordpress-classic';
 }
 
 /**
