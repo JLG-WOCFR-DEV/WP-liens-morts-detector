@@ -1985,7 +1985,7 @@ jQuery(document).ready(function($) {
         };
     }
 
-    var BULK_SUPPORTED_ACTIONS = ['ignore', 'restore', 'unlink'];
+    var BULK_SUPPORTED_ACTIONS = ['ignore', 'restore', 'unlink', 'apply_redirect'];
 
     $('.blc-links-filter-form').on('submit', function(e) {
         var $form = $(this);
@@ -1998,11 +1998,6 @@ jQuery(document).ready(function($) {
         var action = getSelectedBulkAction($form);
 
         if (!action || $.inArray(action, BULK_SUPPORTED_ACTIONS) === -1) {
-            return;
-        }
-
-        var $modalElement = $('#blc-modal');
-        if (!$modalElement.length) {
             return;
         }
 
@@ -2022,9 +2017,17 @@ jQuery(document).ready(function($) {
             return;
         }
 
-        e.preventDefault();
-
         var modalConfig = buildBulkModalConfig(action, $selected.length);
+        var $modalElement = $('#blc-modal');
+        if (!$modalElement.length) {
+            var confirmMessage = modalConfig.message || messages.bulkGenericModalMessage || messages.unlinkConfirmation || '';
+            if (confirmMessage && !window.confirm(confirmMessage)) {
+                e.preventDefault();
+            }
+            return;
+        }
+
+        e.preventDefault();
 
         modal.open($.extend({}, modalConfig, {
             onConfirm: function(_value, helpers) {

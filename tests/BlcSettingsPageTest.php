@@ -222,7 +222,7 @@ class BlcSettingsPageTest extends TestCase
 
         $this->assertStringContainsString('<form method="post" action="options.php"', (string) $output);
         $this->assertStringContainsString('<form method="post" action="options.php" class="blc-settings-form">', (string) $output);
-        $this->assertStringContainsString('<div class="wrap">', (string) $output);
+        $this->assertStringContainsString('<div class="wrap blc-wrap">', (string) $output);
     }
 
     public function test_activation_schedules_daily_fallback_when_initial_schedule_fails(): void

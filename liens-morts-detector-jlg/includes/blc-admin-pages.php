@@ -705,7 +705,7 @@ function blc_render_dashboard_tabs($active_tab) {
 
     $navigation_label = __('Navigation du tableau de bord Liens Morts', 'liens-morts-detector-jlg');
 
-    echo '<nav class="blc-admin-tabs" aria-label="' . esc_attr($navigation_label) . '"><ul class="blc-admin-tabs__list">';
+    echo '<nav class="nav-tab-wrapper" aria-label="' . esc_attr($navigation_label) . '">';
 
     foreach ($tabs as $tab_key => $tab) {
         $required_capability = isset($tab['capability']) ? $tab['capability'] : '';
@@ -716,12 +716,12 @@ function blc_render_dashboard_tabs($active_tab) {
 
         $is_active      = ($tab_key === $active_tab);
         $aria_current   = $is_active ? ' aria-current="page"' : '';
-        $active_class   = $is_active ? ' is-active' : '';
+        $active_class   = $is_active ? ' nav-tab-active' : '';
         $tab_url        = function_exists('admin_url')
             ? admin_url('admin.php?page=' . $tab['page'])
             : 'admin.php?page=' . $tab['page'];
         $link_attributes = sprintf(
-            ' class="blc-admin-tabs__link%s" href="%s"%s',
+            ' class="nav-tab%s" href="%s"%s',
             esc_attr($active_class),
             esc_url($tab_url),
             $aria_current
@@ -730,14 +730,14 @@ function blc_render_dashboard_tabs($active_tab) {
         $active_sr_hint = '';
 
         if ($is_active) {
-            $active_badge = '<span class="blc-admin-tabs__state" aria-hidden="true">' . esc_html__('Actif', 'liens-morts-detector-jlg') . '</span>';
+            $active_badge = '<span class="blc-nav-tab-state" aria-hidden="true">' . esc_html__('Actif', 'liens-morts-detector-jlg') . '</span>';
             $active_sr_hint = '<span class="screen-reader-text">' . esc_html__('(onglet actif)', 'liens-morts-detector-jlg') . '</span>';
         }
 
-        echo '<li class="blc-admin-tabs__item"><a' . $link_attributes . '>' . esc_html($tab['label']) . $active_sr_hint . $active_badge . '</a></li>';
+        echo '<a' . $link_attributes . '>' . esc_html($tab['label']) . $active_sr_hint . $active_badge . '</a>';
     }
 
-    echo '</ul></nav>';
+    echo '</nav>';
 }
 
 /**
@@ -2944,7 +2944,7 @@ function blc_scan_history_page() {
     $last_job_attempt = max(1, (int) $last_job_summary['attempt']);
 
     ?>
-    <div class="wrap blc-history-page">
+    <div class="wrap blc-wrap blc-history-page">
         <?php blc_render_dashboard_tabs('history'); ?>
         <h1><?php esc_html_e('Historique des Analyses', 'liens-morts-detector-jlg'); ?></h1>
 
@@ -3569,7 +3569,7 @@ function blc_dashboard_links_page() {
     blc_render_action_modal();
 
     ?>
-    <div class="wrap blc-dashboard-links-page">
+    <div class="wrap blc-wrap blc-dashboard-links-page">
         <?php blc_render_dashboard_tabs('links'); ?>
         <h1><?php esc_html_e('Rapport des Liens Cassés', 'liens-morts-detector-jlg'); ?></h1>
         <?php if (!empty($summary_items)) : ?>
@@ -4317,7 +4317,7 @@ function blc_dashboard_images_page() {
     $list_table = new BLC_Images_List_Table();
     $list_table->prepare_items();
     ?>
-    <div class="wrap">
+    <div class="wrap blc-wrap">
         <?php blc_render_dashboard_tabs('images'); ?>
         <h1><?php esc_html_e('Rapport des Images Cassées', 'liens-morts-detector-jlg'); ?></h1>
         <div class="blc-stats-box blc-admin-card blc-admin-card--accent">
@@ -4412,7 +4412,7 @@ function blc_settings_page() {
     $is_advanced_mode = ($settings_mode === 'advanced');
 
     ?>
-    <div class="wrap">
+    <div class="wrap blc-wrap">
         <?php blc_render_dashboard_tabs('settings'); ?>
         <h1><?php esc_html_e('Réglages', 'liens-morts-detector-jlg'); ?></h1>
         <?php settings_errors(); ?>

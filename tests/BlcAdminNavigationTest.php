@@ -59,11 +59,11 @@ class BlcAdminNavigationTest extends TestCase
         $html = (string) ob_get_clean();
 
         $this->assertNotSame('', $html, 'Expected navigation markup to be rendered.');
-        $this->assertStringContainsString('<nav class="blc-admin-tabs"', $html);
+        $this->assertStringContainsString('<nav class="nav-tab-wrapper"', $html);
         $this->assertStringContainsString('aria-label="Navigation du tableau de bord Liens Morts"', $html);
         $this->assertSame(1, substr_count($html, 'aria-current="page"'));
         $this->assertStringContainsString('href="admin.php?page=blc-dashboard"', $html);
-        $this->assertStringContainsString('class="blc-admin-tabs__link is-active"', $html);
+        $this->assertStringContainsString('class="nav-tab nav-tab-active"', $html);
     }
 
     public function test_navigation_marks_requested_tab_as_current(): void
@@ -75,7 +75,7 @@ class BlcAdminNavigationTest extends TestCase
         $this->assertSame(1, substr_count($html, 'aria-current="page"'));
         $this->assertStringContainsString('href="admin.php?page=blc-history" aria-current="page"', $html);
         $this->assertStringNotContainsString('href="admin.php?page=blc-dashboard" aria-current="page"', $html);
-        $this->assertStringContainsString('class="blc-admin-tabs__link is-active" href="admin.php?page=blc-history"', $html);
+        $this->assertStringContainsString('class="nav-tab nav-tab-active" href="admin.php?page=blc-history"', $html);
     }
 }
 

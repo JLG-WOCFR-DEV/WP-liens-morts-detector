@@ -126,25 +126,21 @@ class ParallelRequestDispatcher
             $fallbackDueToTemporaryStatus = false;
             $headRequestDisallowed = false;
 
-            if ($job['scan_method'] === 'precise') {
-                if (blc_is_wp_error($headResponse)) {
+            if (blc_is_wp_error($headResponse)) {
+                $needsGetFallback = true;
+            } elseif ($job['scan_method'] === 'precise') {
+                $headStatus = (int) $this->client->responseCode($headResponse);
+                if (in_array($headStatus, $job['temporary_statuses'], true)) {
                     $needsGetFallback = true;
-                } else {
-                    $headStatus = (int) $this->client->responseCode($headResponse);
-                    if (in_array($headStatus, $job['temporary_statuses'], true)) {
-                        $needsGetFallback = true;
-                        $fallbackDueToTemporaryStatus = true;
-                    } elseif (in_array($headStatus, [403, 405, 501], true)) {
-                        $needsGetFallback = true;
-                    }
+                    $fallbackDueToTemporaryStatus = true;
+                } elseif (in_array($headStatus, [403, 405, 501], true)) {
+                    $needsGetFallback = true;
                 }
             } else {
-                if (!blc_is_wp_error($headResponse)) {
-                    $headStatus = (int) $this->client->responseCode($headResponse);
-                    if (in_array($headStatus, [403, 405, 501], true)) {
-                        $needsGetFallback = true;
-                        $headRequestDisallowed = true;
-                    }
+                $headStatus = (int) $this->client->responseCode($headResponse);
+                if (in_array($headStatus, [403, 405, 501], true)) {
+                    $needsGetFallback = true;
+                    $headRequestDisallowed = true;
                 }
             }
 

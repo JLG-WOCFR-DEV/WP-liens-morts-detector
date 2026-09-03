@@ -59,6 +59,48 @@ final class ParallelRequestDispatcherTest extends ScannerTestCase
         self::assertFalse($captured['temporaryFallback']);
         self::assertTrue($captured['usedGet']);
     }
+
+    public function test_fast_mode_falls_back_to_get_when_head_returns_wp_error(): void
+    {
+        Functions\when('apply_filters')->alias(fn($hook, $value) => $value);
+
+        $client = Mockery::mock(HttpClientInterface::class);
+        $client->shouldReceive('head')->once()->andReturn(new WP_Error('http_request_failed', 'timeout'));
+        $client->shouldReceive('get')->once()->andReturn(['response' => ['code' => 200]]);
+        $client->shouldReceive('responseCode')->andReturnUsing(function ($response) {
+            if (is_array($response) && isset($response['response']['code'])) {
+                return (int) $response['response']['code'];
+            }
+
+            return 0;
+        });
+
+        $dispatcher = new ParallelRequestDispatcher($client, 2, 0, static fn() => []);
+
+        $captured = [];
+        $dispatcher->enqueue(
+            'https://example.test/fast',
+            ['timeout' => 1.5],
+            ['timeout' => 1.5],
+            'fast',
+            [429],
+            function ($response, $headDisallowed, $temporaryFallback, $usedGet) use (&$captured) {
+                $captured = [
+                    'response'           => $response,
+                    'headDisallowed'     => $headDisallowed,
+                    'temporaryFallback'  => $temporaryFallback,
+                    'usedGet'            => $usedGet,
+                ];
+            }
+        );
+
+        $dispatcher->drain();
+
+        self::assertSame(['response' => ['code' => 200]], $captured['response']);
+        self::assertFalse($captured['headDisallowed']);
+        self::assertFalse($captured['temporaryFallback']);
+        self::assertTrue($captured['usedGet']);
+    }
 }
 
 }
