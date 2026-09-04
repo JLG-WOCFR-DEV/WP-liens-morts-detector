@@ -3651,6 +3651,11 @@ function blc_dashboard_links_page() {
                     <h2 id="blc-dashboard-trends-heading" class="blc-dashboard-insights__title"><?php esc_html_e('Tendance des analyses', 'liens-morts-detector-jlg'); ?></h2>
                     <p class="blc-dashboard-insights__summary"><?php echo esc_html($trend_summary['latest_label']); ?></p>
                     <p class="blc-dashboard-insights__delta blc-dashboard-insights__delta--<?php echo esc_attr($trend_summary['direction']); ?>"><?php echo esc_html($trend_summary['delta_label']); ?></p>
+                    <p>
+                        <a class="button-link" href="<?php echo esc_url(admin_url('admin.php?page=blc-history')); ?>">
+                            <?php esc_html_e('Ouvrir l’historique complet', 'liens-morts-detector-jlg'); ?>
+                        </a>
+                    </p>
                     <figure class="blc-sparkline-card">
                         <div
                             class="blc-sparkline"
@@ -3845,15 +3850,60 @@ function blc_dashboard_links_page() {
                 </button>
             </div>
             <p class="blc-scan-status__message" aria-live="polite"><?php echo esc_html($scan_status['message']); ?></p>
+            <?php
+            $queue_preview = isset($scan_status['manual_queue_preview']) && is_array($scan_status['manual_queue_preview'])
+                ? $scan_status['manual_queue_preview']
+                : [];
+            $queue_length = isset($scan_status['manual_queue_length'])
+                ? max(0, (int) $scan_status['manual_queue_length'])
+                : count($queue_preview);
+            $queue_hidden = ($queue_length <= 0 && $queue_preview === []);
+            ?>
             <div
                 class="blc-scan-status__queue"
                 id="blc-manual-queue-indicator"
                 role="status"
                 aria-live="polite"
-                hidden
+                <?php echo $queue_hidden ? 'hidden' : ''; ?>
             >
-                <h3 class="screen-reader-text"><?php esc_html_e('File d’attente des analyses manuelles', 'liens-morts-detector-jlg'); ?></h3>
-                <ul class="blc-scan-status__queue-list"></ul>
+                <h3><?php esc_html_e('File d’attente des analyses manuelles', 'liens-morts-detector-jlg'); ?></h3>
+                <?php if ($queue_length > 0) : ?>
+                    <p class="description">
+                        <?php
+                        echo esc_html(
+                            sprintf(
+                                _n('%s analyse en file', '%s analyses en file', $queue_length, 'liens-morts-detector-jlg'),
+                                number_format_i18n($queue_length)
+                            )
+                        );
+                        ?>
+                    </p>
+                <?php endif; ?>
+                <ul class="blc-scan-status__queue-list">
+                    <?php foreach ($queue_preview as $queue_entry) :
+                        if (!is_array($queue_entry)) {
+                            continue;
+                        }
+                        $parts = [];
+                        $parts[] = !empty($queue_entry['is_full_scan'])
+                            ? __('Scan complet', 'liens-morts-detector-jlg')
+                            : __('Scan incrémental', 'liens-morts-detector-jlg');
+                        if (!empty($queue_entry['requested_at'])) {
+                            $parts[] = sprintf(
+                                __('demandé le %s', 'liens-morts-detector-jlg'),
+                                wp_date(get_option('date_format') . ' ' . get_option('time_format'), (int) $queue_entry['requested_at'])
+                            );
+                        }
+                        if (!empty($queue_entry['requested_by_name'])) {
+                            $parts[] = sprintf(
+                                __('par %s', 'liens-morts-detector-jlg'),
+                                (string) $queue_entry['requested_by_name']
+                            );
+                        }
+                        ?>
+                        <li class="blc-scan-status__queue-item"><?php echo esc_html(implode(' · ', $parts)); ?></li>
+                    <?php endforeach; ?>
+                </ul>
             </div>
             <p class="blc-scan-status__queue-warning" id="blc-queue-warning" hidden>
                 <?php esc_html_e('Remplacer ou reprogrammer un scan effacera la file d’attente actuelle.', 'liens-morts-detector-jlg'); ?>
