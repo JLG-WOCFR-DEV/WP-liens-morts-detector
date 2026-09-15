@@ -49,6 +49,11 @@ class Phase2AdminCharterAndWp71Test extends TestCase
         Functions\when('wp_unslash')->alias(static fn($value) => $value);
         Functions\when('is_admin')->justReturn(true);
         Functions\when('wp_is_block_editor')->justReturn(false);
+        Functions\when('get_current_user_id')->justReturn(0);
+        Functions\when('get_user_meta')->justReturn('');
+        Functions\when('attachment_url_to_postid')->justReturn(0);
+        Functions\when('wp_get_attachment_image')->justReturn('');
+        Functions\when('get_permalink')->justReturn('');
     }
 
     protected function tearDown(): void
