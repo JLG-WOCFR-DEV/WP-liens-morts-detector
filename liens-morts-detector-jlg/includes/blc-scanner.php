@@ -5046,6 +5046,14 @@ function blc_restore_dataset_refresh($table_name, $types, $scan_run_id, ?array $
  */
 
 function blc_perform_check($batch = 0, $is_full_scan = false, $bypass_rest_window = false, $job_context = array()) {
+    if (function_exists('blc_is_plugin_settings_save_request') && blc_is_plugin_settings_save_request()) {
+        if (function_exists('error_log')) {
+            error_log('BLC: Skipping inline link scan during settings save.');
+        }
+
+        return false;
+    }
+
     $execution_started_at = microtime(true);
     global $wpdb;
 

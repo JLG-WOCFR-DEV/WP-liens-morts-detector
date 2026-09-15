@@ -2,10 +2,14 @@
 /*
 Plugin Name: Liens morts detector - JLG
 Description: Détecte les liens et images morts sur votre site WordPress et les signale dans le menu d'administration. Prend en charge les vérifications planifiées et des outils de réparation rapide.
-Version: 1.0
+Version: 1.0.1
+Requires at least: 5.8
+Tested up to: 7.1
+Requires PHP: 7.4
 Author: Jérôme Le Gousse
 Text Domain: liens-morts-detector-jlg
 Domain Path: /languages
+License: GPL v2 or later
 */
 
 // Sécurité : empêche l'accès direct au fichier

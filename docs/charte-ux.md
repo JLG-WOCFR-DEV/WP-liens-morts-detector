@@ -4,9 +4,9 @@ Cette charte décrit les conventions graphiques et d’interaction appliquées a
 
 ## Typographies
 
-- **Famille principale** : `Inter`, avec repli sur `"Segoe UI"`, `Roboto`, puis `sans-serif` (déclaré via `--blc-admin-font-family`).
+- **Famille principale** : typographie système de wp-admin (héritée, sans Inter ni police tierce sur `#wpbody-content`).
 - **Hiérarchie** :
-  - Titres de sections (`h1`–`h2`) : 1.35 rem par défaut, 1.25 rem en affichage réduit (`max-width: 782px`).
+  - Titre de page : `<h1>` natif WordPress, puis `nav-tab-wrapper` sous le titre.
   - Libellés secondaires et sous-titres : 0.95 rem avec couleur atténuée (`--blc-admin-text-subtle`).
   - Labels utilitaires (ex. métriques) : 0.85 rem, uppercase, espacement de 0.08 em.
   - Valeurs clés : 1.85 rem, graisse 700, ligne à 1.1.
@@ -23,7 +23,7 @@ Les couleurs sont définies via des variables CSS (cf. `:root` dans `liens-morts
 | Surface principale | `--blc-admin-surface` | `#fcfcfd` | `--blc-admin-text` (`#11181c`) | 15.3:1 |
 | Surface secondaire | `--blc-admin-surface-subtle` | `#f5f6f8` | `--blc-admin-text` | 13.0:1 |
 | Texte atténué | `--blc-admin-text-subtle` | `#687076` | — | — |
-| Accent | `--blc-admin-accent` | dépend du thème WP | texte inversé ou bordures, jamais seul |
+| Accent | `--blc-admin-accent` | `#2271b1` (thème WP) | texte inversé ou bordures, jamais seul |
 | Statut succès | `--blc-admin-success-bg` (`#e5fbeb`) | `--blc-admin-success-text` (`#31694a`) | 5.95:1 |
 | Statut info | `--blc-admin-info-bg` (`#e4ecff`) | `--blc-admin-info-text` (`#3c4ae0`) | 5.46:1 |
 | Statut avertissement | `--blc-admin-warning-bg` (`#fff1d0`) | `--blc-admin-warning-text` (`#8a4600`) | 6.34:1 |

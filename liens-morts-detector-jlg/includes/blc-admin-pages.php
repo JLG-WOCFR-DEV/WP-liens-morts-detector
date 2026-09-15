@@ -675,6 +675,22 @@ function blc_add_admin_menu() {
 }
 
 /**
+ * Ouvre une page admin native : wrap, h1, puis nav-tab sous le titre.
+ *
+ * @param string $title              Titre déjà traduit.
+ * @param string $active_tab         Identifiant de l'onglet actif.
+ * @param string $extra_wrap_classes Classes additionnelles du wrap.
+ *
+ * @return void
+ */
+function blc_render_admin_page_header($title, $active_tab, $extra_wrap_classes = '') {
+    $classes = trim('wrap blc-wrap ' . (string) $extra_wrap_classes);
+    echo '<div class="' . esc_attr($classes) . '">';
+    echo '<h1>' . esc_html($title) . '</h1>';
+    blc_render_dashboard_tabs($active_tab);
+}
+
+/**
  * Rend la navigation principale des pages du tableau de bord du plugin.
  *
  * @param string $active_tab Identifiant de l'onglet actif.
@@ -2944,9 +2960,13 @@ function blc_scan_history_page() {
     $last_job_attempt = max(1, (int) $last_job_summary['attempt']);
 
     ?>
-    <div class="wrap blc-wrap blc-history-page">
-        <?php blc_render_dashboard_tabs('history'); ?>
-        <h1><?php esc_html_e('Historique des Analyses', 'liens-morts-detector-jlg'); ?></h1>
+    <?php
+    blc_render_admin_page_header(
+        __('Historique des Analyses', 'liens-morts-detector-jlg'),
+        'history',
+        'blc-history-page'
+    );
+    ?>
 
         <div class="blc-stats-box blc-admin-card blc-admin-card--accent">
             <?php foreach ($summary_cards as $card) :
@@ -3569,9 +3589,13 @@ function blc_dashboard_links_page() {
     blc_render_action_modal();
 
     ?>
-    <div class="wrap blc-wrap blc-dashboard-links-page">
-        <?php blc_render_dashboard_tabs('links'); ?>
-        <h1><?php esc_html_e('Rapport des Liens Cassés', 'liens-morts-detector-jlg'); ?></h1>
+    <?php
+    blc_render_admin_page_header(
+        __('Rapport des Liens Cassés', 'liens-morts-detector-jlg'),
+        'links',
+        'blc-dashboard-links-page'
+    );
+    ?>
         <?php if (!empty($summary_items)) : ?>
             <section
                 class="blc-dashboard-summary blc-admin-card blc-admin-card--subtle"
@@ -4367,9 +4391,12 @@ function blc_dashboard_images_page() {
     $list_table = new BLC_Images_List_Table();
     $list_table->prepare_items();
     ?>
-    <div class="wrap blc-wrap">
-        <?php blc_render_dashboard_tabs('images'); ?>
-        <h1><?php esc_html_e('Rapport des Images Cassées', 'liens-morts-detector-jlg'); ?></h1>
+    <?php
+    blc_render_admin_page_header(
+        __('Rapport des Images Cassées', 'liens-morts-detector-jlg'),
+        'images'
+    );
+    ?>
         <div class="blc-stats-box blc-admin-card blc-admin-card--accent">
             <div class="blc-stat">
                 <span class="blc-stat-value"><?php echo esc_html($broken_images_count); ?></span>
@@ -4462,9 +4489,12 @@ function blc_settings_page() {
     $is_advanced_mode = ($settings_mode === 'advanced');
 
     ?>
-    <div class="wrap blc-wrap">
-        <?php blc_render_dashboard_tabs('settings'); ?>
-        <h1><?php esc_html_e('Réglages', 'liens-morts-detector-jlg'); ?></h1>
+    <?php
+    blc_render_admin_page_header(
+        __('Réglages', 'liens-morts-detector-jlg'),
+        'settings'
+    );
+    ?>
         <?php settings_errors(); ?>
         <div
             class="blc-settings-mode"

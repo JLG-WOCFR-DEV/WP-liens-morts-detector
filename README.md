@@ -1,5 +1,9 @@
 # WP-liens-morts-detector
 
+Requires at least: 5.8  
+Tested up to: 7.1  
+Requires PHP: 7.4
+
 ![Panneau de configuration du bloc][block-editor-panel]
 > Capture encodée en Base64 (voir `docs/images/block-editor-panel.b64`).
 > Pour générer une image locale : `base64 --decode docs/images/block-editor-panel.b64 > block-editor-panel.png`.

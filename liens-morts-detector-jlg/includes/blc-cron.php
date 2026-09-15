@@ -427,6 +427,75 @@ function blc_calculate_image_custom_schedule_timestamp($time_string, $reference_
     return $candidate->getTimestamp();
 }
 
+/**
+ * Timestamp of the next cron run, always strictly in the future.
+ *
+ * Scheduling `blc_check_links` for `time()` during a Settings API save makes
+ * the event due immediately. WP-Cron / spawn_cron then runs `blc_perform_check`
+ * inline on options.php and can recurse plugin load until OOM.
+ *
+ * @param string               $schedule_slug WP-Cron schedule id.
+ * @param array<string, mixed> $args {
+ *     @type string          $custom_slug         Slug used for custom intervals.
+ *     @type string|null     $custom_time         HH:MM for custom schedules.
+ *     @type int|null        $reference_timestamp Clock override.
+ *     @type int             $interval            Recurrence in seconds.
+ *     @type callable|string $calculator          Custom timestamp calculator.
+ * }
+ *
+ * @return int
+ */
+function blc_get_deferred_cron_timestamp($schedule_slug, array $args = array()) {
+    $now = time();
+    $minute = defined('MINUTE_IN_SECONDS') ? (int) MINUTE_IN_SECONDS : 60;
+    $minimum = $now + max(1, $minute);
+
+    $custom_slug = isset($args['custom_slug']) ? (string) $args['custom_slug'] : 'blc_custom_interval';
+    $calculator  = isset($args['calculator']) ? $args['calculator'] : 'blc_calculate_custom_schedule_timestamp';
+
+    if ((string) $schedule_slug === $custom_slug && is_callable($calculator)) {
+        $custom_time = isset($args['custom_time']) ? $args['custom_time'] : null;
+        $reference   = isset($args['reference_timestamp']) ? $args['reference_timestamp'] : null;
+        $timestamp   = (int) call_user_func($calculator, $custom_time, $reference);
+
+        return max($timestamp, $minimum);
+    }
+
+    $interval = isset($args['interval']) ? (int) $args['interval'] : 0;
+    if ($interval < 1 && function_exists('wp_get_schedules')) {
+        $schedules = wp_get_schedules();
+        if (is_array($schedules) && isset($schedules[$schedule_slug]['interval'])) {
+            $interval = (int) $schedules[$schedule_slug]['interval'];
+        }
+    }
+    if ($interval < 1) {
+        $interval = defined('HOUR_IN_SECONDS') ? (int) HOUR_IN_SECONDS : 3600;
+    }
+
+    return max($now + $interval, $minimum);
+}
+
+/**
+ * Whether the current request is saving this plugin's Settings API group.
+ *
+ * @return bool
+ */
+function blc_is_plugin_settings_save_request() {
+    $option_page = '';
+    if (isset($_POST['option_page']) && is_scalar($_POST['option_page'])) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- read-only routing guard.
+        $raw_page = (string) $_POST['option_page']; // phpcs:ignore WordPress.Security.NonceVerification.Missing
+        $option_page = function_exists('wp_unslash') ? (string) wp_unslash($raw_page) : $raw_page;
+    }
+
+    if ($option_page === 'blc_settings') {
+        return true;
+    }
+
+    $pagenow = isset($GLOBALS['pagenow']) ? (string) $GLOBALS['pagenow'] : '';
+
+    return $pagenow === 'options.php' && $option_page === 'blc_settings';
+}
+
 if (!function_exists('blc_reset_link_check_schedule')) {
     /**
      * (Re)programme la tâche cron principale du plugin.
@@ -468,16 +537,13 @@ if (!function_exists('blc_reset_link_check_schedule')) {
     $schedule_slug  = blc_resolve_cron_schedule_slug($frequency);
     $custom_hours   = blc_get_custom_frequency_hours($args['custom_hours']);
     $custom_time    = blc_get_custom_frequency_time($args['custom_time']);
-    $timestamp      = ('blc_custom_interval' === $schedule_slug)
-        ? blc_calculate_custom_schedule_timestamp($custom_time, $args['reference_timestamp'])
-        : time();
     $previous_event_timestamp = wp_next_scheduled('blc_check_links');
     $previous_event_schedule  = wp_get_schedule('blc_check_links');
 
     $result = array(
         'success'            => false,
         'schedule'           => $schedule_slug,
-        'timestamp'          => $timestamp,
+        'timestamp'          => 0,
         'restore_attempted'  => false,
         'restored'           => false,
         'previous_timestamp' => $previous_event_timestamp,
@@ -493,6 +559,18 @@ if (!function_exists('blc_reset_link_check_schedule')) {
 
         return $result;
     }
+
+    $timestamp = blc_get_deferred_cron_timestamp(
+        $schedule_slug,
+        array(
+            'custom_slug'         => 'blc_custom_interval',
+            'custom_time'         => $custom_time,
+            'reference_timestamp' => $args['reference_timestamp'],
+            'interval'            => isset($schedules[$schedule_slug]['interval']) ? (int) $schedules[$schedule_slug]['interval'] : 0,
+            'calculator'          => 'blc_calculate_custom_schedule_timestamp',
+        )
+    );
+    $result['timestamp'] = $timestamp;
 
     wp_clear_scheduled_hook('blc_check_links');
 
@@ -583,16 +661,13 @@ function blc_reset_image_check_schedule(array $args = array()) {
     $schedule_slug = blc_resolve_image_cron_schedule_slug($frequency);
     $custom_hours  = blc_get_image_custom_frequency_hours($args['custom_hours']);
     $custom_time   = blc_get_image_custom_frequency_time($args['custom_time']);
-    $timestamp     = ('blc_image_custom_interval' === $schedule_slug)
-        ? blc_calculate_image_custom_schedule_timestamp($custom_time, $args['reference_timestamp'])
-        : time();
     $previous_event_timestamp = wp_next_scheduled('blc_check_image_batch', array(0, true));
     $previous_event_schedule  = wp_get_schedule('blc_check_image_batch', array(0, true));
 
     $result = array(
         'success'            => false,
         'schedule'           => $schedule_slug,
-        'timestamp'          => $timestamp,
+        'timestamp'          => 0,
         'restore_attempted'  => false,
         'restored'           => false,
         'previous_timestamp' => $previous_event_timestamp,
@@ -608,6 +683,18 @@ function blc_reset_image_check_schedule(array $args = array()) {
 
         return $result;
     }
+
+    $timestamp = blc_get_deferred_cron_timestamp(
+        $schedule_slug,
+        array(
+            'custom_slug'         => 'blc_image_custom_interval',
+            'custom_time'         => $custom_time,
+            'reference_timestamp' => $args['reference_timestamp'],
+            'interval'            => isset($schedules[$schedule_slug]['interval']) ? (int) $schedules[$schedule_slug]['interval'] : 0,
+            'calculator'          => 'blc_calculate_image_custom_schedule_timestamp',
+        )
+    );
+    $result['timestamp'] = $timestamp;
 
     wp_clear_scheduled_hook('blc_check_image_batch', array(0, true));
 

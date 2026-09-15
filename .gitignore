@@ -1,6 +1,7 @@
 /vendor/
 /tmp/
 /node_modules/
+/wp-admin/includes/upgrade.php
 .playwright/
 playwright-report/
 test-results/

@@ -402,6 +402,203 @@ class BlcSettingsPageTest extends TestCase
         $this->assertSame('updated', $success['type']);
     }
 
+    public function test_sanitize_frequency_does_not_bootstrap_a_scan(): void
+    {
+        $now = time();
+        $scheduled = [];
+        $firedHooks = [];
+
+        Functions\when('wp_schedule_event')->alias(function ($timestamp, $recurrence, $hook) use (&$scheduled) {
+            $scheduled[] = [
+                'timestamp'  => (int) $timestamp,
+                'recurrence' => (string) $recurrence,
+                'hook'       => (string) $hook,
+            ];
+
+            return true;
+        });
+        Functions\expect('blc_perform_check')->never();
+        Functions\expect('spawn_cron')->never();
+        Functions\expect('wp_cron')->never();
+        Functions\when('do_action')->alias(function ($hook, ...$args) use (&$firedHooks) {
+            $firedHooks[] = (string) $hook;
+            if (in_array($hook, ['blc_check_links', 'blc_check_batch', 'blc_manual_check_batch'], true)) {
+                throw new \RuntimeException('Scan hook ' . $hook . ' must not fire while sanitizing settings.');
+            }
+
+            return null;
+        });
+
+        $result = blc_sanitize_frequency_option('daily');
+
+        $this->assertSame('daily', $result);
+        $this->assertCount(1, $scheduled);
+        $this->assertSame('blc_check_links', $scheduled[0]['hook']);
+        $this->assertSame('daily', $scheduled[0]['recurrence']);
+        $this->assertGreaterThan($now, $scheduled[0]['timestamp'], 'Saving settings must not schedule blc_check_links for now.');
+        $this->assertGreaterThanOrEqual(
+            $now + (defined('HOUR_IN_SECONDS') ? HOUR_IN_SECONDS : 3600),
+            $scheduled[0]['timestamp']
+        );
+        $this->assertNotContains('blc_check_links', $firedHooks);
+        $this->assertContains('blc_check_links_schedule_updated', $firedHooks);
+    }
+
+    public function test_sanitize_surveillance_thresholds_does_not_persist_the_same_option(): void
+    {
+        $updated = [];
+        $test_case = $this;
+
+        Functions\when('update_option')->alias(function ($name, $value, $autoload = null) use (&$updated, $test_case) {
+            $updated[] = (string) $name;
+            $test_case->setStoredOption((string) $name, $value);
+
+            return true;
+        });
+        Functions\expect('blc_perform_check')->never();
+
+        $normalized = blc_sanitize_surveillance_thresholds_option([
+            'global' => [
+                [
+                    'metric'     => 'broken_ratio',
+                    'comparison' => 'gte',
+                    'threshold'  => 8,
+                    'severity'   => 'warning',
+                    'label'      => 'Ratio critique',
+                ],
+            ],
+            'taxonomy' => [],
+        ]);
+
+        $this->assertIsArray($normalized);
+        $this->assertArrayHasKey('global', $normalized);
+        $this->assertArrayHasKey('taxonomy', $normalized);
+        $this->assertNotEmpty($normalized['global']);
+        $this->assertSame([], $updated, 'Sanitize callbacks must not call update_option; the Settings API already persists.');
+    }
+
+    public function test_settings_api_save_of_surveillance_thresholds_does_not_recurse(): void
+    {
+        $depth = 0;
+        $maxDepth = 0;
+        $updateCalls = 0;
+        $test_case = $this;
+
+        Functions\when('update_option')->alias(function ($name, $value, $autoload = null) use (&$depth, &$maxDepth, &$updateCalls, $test_case) {
+            $updateCalls++;
+            $depth++;
+            $maxDepth = max($maxDepth, $depth);
+
+            if ($depth > 12) {
+                $depth--;
+                throw new \RuntimeException('Settings API save re-entered update_option until recursion (simulated OOM at apply_filters).');
+            }
+
+            if ((string) $name === 'blc_surveillance_thresholds') {
+                $value = blc_sanitize_surveillance_thresholds_option($value);
+            }
+
+            $test_case->setStoredOption((string) $name, $value);
+            $depth--;
+
+            return true;
+        });
+        Functions\expect('blc_perform_check')->never();
+        Functions\expect('spawn_cron')->never();
+
+        $payload = [
+            'global' => [
+                [
+                    'id'         => 'global_ratio_default',
+                    'metric'     => 'broken_ratio',
+                    'comparison' => 'gte',
+                    'threshold'  => 5,
+                    'severity'   => 'warning',
+                    'label'      => 'Ratio de liens cassés critique',
+                ],
+            ],
+            'taxonomy' => [],
+        ];
+
+        $this->assertTrue(update_option('blc_surveillance_thresholds', $payload));
+        $this->assertSame(1, $updateCalls, 'options.php must persist surveillance thresholds once.');
+        $this->assertSame(1, $maxDepth, 'sanitize_option must not call update_option of the same key.');
+
+        $stored = $this->getStoredOption('blc_surveillance_thresholds');
+        $this->assertIsArray($stored);
+        $this->assertArrayHasKey('global', $stored);
+        $this->assertSame('broken_ratio', $stored['global'][0]['metric']);
+    }
+
+    public function test_save_surveillance_thresholds_helper_does_not_recurse(): void
+    {
+        $depth = 0;
+        $maxDepth = 0;
+        $updateCalls = 0;
+        $test_case = $this;
+
+        Functions\when('update_option')->alias(function ($name, $value, $autoload = null) use (&$depth, &$maxDepth, &$updateCalls, $test_case) {
+            $updateCalls++;
+            $depth++;
+            $maxDepth = max($maxDepth, $depth);
+
+            if ($depth > 12) {
+                $depth--;
+                throw new \RuntimeException('blc_save_surveillance_thresholds re-entered update_option until recursion.');
+            }
+
+            if ((string) $name === 'blc_surveillance_thresholds') {
+                $value = blc_sanitize_surveillance_thresholds_option($value);
+            }
+
+            $test_case->setStoredOption((string) $name, $value);
+            $depth--;
+
+            return true;
+        });
+
+        blc_save_surveillance_thresholds([
+            'global' => [
+                [
+                    'metric'     => 'broken_ratio',
+                    'comparison' => 'gte',
+                    'threshold'  => 5,
+                    'severity'   => 'warning',
+                ],
+            ],
+            'taxonomy' => [],
+        ]);
+
+        $this->assertSame(1, $updateCalls);
+        $this->assertSame(1, $maxDepth);
+        $stored = $this->getStoredOption('blc_surveillance_thresholds');
+        $this->assertIsArray($stored);
+        $this->assertSame('broken_ratio', $stored['global'][0]['metric']);
+    }
+
+    public function test_surveillance_thresholds_are_registered_once_and_sanitize_does_not_save(): void
+    {
+        $settingsSource = (string) file_get_contents(
+            dirname(__DIR__) . '/liens-morts-detector-jlg/includes/blc-settings-fields.php'
+        );
+
+        $this->assertSame(
+            1,
+            preg_match_all("/register_setting\\(\\s*\\\$option_group,\\s*'blc_surveillance_thresholds'/s", $settingsSource)
+        );
+
+        $reflection = new \ReflectionFunction('blc_sanitize_surveillance_thresholds_option');
+        $lines = array_slice(
+            (array) file((string) $reflection->getFileName()),
+            $reflection->getStartLine() - 1,
+            $reflection->getEndLine() - $reflection->getStartLine() + 1
+        );
+        $body = implode('', $lines);
+
+        $this->assertStringNotContainsString('blc_save_surveillance_thresholds', $body);
+        $this->assertStringNotContainsString('update_option', $body);
+    }
+
     public function test_accessibility_preferences_defaults_are_disabled(): void
     {
         unset($this->options['blc_accessibility_high_contrast'], $this->options['blc_accessibility_reduce_motion'], $this->options['blc_accessibility_large_font']);

@@ -52,12 +52,20 @@ if (!function_exists('blc_save_surveillance_thresholds')) {
      * @return void
      */
     function blc_save_surveillance_thresholds(array $thresholds) {
-        if (!function_exists('update_option')) {
+        static $saving = false;
+
+        if ($saving || !function_exists('update_option')) {
             return;
         }
 
-        $normalized = blc_normalize_surveillance_thresholds($thresholds);
-        update_option('blc_surveillance_thresholds', $normalized, false);
+        $saving = true;
+
+        try {
+            $normalized = blc_normalize_surveillance_thresholds($thresholds);
+            update_option('blc_surveillance_thresholds', $normalized, false);
+        } finally {
+            $saving = false;
+        }
     }
 }
 

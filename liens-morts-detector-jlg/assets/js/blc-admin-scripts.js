@@ -1,4 +1,8 @@
 jQuery(document).ready(function($) {
+    if (typeof window.blcIsIframedEditorContext === 'function' && window.blcIsIframedEditorContext()) {
+        return;
+    }
+
     var ACTION_FOCUS_SELECTOR = '.blc-edit-link, .blc-unlink, .blc-ignore, .blc-suggest-redirect, .blc-apply-redirect, .blc-view-context, .blc-recheck';
 
     var defaultMessages = {
