@@ -29,10 +29,6 @@ if (!function_exists('blc_get_proxy_pool_instance')) {
     require_once __DIR__ . '/Scanner/ProxyPool.php';
 }
 
-if (!function_exists('blc_get_surveillance_threshold_defaults')) {
-    require_once __DIR__ . '/blc-surveillance.php';
-}
-
 /**
  * Render inline help tooltip markup for a settings field.
  *
@@ -590,16 +586,6 @@ function blc_register_settings() {
             'type'              => 'array',
             'sanitize_callback' => 'blc_sanitize_notification_status_filters_option',
             'default'           => blc_get_default_notification_status_filters(),
-        )
-    );
-
-    register_setting(
-        $option_group,
-        'blc_surveillance_thresholds',
-        array(
-            'type'              => 'array',
-            'sanitize_callback' => 'blc_sanitize_surveillance_thresholds_option',
-            'default'           => array(),
         )
     );
 
@@ -4765,7 +4751,11 @@ if (!function_exists('blc_sanitize_notification_status_filters_option')) {
 }
 
 /**
- * Sanitize surveillance thresholds option payload and persist via helper.
+ * Sanitize surveillance thresholds for the Settings API.
+ *
+ * Must only normalize and return: WordPress already persists via update_option(),
+ * which re-applies sanitize_option_{$option}. Calling update_option() here
+ * recurses until OOM (plugin.php apply_filters).
  *
  * @param mixed $value Submitted value.
  *
@@ -4773,11 +4763,7 @@ if (!function_exists('blc_sanitize_notification_status_filters_option')) {
  */
 if (!function_exists('blc_sanitize_surveillance_thresholds_option')) {
     function blc_sanitize_surveillance_thresholds_option($value) {
-        $normalized = blc_normalize_surveillance_thresholds($value);
-
-        blc_save_surveillance_thresholds($normalized);
-
-        return $normalized;
+        return blc_normalize_surveillance_thresholds($value);
     }
 }
 

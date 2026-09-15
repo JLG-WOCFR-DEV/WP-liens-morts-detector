@@ -27,7 +27,7 @@ Liens Morts Detector scanne les contenus WordPress (articles, widgets, menus, co
 * Charte wp-admin : plus de restyle du chrome (`#wpbody-content`, Inter, violet).
 * JS admin ignoré dans l’éditeur iframé.
 * Colonnes primaires des listes pour les en-têtes de ligne.
-* Enregistrement des réglages : plus de scan de liens immédiat (OOM `options.php`).
+* Enregistrement des réglages : plus de scan de liens immédiat ni de re-entrée Settings API (OOM `options.php`).
 
 = 1.0 =
 * Version initiale.
