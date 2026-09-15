@@ -20,6 +20,13 @@ use Brain\Monkey\Functions;
 use JLG\BrokenLinks\Admin\AdminAssets;
 use PHPUnit\Framework\TestCase;
 
+/**
+ * Isolated from other suites: Brain Monkey may already define plugin helpers
+ * such as blc_get_timezone_label(), which would fatal on require_once.
+ *
+ * @runTestsInSeparateProcesses
+ * @preserveGlobalState disabled
+ */
 class Phase2AdminCharterAndWp71Test extends TestCase
 {
     protected function setUp(): void
