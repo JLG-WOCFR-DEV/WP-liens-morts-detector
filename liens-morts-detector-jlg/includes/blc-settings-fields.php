@@ -3605,10 +3605,13 @@ function blc_render_ui_preset_field() {
                 $input_id    = $field_id . '-' . $preset_slug;
                 $label       = isset($preset_config['label']) ? (string) $preset_config['label'] : ucfirst($preset_slug);
                 $description = isset($preset_config['description']) ? (string) $preset_config['description'] : '';
-                $accent      = isset($preset_config['accent']) ? (string) $preset_config['accent'] : '#6e56cf';
+                $accent      = isset($preset_config['accent']) ? (string) $preset_config['accent'] : '#2271b1';
                 $badges      = isset($preset_config['badges']) && is_array($preset_config['badges'])
                     ? array_filter(array_map('sanitize_text_field', $preset_config['badges']))
                     : array();
+                if (!empty($preset_config['experimental'])) {
+                    array_unshift($badges, __('Expérimental', 'liens-morts-detector-jlg'));
+                }
                 ?>
                 <label class="blc-preset-card" for="<?php echo esc_attr($input_id); ?>">
                     <input
@@ -3642,7 +3645,7 @@ function blc_render_ui_preset_field() {
             <?php endforeach; ?>
         </div>
         <p class="description">
-            <?php esc_html_e('Le preset sélectionné ajuste couleurs, typographie et animations des pages du plugin sans impacter le reste de l’administration.', 'liens-morts-detector-jlg'); ?>
+            <?php esc_html_e('Le preset WordPress Classique est le rendu de production. Les presets expérimentaux ne colorent que les cartes du plugin : le chrome wp-admin (onglets, boutons, notices, tableaux) reste natif.', 'liens-morts-detector-jlg'); ?>
         </p>
     </fieldset>
     <?php
@@ -3724,40 +3727,46 @@ function blc_get_ui_presets() {
             'badges'      => array(__('Défaut', 'liens-morts-detector-jlg'), 'WP'),
         ),
         'headless-minimal' => array(
-            'label'       => __('Headless Minimal', 'liens-morts-detector-jlg'),
-            'description' => __('Palette neutre, focus renforcé et transitions discrètes.', 'liens-morts-detector-jlg'),
-            'accent'      => '#2563eb',
-            'badges'      => array('A11y', __('Focus clair', 'liens-morts-detector-jlg')),
+            'label'        => __('Headless Minimal', 'liens-morts-detector-jlg'),
+            'description'  => __('Palette neutre, focus renforcé et transitions discrètes.', 'liens-morts-detector-jlg'),
+            'accent'       => '#2563eb',
+            'badges'       => array('A11y', __('Focus clair', 'liens-morts-detector-jlg')),
+            'experimental' => true,
         ),
         'shadcn-clean'     => array(
-            'label'       => __('Shadcn Clean', 'liens-morts-detector-jlg'),
-            'description' => __('Design système structuré avec accents verts et cartes en relief.', 'liens-morts-detector-jlg'),
-            'accent'      => '#22c55e',
-            'badges'      => array(__('Cards', 'liens-morts-detector-jlg'), 'Radix'),
+            'label'        => __('Shadcn Clean', 'liens-morts-detector-jlg'),
+            'description'  => __('Design système structuré avec accents verts et cartes en relief.', 'liens-morts-detector-jlg'),
+            'accent'       => '#22c55e',
+            'badges'       => array(__('Cards', 'liens-morts-detector-jlg'), 'Radix'),
+            'experimental' => true,
         ),
         'radix-structured' => array(
-            'label'       => __('Radix Structured', 'liens-morts-detector-jlg'),
-            'description' => __('Tokens inspirés de Radix UI pour une interface sobre et accessible.', 'liens-morts-detector-jlg'),
-            'accent'      => '#7c3aed',
-            'badges'      => array('Tokens', __('Transitions', 'liens-morts-detector-jlg')),
+            'label'        => __('Radix Structured', 'liens-morts-detector-jlg'),
+            'description'  => __('Tokens inspirés de Radix UI pour une interface sobre et accessible.', 'liens-morts-detector-jlg'),
+            'accent'       => '#7c3aed',
+            'badges'       => array('Tokens', __('Transitions', 'liens-morts-detector-jlg')),
+            'experimental' => true,
         ),
         'bootstrap-audit'  => array(
-            'label'       => __('Bootstrap Audit', 'liens-morts-detector-jlg'),
-            'description' => __('Look & feel familier avec badges colorés et typographie système.', 'liens-morts-detector-jlg'),
-            'accent'      => '#0d6efd',
-            'badges'      => array('Bootstrap', __('Responsive', 'liens-morts-detector-jlg')),
+            'label'        => __('Bootstrap Audit', 'liens-morts-detector-jlg'),
+            'description'  => __('Look & feel familier avec badges colorés et typographie système.', 'liens-morts-detector-jlg'),
+            'accent'       => '#0d6efd',
+            'badges'       => array('Bootstrap', __('Responsive', 'liens-morts-detector-jlg')),
+            'experimental' => true,
         ),
         'semantic-insight' => array(
-            'label'       => __('Semantic Insight', 'liens-morts-detector-jlg'),
-            'description' => __('Interface expressive avec labels colorés pour hiérarchiser les statuts.', 'liens-morts-detector-jlg'),
-            'accent'      => '#f97316',
-            'badges'      => array(__('Labels', 'liens-morts-detector-jlg'), __('KPIs', 'liens-morts-detector-jlg')),
+            'label'        => __('Semantic Insight', 'liens-morts-detector-jlg'),
+            'description'  => __('Interface expressive avec labels colorés pour hiérarchiser les statuts.', 'liens-morts-detector-jlg'),
+            'accent'       => '#f97316',
+            'badges'       => array(__('Labels', 'liens-morts-detector-jlg'), __('KPIs', 'liens-morts-detector-jlg')),
+            'experimental' => true,
         ),
         'anime-motion'     => array(
-            'label'       => __('Anime Motion', 'liens-morts-detector-jlg'),
-            'description' => __('Animations fluides, timeline et feedback visuel inspirés d’anime.js.', 'liens-morts-detector-jlg'),
-            'accent'      => '#06b6d4',
-            'badges'      => array(__('Animations', 'liens-morts-detector-jlg'), 'SVG'),
+            'label'        => __('Anime Motion', 'liens-morts-detector-jlg'),
+            'description'  => __('Animations fluides, timeline et feedback visuel inspirés d’anime.js.', 'liens-morts-detector-jlg'),
+            'accent'       => '#06b6d4',
+            'badges'       => array(__('Animations', 'liens-morts-detector-jlg'), 'SVG'),
+            'experimental' => true,
         ),
     );
 

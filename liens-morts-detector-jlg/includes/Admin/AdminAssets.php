@@ -38,6 +38,10 @@ class AdminAssets
 
     public function shouldEnqueue($hook)
     {
+        if ($this->isBlockEditorRequest($hook)) {
+            return false;
+        }
+
         if ($this->isPluginAdminRequest()) {
             return true;
         }
@@ -90,6 +94,41 @@ class AdminAssets
         return in_array($page, $this->getAdminPageSlugs(), true);
     }
 
+    public function isBlockEditorRequest($hook)
+    {
+        if (function_exists('wp_is_block_editor') && \wp_is_block_editor()) {
+            return true;
+        }
+
+        $hook = is_string($hook) ? strtolower($hook) : '';
+        $editorHooks = array(
+            'post.php',
+            'post-new.php',
+            'site-editor.php',
+            'widgets.php',
+            'customize.php',
+        );
+
+        if (in_array($hook, $editorHooks, true)) {
+            return true;
+        }
+
+        if ($hook !== '' && (strpos($hook, 'site-editor') !== false || strpos($hook, 'gutenberg-edit-site') !== false)) {
+            return true;
+        }
+
+        $canvas = '';
+        $context = '';
+        if (isset($_GET['canvas']) && is_scalar($_GET['canvas'])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only usage.
+            $canvas = sanitize_key(\wp_unslash((string) $_GET['canvas'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only usage.
+        }
+        if (isset($_GET['context']) && is_scalar($_GET['context'])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only usage.
+            $context = sanitize_key(\wp_unslash((string) $_GET['context'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only usage.
+        }
+
+        return $canvas === 'edit' || $context === 'edit';
+    }
+
     private function enqueueStyles()
     {
         $cssPath = $this->getPluginDir() . 'assets/css/blc-admin-styles.css';
@@ -105,13 +144,31 @@ class AdminAssets
 
     private function enqueueScripts()
     {
+        $guardPath = $this->getPluginDir() . 'assets/js/editor-iframe-guard.js';
+        $guardVersion = file_exists($guardPath) ? filemtime($guardPath) : time();
+
+        \wp_enqueue_script(
+            'blc-editor-iframe-guard',
+            $this->getPluginUrl('assets/js/editor-iframe-guard.js'),
+            array(),
+            $guardVersion,
+            true
+        );
+
+        $isEditor = function_exists('wp_is_block_editor') && \wp_is_block_editor();
+        \wp_add_inline_script(
+            'blc-editor-iframe-guard',
+            'window.BLC_IS_EDITOR = ' . ($isEditor ? 'true' : 'false') . ';',
+            'before'
+        );
+
         $togglePath = $this->getPluginDir() . 'assets/js/settings-mode-toggle.js';
         $toggleVersion = file_exists($togglePath) ? filemtime($togglePath) : time();
 
         \wp_enqueue_script(
             'blc-settings-mode-toggle',
             $this->getPluginUrl('assets/js/settings-mode-toggle.js'),
-            array('jquery'),
+            array('jquery', 'blc-editor-iframe-guard'),
             $toggleVersion,
             true
         );
@@ -122,7 +179,7 @@ class AdminAssets
         \wp_enqueue_script(
             'blc-admin-js',
             $this->getPluginUrl('assets/js/blc-admin-scripts.js'),
-            array('jquery', 'wp-util', 'blc-settings-mode-toggle'),
+            array('jquery', 'wp-util', 'blc-settings-mode-toggle', 'blc-editor-iframe-guard'),
             $jsVersion,
             true
         );

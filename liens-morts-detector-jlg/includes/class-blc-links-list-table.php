@@ -521,6 +521,15 @@ class BLC_Links_List_Table extends WP_List_Table {
     }
 
     /**
+     * Colonne primaire pour les en-têtes de ligne WP 7.1 (scope="row").
+     *
+     * @return string
+     */
+    protected function get_primary_column_name() {
+        return 'url';
+    }
+
+    /**
      * Définit les colonnes du tableau, avec une nouvelle colonne pour le texte du lien.
      */
     public function get_columns() {
@@ -724,7 +733,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         }
 
         $output = sprintf(
-            '<strong><a href="%s" target="_blank" rel="noopener noreferrer" title="%s">%s</a></strong>',
+            '<strong><a class="row-title" href="%s" target="_blank" rel="noopener noreferrer" title="%s">%s</a></strong>',
             esc_url($href),
             esc_attr__('Vérifier ce lien (nouvel onglet)', 'liens-morts-detector-jlg'),
             esc_html($original_url)
@@ -1029,7 +1038,7 @@ class BLC_Links_List_Table extends WP_List_Table {
         $this->process_bulk_action();
         $this->maybe_prepare_bulk_notice_from_query();
 
-        $this->_column_headers = [$this->get_columns(), [], $this->get_sortable_columns(), 'url'];
+        $this->_column_headers = [$this->get_columns(), [], $this->get_sortable_columns(), $this->get_primary_column_name()];
 
         $current_view = 'all';
         $raw_view = $this->get_request_param('link_type');
@@ -2332,7 +2341,7 @@ class BLC_Links_List_Table extends WP_List_Table {
      * @return string
      */
     public function render_row_html(array $item) {
-        $this->_column_headers = [$this->get_columns(), [], []];
+        $this->_column_headers = [$this->get_columns(), [], $this->get_sortable_columns(), $this->get_primary_column_name()];
         $this->items           = [$item];
 
         ob_start();

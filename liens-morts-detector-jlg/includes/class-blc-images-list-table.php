@@ -33,6 +33,15 @@ class BLC_Images_List_Table extends WP_List_Table {
     }
 
     /**
+     * Colonne primaire pour les en-têtes de ligne WP 7.1 (scope="row").
+     *
+     * @return string
+     */
+    protected function get_primary_column_name() {
+        return 'image_details';
+    }
+
+    /**
      * Définit les colonnes du tableau.
      */
     public function get_columns() {
@@ -102,7 +111,7 @@ class BLC_Images_List_Table extends WP_List_Table {
         $link_markup = '';
         if ($image_url !== '') {
             $link_markup = sprintf(
-                '<strong><a href="%s" target="_blank" rel="noopener noreferrer" title="%s">%s</a></strong>',
+                '<strong><a class="row-title" href="%s" target="_blank" rel="noopener noreferrer" title="%s">%s</a></strong>',
                 esc_url($image_url),
                 esc_attr__('Vérifier cette image (nouvel onglet)', 'liens-morts-detector-jlg'),
                 esc_html($image_url)
@@ -219,7 +228,7 @@ class BLC_Images_List_Table extends WP_List_Table {
      * Prépare les données pour l'affichage : récupération et pagination.
      */
     public function prepare_items($data = null, $total_items_override = null) {
-        $this->_column_headers = [$this->get_columns(), [], []];
+        $this->_column_headers = [$this->get_columns(), [], [], $this->get_primary_column_name()];
         $per_page     = 20;
         $current_page = max(1, (int) $this->get_pagenum());
 
