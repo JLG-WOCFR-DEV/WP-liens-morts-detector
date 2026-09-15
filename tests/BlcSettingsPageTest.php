@@ -402,6 +402,48 @@ class BlcSettingsPageTest extends TestCase
         $this->assertSame('updated', $success['type']);
     }
 
+    public function test_sanitize_frequency_does_not_bootstrap_a_scan(): void
+    {
+        $now = time();
+        $scheduled = [];
+        $firedHooks = [];
+
+        Functions\when('wp_schedule_event')->alias(function ($timestamp, $recurrence, $hook) use (&$scheduled) {
+            $scheduled[] = [
+                'timestamp'  => (int) $timestamp,
+                'recurrence' => (string) $recurrence,
+                'hook'       => (string) $hook,
+            ];
+
+            return true;
+        });
+        Functions\expect('blc_perform_check')->never();
+        Functions\expect('spawn_cron')->never();
+        Functions\expect('wp_cron')->never();
+        Functions\when('do_action')->alias(function ($hook, ...$args) use (&$firedHooks) {
+            $firedHooks[] = (string) $hook;
+            if (in_array($hook, ['blc_check_links', 'blc_check_batch', 'blc_manual_check_batch'], true)) {
+                throw new \RuntimeException('Scan hook ' . $hook . ' must not fire while sanitizing settings.');
+            }
+
+            return null;
+        });
+
+        $result = blc_sanitize_frequency_option('daily');
+
+        $this->assertSame('daily', $result);
+        $this->assertCount(1, $scheduled);
+        $this->assertSame('blc_check_links', $scheduled[0]['hook']);
+        $this->assertSame('daily', $scheduled[0]['recurrence']);
+        $this->assertGreaterThan($now, $scheduled[0]['timestamp'], 'Saving settings must not schedule blc_check_links for now.');
+        $this->assertGreaterThanOrEqual(
+            $now + (defined('HOUR_IN_SECONDS') ? HOUR_IN_SECONDS : 3600),
+            $scheduled[0]['timestamp']
+        );
+        $this->assertNotContains('blc_check_links', $firedHooks);
+        $this->assertContains('blc_check_links_schedule_updated', $firedHooks);
+    }
+
     public function test_accessibility_preferences_defaults_are_disabled(): void
     {
         unset($this->options['blc_accessibility_high_contrast'], $this->options['blc_accessibility_reduce_motion'], $this->options['blc_accessibility_large_font']);
