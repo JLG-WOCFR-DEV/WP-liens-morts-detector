@@ -3951,32 +3951,86 @@ function blc_sanitize_frequency_option($value) {
             );
             add_settings_error('blc_settings', 'blc_frequency_restore_warning', $restore_warning, 'warning');
         }
-    } else {
-        add_settings_error('blc_settings', 'blc_settings_saved', esc_html__('Réglages enregistrés !', 'liens-morts-detector-jlg'), 'updated');
     }
 
     return $frequency;
 }
 
 /**
- * Gère les notices d'administration suite à une tentative de programmation du scan d'images.
+ * Indique si un champ Settings API était absent du formulaire soumis.
  *
- * @param array $schedule_result Résultat de `blc_reset_image_check_schedule()`.
- * @param bool  $add_success_notice Indique si une notice de succès doit être ajoutée.
+ * `options.php` appelle tout de même le sanitizer avec null/vide lorsque la clé
+ * POST manque (mode simple, onglet images masqué, radios désactivées).
+ *
+ * @param mixed  $value      Valeur brute transmise au callback de sanitization.
+ * @param string $field_name Nom du champ attendu dans `$_POST`.
  *
  * @return bool
  */
-function blc_handle_image_schedule_result(array $schedule_result, $add_success_notice = true) {
-    static $success_notice_added = false;
+function blc_is_settings_field_omitted($value, $field_name) {
+    $field_name = is_string($field_name) ? $field_name : '';
+
+    if ($field_name !== '' && isset($_POST[$field_name])) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- presence check only.
+        return false;
+    }
+
+    if (is_scalar($value) && sanitize_text_field((string) $value) !== '') {
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Indique s'il faut conserver les réglages images non présents dans le POST.
+ *
+ * Distingue une sauvegarde en mode simple (le markup avancé est dans un `<template>`
+ * et n'est pas soumis) d'une sauvegarde avancée où la case de planification est
+ * réellement décochée.
+ *
+ * @return bool
+ */
+function blc_should_preserve_unsubmitted_image_settings() {
+    if (!isset($_POST['option_page']) || !is_scalar($_POST['option_page'])) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- routing guard.
+        return false;
+    }
+
+    $option_page = function_exists('wp_unslash')
+        ? (string) wp_unslash($_POST['option_page']) // phpcs:ignore WordPress.Security.NonceVerification.Missing
+        : (string) $_POST['option_page']; // phpcs:ignore WordPress.Security.NonceVerification.Missing
+
+    if ($option_page !== 'blc_settings') {
+        return false;
+    }
+
+    if (isset($_POST['blc_image_scan_schedule_enabled']) || isset($_POST['blc_image_scan_frequency'])) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+        return false;
+    }
+
+    if (function_exists('blc_get_settings_mode') && blc_get_settings_mode() === 'advanced') {
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Gère les notices d'administration suite à une tentative de programmation du scan d'images.
+ *
+ * Les notices de succès sont laissées à WordPress (`settings-updated` via `options.php`)
+ * afin d'éviter le doublon « Réglages enregistrés ! ».
+ *
+ * @param array $schedule_result    Résultat de `blc_reset_image_check_schedule()`.
+ * @param bool  $add_success_notice Conservé pour compatibilité ; ignoré.
+ *
+ * @return bool
+ */
+function blc_handle_image_schedule_result(array $schedule_result, $add_success_notice = false) {
+    unset($add_success_notice);
 
     $is_success = isset($schedule_result['success']) ? (bool) $schedule_result['success'] : false;
 
     if ($is_success) {
-        if ($add_success_notice && !$success_notice_added) {
-            add_settings_error('blc_settings', 'blc_settings_saved', esc_html__('Réglages enregistrés !', 'liens-morts-detector-jlg'), 'updated');
-            $success_notice_added = true;
-        }
-
         return true;
     }
 
@@ -4027,14 +4081,16 @@ function blc_handle_image_schedule_result(array $schedule_result, $add_success_n
  * @return bool
  */
 function blc_sanitize_image_scan_schedule_enabled_option($value) {
+    if (blc_should_preserve_unsubmitted_image_settings()) {
+        return (bool) get_option('blc_image_scan_schedule_enabled', false);
+    }
+
     $enabled = (bool) $value;
 
     if (!$enabled) {
         if (function_exists('wp_clear_scheduled_hook')) {
             wp_clear_scheduled_hook('blc_check_image_batch', array(0, true));
         }
-
-        blc_handle_image_schedule_result(array('success' => true), true);
     }
 
     return $enabled;
@@ -4063,6 +4119,9 @@ function blc_sanitize_image_frequency_option($value) {
 
     if (in_array($submitted_frequency, $allowed_frequencies, true)) {
         $frequency = $submitted_frequency;
+    } elseif (blc_is_settings_field_omitted($value, 'blc_image_scan_frequency') || $submitted_frequency === '') {
+        // Simple/essential saves omit the images tab; keep the stored valid frequency.
+        return $fallback_frequency;
     } else {
         $frequency        = $fallback_frequency;
         $frequency_labels = $preset_options;
@@ -4110,9 +4169,7 @@ function blc_sanitize_image_frequency_option($value) {
             )
         );
 
-        blc_handle_image_schedule_result($schedule_result, true);
-    } else {
-        blc_handle_image_schedule_result(array('success' => true), true);
+        blc_handle_image_schedule_result($schedule_result, false);
     }
 
     return $frequency;
