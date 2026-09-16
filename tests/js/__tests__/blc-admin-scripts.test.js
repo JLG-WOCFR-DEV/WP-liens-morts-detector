@@ -307,10 +307,12 @@ describe('settings mode toggle', () => {
                     <p id="blc-settings-mode-description">Description</p>
                 </div>
                 <div class="blc-settings-mode__control">
-                    <span id="blc-settings-mode-state" data-blc-settings-mode-state>Mode simple activé — seuls les réglages essentiels sont visibles.</span>
+                    <p id="blc-settings-mode-state" class="description" data-blc-settings-mode-state>Mode simple activé — seuls les réglages essentiels sont visibles.</p>
+                    <p class="blc-settings-mode__actions">
                     <button type="button" class="button blc-settings-mode__switch" role="switch" aria-checked="false" aria-labelledby="blc-settings-mode-title blc-settings-mode-state" aria-describedby="blc-settings-mode-description" data-blc-settings-mode-control>
                         <span data-blc-settings-mode-action>Passer en mode avancé</span>
                     </button>
+                    </p>
                 </div>
             </div>
             <div class="blc-settings-groups" data-blc-settings-groups>
@@ -475,10 +477,12 @@ describe('settings mode toggle', () => {
                     <p id="blc-settings-mode-description">Description</p>
                 </div>
                 <div class="blc-settings-mode__control">
-                    <span id="blc-settings-mode-state" data-blc-settings-mode-state>Mode simple activé — seuls les réglages essentiels sont visibles.</span>
+                    <p id="blc-settings-mode-state" class="description" data-blc-settings-mode-state>Mode simple activé — seuls les réglages essentiels sont visibles.</p>
+                    <p class="blc-settings-mode__actions">
                     <button type="button" class="button blc-settings-mode__switch" role="switch" aria-checked="false" aria-labelledby="blc-settings-mode-title blc-settings-mode-state" aria-describedby="blc-settings-mode-description" data-blc-settings-mode-control>
                         <span data-blc-settings-mode-action>Passer en mode avancé</span>
                     </button>
+                    </p>
                 </div>
             </div>
             <div class="blc-settings-groups" data-blc-settings-groups>

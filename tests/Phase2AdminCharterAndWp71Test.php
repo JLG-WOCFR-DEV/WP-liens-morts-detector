@@ -87,6 +87,9 @@ class Phase2AdminCharterAndWp71Test extends TestCase
         $this->assertStringContainsString('Tested up to: 7.1', $rootReadme);
         $this->assertStringContainsString('Requires at least: 5.8', $rootReadme);
         $this->assertStringContainsString('Requires PHP: 7.4', $rootReadme);
+
+        $this->assertStringNotContainsString('blc-ui-enhanced', $plugin);
+        $this->assertStringNotContainsString('blc-preset--', $plugin);
     }
 
     public function test_admin_heading_places_nav_tabs_under_h1(): void
@@ -144,6 +147,11 @@ class Phase2AdminCharterAndWp71Test extends TestCase
         );
         $this->assertStringContainsString('class="button button-primary"', $html);
         $this->assertStringContainsString('<form method="post" action="options.php"', $html);
+        $this->assertStringContainsString('class="blc-settings-mode__control"', $html);
+        $this->assertStringContainsString('class="blc-settings-mode__actions"', $html);
+        $this->assertStringContainsString('class="button blc-settings-mode__switch"', $html);
+        $this->assertStringNotContainsString('blc-preset-picker', $html);
+        $this->assertStringNotContainsString('Style du tableau de bord', $html);
 
         $source = (string) file_get_contents(__DIR__ . '/../liens-morts-detector-jlg/includes/blc-admin-pages.php');
         $this->assertStringContainsString('table class="form-table blc-settings-table"', $source);
@@ -167,25 +175,70 @@ class Phase2AdminCharterAndWp71Test extends TestCase
         $this->assertStringNotContainsString('.wp-admin.blc-preset--anime-motion .wrap {', $css);
         $this->assertStringNotContainsString('.wp-admin.blc-ui-enhanced .form-table th', $css);
         $this->assertStringNotContainsString('"Inter"', $css);
+        $this->assertStringNotContainsString('.blc-preset-picker', $css);
+        $this->assertStringNotContainsString('.blc-preset-card', $css);
+        $this->assertStringNotContainsString('.wp-admin.blc-preset--', $css);
+        $this->assertStringNotContainsString('.blc-accessibility-option {', $css);
+        $this->assertStringContainsString('.blc-settings-mode__control', $css);
+        $this->assertMatchesRegularExpression(
+            '/\.blc-settings-mode__control\s*\{[^}]*flex-direction:\s*column/s',
+            $css
+        );
     }
 
-    public function test_default_ui_preset_is_wordpress_classic_and_others_are_experimental(): void
+    public function test_default_ui_preset_is_wordpress_classic_only(): void
     {
         Functions\when('get_option')->justReturn(false);
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-settings-fields.php';
 
         $this->assertSame('wordpress-classic', blc_get_ui_preset_default());
         $this->assertSame('wordpress-classic', blc_get_active_ui_preset());
+        $this->assertSame('wordpress-classic', blc_sanitize_ui_preset_option('anime-motion'));
 
         $presets = blc_get_ui_presets();
-        $this->assertArrayHasKey('wordpress-classic', $presets);
+        $this->assertSame(['wordpress-classic'], array_keys($presets));
         $this->assertSame('#2271b1', $presets['wordpress-classic']['accent']);
         $this->assertArrayNotHasKey('experimental', $presets['wordpress-classic']);
+        $this->assertArrayNotHasKey('headless-minimal', $presets);
+        $this->assertArrayNotHasKey('shadcn-clean', $presets);
+        $this->assertArrayNotHasKey('radix-structured', $presets);
+        $this->assertArrayNotHasKey('bootstrap-audit', $presets);
+        $this->assertArrayNotHasKey('semantic-insight', $presets);
+        $this->assertArrayNotHasKey('anime-motion', $presets);
 
-        foreach (['headless-minimal', 'shadcn-clean', 'radix-structured', 'bootstrap-audit', 'semantic-insight', 'anime-motion'] as $slug) {
-            $this->assertArrayHasKey($slug, $presets);
-            $this->assertTrue(!empty($presets[$slug]['experimental']));
+        $source = (string) file_get_contents(__DIR__ . '/../liens-morts-detector-jlg/includes/blc-settings-fields.php');
+        $this->assertStringNotContainsString("add_settings_field(\n        'blc_ui_preset'", $source);
+        $this->assertStringNotContainsString('blc-preset-picker', $source);
+        $this->assertStringNotContainsString('Style du tableau de bord', $source);
+    }
+
+    public function test_accessibility_preferences_use_native_checkboxes(): void
+    {
+        Functions\when('get_option')->justReturn(false);
+        if (!function_exists('checked')) {
+            Functions\when('checked')->alias(static function ($value, $compare = true, $echo = true) {
+                $result = ((bool) $value === (bool) $compare) ? ' checked="checked"' : '';
+                if ($echo) {
+                    echo $result;
+                }
+
+                return $result;
+            });
         }
+
+        require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-settings-fields.php';
+
+        ob_start();
+        blc_render_accessibility_preferences_field();
+        $html = (string) ob_get_clean();
+
+        $this->assertStringContainsString('type="checkbox"', $html);
+        $this->assertStringContainsString('id="blc_accessibility_high_contrast"', $html);
+        $this->assertStringContainsString('Activer le contraste renforcé', $html);
+        $this->assertStringContainsString('Limiter les animations', $html);
+        $this->assertStringContainsString('Augmenter la taille de police', $html);
+        $this->assertStringNotContainsString('class="blc-accessibility-option"', $html);
+        $this->assertStringNotContainsString('class="blc-toggle"', $html);
     }
 
     public function test_admin_assets_skip_iframed_editor_screens(): void

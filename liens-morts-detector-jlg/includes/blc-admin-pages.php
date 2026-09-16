@@ -4508,7 +4508,7 @@ function blc_settings_page() {
                 </p>
             </div>
             <div class="blc-settings-mode__control">
-                <span id="blc-settings-mode-state" class="blc-settings-mode__state" data-blc-settings-mode-state>
+                <p id="blc-settings-mode-state" class="blc-settings-mode__state description" data-blc-settings-mode-state>
                     <?php
                     if ($is_advanced_mode) {
                         esc_html_e('Mode avancé activé — toutes les sections sont affichées.', 'liens-morts-detector-jlg');
@@ -4516,7 +4516,8 @@ function blc_settings_page() {
                         esc_html_e('Mode simple activé — seuls les réglages essentiels sont visibles.', 'liens-morts-detector-jlg');
                     }
                     ?>
-                </span>
+                </p>
+                <p class="blc-settings-mode__actions">
                 <button
                     type="button"
                     class="button blc-settings-mode__switch"
@@ -4536,6 +4537,7 @@ function blc_settings_page() {
                         ?>
                     </span>
                 </button>
+                </p>
             </div>
         </div>
         <form method="post" action="options.php" class="blc-settings-form">
