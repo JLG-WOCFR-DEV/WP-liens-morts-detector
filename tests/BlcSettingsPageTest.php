@@ -22,6 +22,11 @@ class BlcSettingsPageTest extends TestCase
      */
     private array $settingsErrors = [];
 
+    /**
+     * @var string
+     */
+    private string $settingsMode = 'simple';
+
     private ?string $upgradeStubPath = null;
 
     private bool $createdUpgradeStub = false;
@@ -79,6 +84,8 @@ class BlcSettingsPageTest extends TestCase
             'timezone_string'      => '',
             'gmt_offset'           => 0,
             'blc_post_statuses'    => ['publish'],
+            'blc_image_scan_frequency' => 'weekly',
+            'blc_image_scan_schedule_enabled' => false,
         ];
 
         Functions\when('add_action')->justReturn(true);
@@ -91,6 +98,16 @@ class BlcSettingsPageTest extends TestCase
         require_once __DIR__ . '/../liens-morts-detector-jlg/includes/blc-cron.php';
 
         $test_case = $this;
+        $this->settingsMode = 'simple';
+
+        Functions\when('get_current_user_id')->justReturn(1);
+        Functions\when('get_user_meta')->alias(static function ($user_id, $key, $single = false) use ($test_case) {
+            if ((string) $key === BLC_SETTINGS_MODE_META_KEY) {
+                return $test_case->settingsMode;
+            }
+
+            return '';
+        });
 
         Functions\when('sanitize_text_field')->alias(static function ($value) {
             if (is_scalar($value)) {
@@ -194,6 +211,7 @@ class BlcSettingsPageTest extends TestCase
         Monkey\tearDown();
         parent::tearDown();
         $this->settingsErrors = [];
+        $_POST = [];
 
         if ($this->createdUpgradeStub && $this->upgradeStubPath && file_exists($this->upgradeStubPath)) {
             unlink($this->upgradeStubPath);
@@ -397,9 +415,131 @@ class BlcSettingsPageTest extends TestCase
         $this->assertNotNull($warning);
         $this->assertStringContainsString('La fréquence choisie est invalide', (string) $warning['message']);
 
-        $success = $this->findSettingsErrorByCode('blc_settings_saved');
-        $this->assertNotNull($success);
-        $this->assertSame('updated', $success['type']);
+        $this->assertSame(
+            0,
+            $this->countSettingsErrorsByCode('blc_settings_saved'),
+            'WordPress options.php already emits a single settings-updated notice.'
+        );
+    }
+
+    public function test_omitted_image_frequency_on_simple_save_keeps_previous_without_warning(): void
+    {
+        $this->setStoredOption('blc_image_scan_frequency', 'weekly');
+
+        $_POST = [
+            'option_page'   => 'blc_settings',
+            'blc_frequency' => 'daily',
+        ];
+
+        Functions\when('wp_schedule_event')->justReturn(true);
+
+        $result = blc_sanitize_image_frequency_option(null);
+
+        $this->assertSame('weekly', $result);
+        $this->assertNull(
+            $this->findSettingsErrorByCode('blc_image_frequency_warning'),
+            'A missing images-tab field must not be treated as an invalid frequency.'
+        );
+    }
+
+    public function test_empty_image_frequency_on_simple_save_keeps_previous_without_warning(): void
+    {
+        $this->setStoredOption('blc_image_scan_frequency', 'weekly');
+
+        $_POST = [
+            'option_page' => 'blc_settings',
+            'blc_frequency' => 'daily',
+        ];
+
+        Functions\when('wp_schedule_event')->justReturn(true);
+
+        $result = blc_sanitize_image_frequency_option('');
+
+        $this->assertSame('weekly', $result);
+        $this->assertNull($this->findSettingsErrorByCode('blc_image_frequency_warning'));
+        $this->assertStringNotContainsString(
+            'La fréquence choisie pour les images est invalide',
+            $this->implodeSettingsErrorMessages()
+        );
+    }
+
+    public function test_invalid_submitted_image_frequency_still_warns_and_keeps_fallback(): void
+    {
+        $this->setStoredOption('blc_image_scan_frequency', 'weekly');
+
+        $_POST = [
+            'option_page' => 'blc_settings',
+            'blc_image_scan_frequency' => 'yearly',
+        ];
+
+        Functions\when('wp_schedule_event')->justReturn(true);
+
+        $result = blc_sanitize_image_frequency_option('yearly');
+
+        $this->assertSame('weekly', $result);
+
+        $warning = $this->findSettingsErrorByCode('blc_image_frequency_warning');
+        $this->assertNotNull($warning);
+        $this->assertStringContainsString('La fréquence choisie pour les images est invalide', (string) $warning['message']);
+        $this->assertMatchesRegularExpression('/Hebdomadaire|Une fois par semaine/', (string) $warning['message']);
+    }
+
+    public function test_simple_settings_save_does_not_emit_duplicate_plugin_success_notices(): void
+    {
+        $this->setStoredOption('blc_frequency', 'weekly');
+        $this->setStoredOption('blc_image_scan_frequency', 'weekly');
+        $this->setStoredOption('blc_image_scan_schedule_enabled', true);
+
+        $_POST = [
+            'option_page'   => 'blc_settings',
+            'blc_frequency' => 'daily',
+        ];
+
+        Functions\when('wp_schedule_event')->justReturn(true);
+
+        $this->assertSame('daily', blc_sanitize_frequency_option('daily'));
+        $this->assertSame('weekly', blc_sanitize_image_frequency_option(null));
+        $this->assertTrue(blc_sanitize_image_scan_schedule_enabled_option(null));
+
+        $this->assertNull($this->findSettingsErrorByCode('blc_image_frequency_warning'));
+        $this->assertSame(0, $this->countSettingsErrorsByCode('blc_settings_saved'));
+        $this->assertSame(
+            0,
+            substr_count($this->implodeSettingsErrorMessages(), 'Réglages enregistrés !'),
+            'Keep a single WordPress settings-updated notice instead of plugin duplicates.'
+        );
+    }
+
+    public function test_advanced_settings_save_can_disable_image_schedule_when_checkbox_omitted(): void
+    {
+        $this->setStoredOption('blc_image_scan_schedule_enabled', true);
+        $this->settingsMode = 'advanced';
+
+        $_POST = [
+            'option_page'   => 'blc_settings',
+            'blc_frequency' => 'daily',
+        ];
+
+        Functions\when('wp_clear_scheduled_hook')->justReturn(true);
+
+        $this->assertFalse(blc_sanitize_image_scan_schedule_enabled_option(null));
+    }
+
+    public function test_submitted_valid_image_frequency_is_accepted_without_warning(): void
+    {
+        $_POST = [
+            'option_page' => 'blc_settings',
+            'blc_image_scan_frequency' => 'daily',
+            'blc_image_scan_schedule_enabled' => '1',
+        ];
+
+        Functions\when('wp_schedule_event')->justReturn(true);
+
+        $result = blc_sanitize_image_frequency_option('daily');
+
+        $this->assertSame('daily', $result);
+        $this->assertNull($this->findSettingsErrorByCode('blc_image_frequency_warning'));
+        $this->assertSame(0, $this->countSettingsErrorsByCode('blc_settings_saved'));
     }
 
     public function test_sanitize_frequency_does_not_bootstrap_a_scan(): void
@@ -642,6 +782,30 @@ class BlcSettingsPageTest extends TestCase
         }
 
         return null;
+    }
+
+    private function countSettingsErrorsByCode(string $code): int
+    {
+        $count = 0;
+
+        foreach ($this->settingsErrors as $error) {
+            if ($error['code'] === $code) {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    private function implodeSettingsErrorMessages(): string
+    {
+        $messages = [];
+
+        foreach ($this->settingsErrors as $error) {
+            $messages[] = (string) $error['message'];
+        }
+
+        return implode("\n", $messages);
     }
 
     /**
