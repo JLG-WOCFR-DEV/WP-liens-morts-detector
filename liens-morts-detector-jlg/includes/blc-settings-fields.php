@@ -1226,24 +1226,6 @@ function blc_register_settings_sections() {
     );
 
     add_settings_section(
-        'blc_ui_section',
-        __('Interface', 'liens-morts-detector-jlg'),
-        '__return_false',
-        $page
-    );
-
-    add_settings_field(
-        'blc_ui_preset',
-        __('Style du tableau de bord', 'liens-morts-detector-jlg'),
-        'blc_render_ui_preset_field',
-        $page,
-        'blc_ui_section',
-        array(
-            'label_for' => 'blc_ui_preset',
-        )
-    );
-
-    add_settings_section(
         'blc_accessibility_section',
         __('Accessibilité & confort visuel', 'liens-morts-detector-jlg'),
         '__return_false',
@@ -3567,74 +3549,15 @@ function blc_render_debug_mode_field($args = array()) {
 }
 
 /**
- * Render the UI preset selector field.
+ * Preset picker removed: the admin UI follows native wp-admin chrome.
  *
  * @return void
  */
 function blc_render_ui_preset_field() {
-    $current_preset = blc_get_active_ui_preset();
-    $presets        = blc_get_ui_presets();
-
-    if (empty($presets)) {
-        printf('<p class="description">%s</p>', esc_html__('Aucun preset disponible.', 'liens-morts-detector-jlg'));
-        return;
-    }
-
-    $field_id = 'blc_ui_preset';
-    ?>
-    <fieldset class="blc-preset-picker" role="radiogroup" aria-labelledby="<?php echo esc_attr($field_id); ?>">
-        <legend class="screen-reader-text" id="<?php echo esc_attr($field_id); ?>">
-            <?php esc_html_e('Choisissez un style pour le tableau de bord du plugin.', 'liens-morts-detector-jlg'); ?>
-        </legend>
-        <div class="blc-preset-picker__grid">
-            <?php foreach ($presets as $preset_slug => $preset_config) :
-                $input_id    = $field_id . '-' . $preset_slug;
-                $label       = isset($preset_config['label']) ? (string) $preset_config['label'] : ucfirst($preset_slug);
-                $description = isset($preset_config['description']) ? (string) $preset_config['description'] : '';
-                $accent      = isset($preset_config['accent']) ? (string) $preset_config['accent'] : '#2271b1';
-                $badges      = isset($preset_config['badges']) && is_array($preset_config['badges'])
-                    ? array_filter(array_map('sanitize_text_field', $preset_config['badges']))
-                    : array();
-                if (!empty($preset_config['experimental'])) {
-                    array_unshift($badges, __('Expérimental', 'liens-morts-detector-jlg'));
-                }
-                ?>
-                <label class="blc-preset-card" for="<?php echo esc_attr($input_id); ?>">
-                    <input
-                        type="radio"
-                        name="blc_ui_preset"
-                        id="<?php echo esc_attr($input_id); ?>"
-                        value="<?php echo esc_attr($preset_slug); ?>"
-                        <?php checked($current_preset, $preset_slug); ?>
-                    >
-                    <span class="blc-preset-card__surface" style="--blc-preset-accent: <?php echo esc_attr($accent); ?>">
-                        <span class="blc-preset-card__preview" aria-hidden="true">
-                            <span class="blc-preset-card__preview-tab"></span>
-                            <span class="blc-preset-card__preview-tab is-secondary"></span>
-                            <span class="blc-preset-card__preview-panel"></span>
-                        </span>
-                        <span class="blc-preset-card__content">
-                            <span class="blc-preset-card__title"><?php echo esc_html($label); ?></span>
-                            <?php if ($description !== '') : ?>
-                                <span class="blc-preset-card__description"><?php echo esc_html($description); ?></span>
-                            <?php endif; ?>
-                            <?php if (!empty($badges)) : ?>
-                                <span class="blc-preset-card__badges">
-                                    <?php foreach ($badges as $badge) : ?>
-                                        <span class="blc-preset-card__badge"><?php echo esc_html($badge); ?></span>
-                                    <?php endforeach; ?>
-                                </span>
-                            <?php endif; ?>
-                        </span>
-                    </span>
-                </label>
-            <?php endforeach; ?>
-        </div>
-        <p class="description">
-            <?php esc_html_e('Le preset WordPress Classique est le rendu de production. Les presets expérimentaux ne colorent que les cartes du plugin : le chrome wp-admin (onglets, boutons, notices, tableaux) reste natif.', 'liens-morts-detector-jlg'); ?>
-        </p>
-    </fieldset>
-    <?php
+    echo '<input type="hidden" name="blc_ui_preset" id="blc_ui_preset" value="' . esc_attr(blc_get_ui_preset_default()) . '">';
+    echo '<p class="description">';
+    esc_html_e('L’interface du plugin utilise le chrome natif de WordPress.', 'liens-morts-detector-jlg');
+    echo '</p>';
 }
 
 /**
@@ -3677,17 +3600,14 @@ function blc_render_accessibility_preferences_field() {
         $label = isset($definition['label']) ? (string) $definition['label'] : '';
         $description = isset($definition['description']) ? (string) $definition['description'] : '';
 
-        echo '<div class="blc-accessibility-option">';
-        echo '<label for="' . esc_attr($input_id) . '" class="blc-toggle">';
-        echo '<input type="checkbox" name="' . esc_attr($option_name) . '" id="' . esc_attr($input_id) . '" value="1"' . checked($is_enabled, true, false) . '>';
-        echo '<span class="blc-toggle__label">' . esc_html($label) . '</span>';
+        echo '<label for="' . esc_attr($input_id) . '">';
+        echo '<input type="checkbox" name="' . esc_attr($option_name) . '" id="' . esc_attr($input_id) . '" value="1"' . checked($is_enabled, true, false) . '> ';
+        echo esc_html($label);
         echo '</label>';
 
         if ($description !== '') {
             echo '<p class="description">' . esc_html($description) . '</p>';
         }
-
-        echo '</div>';
     }
 
     echo '</fieldset>';
@@ -3708,51 +3628,9 @@ function blc_get_ui_presets() {
     $presets = array(
         'wordpress-classic' => array(
             'label'       => __('WordPress Classique', 'liens-morts-detector-jlg'),
-            'description' => __('Palette familière de l’admin WordPress avec reliefs discrets.', 'liens-morts-detector-jlg'),
+            'description' => __('Chrome natif de l’administration WordPress.', 'liens-morts-detector-jlg'),
             'accent'      => '#2271b1',
             'badges'      => array(__('Défaut', 'liens-morts-detector-jlg'), 'WP'),
-        ),
-        'headless-minimal' => array(
-            'label'        => __('Headless Minimal', 'liens-morts-detector-jlg'),
-            'description'  => __('Palette neutre, focus renforcé et transitions discrètes.', 'liens-morts-detector-jlg'),
-            'accent'       => '#2563eb',
-            'badges'       => array('A11y', __('Focus clair', 'liens-morts-detector-jlg')),
-            'experimental' => true,
-        ),
-        'shadcn-clean'     => array(
-            'label'        => __('Shadcn Clean', 'liens-morts-detector-jlg'),
-            'description'  => __('Design système structuré avec accents verts et cartes en relief.', 'liens-morts-detector-jlg'),
-            'accent'       => '#22c55e',
-            'badges'       => array(__('Cards', 'liens-morts-detector-jlg'), 'Radix'),
-            'experimental' => true,
-        ),
-        'radix-structured' => array(
-            'label'        => __('Radix Structured', 'liens-morts-detector-jlg'),
-            'description'  => __('Tokens inspirés de Radix UI pour une interface sobre et accessible.', 'liens-morts-detector-jlg'),
-            'accent'       => '#7c3aed',
-            'badges'       => array('Tokens', __('Transitions', 'liens-morts-detector-jlg')),
-            'experimental' => true,
-        ),
-        'bootstrap-audit'  => array(
-            'label'        => __('Bootstrap Audit', 'liens-morts-detector-jlg'),
-            'description'  => __('Look & feel familier avec badges colorés et typographie système.', 'liens-morts-detector-jlg'),
-            'accent'       => '#0d6efd',
-            'badges'       => array('Bootstrap', __('Responsive', 'liens-morts-detector-jlg')),
-            'experimental' => true,
-        ),
-        'semantic-insight' => array(
-            'label'        => __('Semantic Insight', 'liens-morts-detector-jlg'),
-            'description'  => __('Interface expressive avec labels colorés pour hiérarchiser les statuts.', 'liens-morts-detector-jlg'),
-            'accent'       => '#f97316',
-            'badges'       => array(__('Labels', 'liens-morts-detector-jlg'), __('KPIs', 'liens-morts-detector-jlg')),
-            'experimental' => true,
-        ),
-        'anime-motion'     => array(
-            'label'        => __('Anime Motion', 'liens-morts-detector-jlg'),
-            'description'  => __('Animations fluides, timeline et feedback visuel inspirés d’anime.js.', 'liens-morts-detector-jlg'),
-            'accent'       => '#06b6d4',
-            'badges'       => array(__('Animations', 'liens-morts-detector-jlg'), 'SVG'),
-            'experimental' => true,
         ),
     );
 

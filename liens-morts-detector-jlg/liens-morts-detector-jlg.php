@@ -174,18 +174,7 @@ function blc_add_admin_body_class($classes) {
         return $classes;
     }
 
-    $classes       = is_string($classes) ? $classes : '';
-    $ui_preset     = blc_get_active_ui_preset();
-    $ui_preset_key = sanitize_key($ui_preset);
-    $preset_class  = 'blc-preset--' . (function_exists('sanitize_html_class') ? sanitize_html_class($ui_preset_key) : $ui_preset_key);
-
-    if (strpos($classes, 'blc-ui-enhanced') === false) {
-        $classes .= ' blc-ui-enhanced';
-    }
-
-    if (strpos($classes, $preset_class) === false) {
-        $classes .= ' ' . $preset_class;
-    }
+    $classes = is_string($classes) ? $classes : '';
 
     if (function_exists('blc_get_accessibility_preferences')) {
         $accessibility = blc_get_accessibility_preferences();
